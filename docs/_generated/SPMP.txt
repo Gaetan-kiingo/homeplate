@@ -1,0 +1,376 @@
+
+Software Project Management Plan
+Homeplate
+
+
+
+
+Prepared per IEEE Std 1058-1998
+Project Manager: Nam Tran
+Team: Lucya Chuang, Gaetan Rieben
+Group 6 · Master's Software Engineering · MSCS 2101
+
+
+
+
+
+
+Version 1.0 — August 9, 2026
+
+Table of Contents
+1. Overview
+  1.1 Project Summary
+    1.1.1 Purpose, Scope, and Objectives
+    1.1.2 Assumptions and Constraints
+    1.1.3 Project Deliverables
+    1.1.4 Schedule and Budget Summary
+  1.2 Evolution of the Plan
+2. References
+3. Definitions
+4. Project Organization
+  4.1 External Interfaces
+  4.2 Internal Structure
+  4.3 Roles and Responsibilities
+5. Managerial Process Plans
+  5.1 Start-up Plan (5.1.1–5.1.4)
+  5.2 Work Plan (5.2.1–5.2.4)
+  5.3 Control Plan (5.3.1–5.3.6)
+  5.4 Risk Management Plan
+  5.5 Close-out Plan
+6. Technical Process Plans
+  6.1 Process Model
+  6.2 Methods, Tools, and Techniques
+  6.3 Infrastructure Plan
+  6.4 Product Acceptance Plan
+7. Supporting Process Plans
+  7.1 Configuration Management Plan
+  7.2 Verification and Validation Plan
+  7.3 Documentation Plan
+  7.4 Quality Assurance Plan
+  7.5 Reviews and Audits
+  7.6 Problem Resolution Plan
+  7.7 Subcontractor Management Plan
+  7.8 Process Improvement Plan
+8. Additional Plans
+
+1. Overview
+1.1 Project Summary
+1.1.1 Purpose, Scope, and Objectives
+This Software Project Management Plan (SPMP) governs the delivery of Homeplate v1.0, a two-sided dinner-marketplace application, over a ten-week academic term by a three-person team. Its purpose is to translate the baselined SRS (v3.2) and the architecture decisions already recorded (ADR-001–006) into a concrete work plan, schedule, resource assignment, and risk register the team can be held to at PDR, CDR, and the final presentation. Scope is limited to the v1.0 feature set defined in SRS §1.2 (discovery, booking, reviews, messaging, safety alerts, moderation, data-lifecycle/privacy). Payments, AI-assisted listing generation, and identity verification are out of scope and deferred to v2.0. The objective is a working, demo-able booking loop that satisfies the SRS's functional and non-functional requirements and is independently verifiable against the test protocol in SRS §4, without depending on a live commercial event (per the proposal's risk mitigation).
+1.1.2 Assumptions and Constraints
+	•	Each of the three team members contributes at most 20 hours/week to this project.
+	•	The team's effective active window is ≈ 8 weeks (7/17–9/12), not the full ≈ 10-week class term; the estimate in §5.1.1 is based on that narrower window.
+	•	SRS v3.2 is the frozen requirements baseline; changes follow the change process in §5.3.1 and are re-baselined only at CDR. A revised SRS is submitted alongside this SPMP on 8/9/2026.
+	•	No project budget exists; all tools and services used are free tier (PostgreSQL, Redis, GitHub, Google Drive, Canvas, AWS/GCP free tier, Google Maps/Places API free tier).
+	•	Payments, multi-factor authentication, and identity verification are out of scope for v1.0 (deferred to v2.0 per SRS §2.4) and are not planned for in this SPMP.
+	•	PDR (Aug 1), the SPMP/SRS submission (Aug 9), CDR (Aug 22), and the Final presentation (Sep 12) are fixed, non-negotiable course milestones, all in 2026.
+	•	The professor is the sole reviewing stakeholder and grader (see §4.1).
+	•	The professor does not have access to the team's Google Drive; all graded deliverables (this SPMP, the SRS, decks, and weekly stand-up reports) are submitted to the professor through Canvas. Google Drive is used only for the team's own internal collaboration and version-tracking (§7.1, §7.3).
+	•	Lucya Chuang and Gaetan Rieben are based in Southern California; Nam Tran is based in the northern Central Valley. All three share the Pacific time zone, but meeting in person as a full team is impractical, so all collaboration is remote, over Discord (chat/voice). See §4.2.
+	•	AI coding assistants (Claude Code, Cursor, GitHub Copilot) are used for scaffolding and acceleration once programming begins, subject to review controls in §5.4 and §7.4. Claude and Gemini were also used during Weeks 1–4 for documentation and diagram drafting (proposal, SRS, UML, ADRs), each verified or corrected by the team before submission (see the Week 3–4 stand-up reports).
+1.1.3 Project Deliverables
+	•	Working, instrumented Homeplate v1.0 booking-loop application (source in the team GitHub repository).
+	•	SRS v3.2 and its 8/9/2026 revision, this SPMP (v1.0, submitted 8/9/2026), and the architecture/ADR set (already produced) are maintained on the team Google Drive and submitted to the professor via Canvas.
+	•	Weekly stand-up reports (accomplishments, next-week plan, deliverable status), submitted every Sunday (§5.3.5).
+	•	Test plan and results against SRS §4 (RT-01/02, ST-01–06, IT-03, LT-01/02).
+	•	PDR, CDR, and Final presentation decks.
+	•	Brief maintenance notes covering known v2.0 follow-ups (payments, MFA, identity verification).
+1.1.4 Schedule and Budget Summary
+Four dates anchor the schedule: PDR (Aug 1, 2026), this SPMP together with a revised SRS (Aug 9, 2026), CDR (Aug 22, 2026), and the Final presentation (Sep 12, 2026). Full week-by-week detail, using Monday–Sunday weeks aligned to the team's Sunday stand-up report (§5.3.5), is in §5.2.2. There is no monetary budget (§5.2.4); the only “budget” tracked is person-hours, based on the ≈ 8-week active window rather than the full ten-week class term — see the estimation reasoning in §5.1.1.
+
+Figure 1. Top-level milestone timeline. Full week-by-week schedule and the Gantt-style work-activity chart are in §5.2.2.
+1.2 Evolution of the Plan
+This is version 1.0 of the SPMP, submitted 8/9/2026 alongside a revised SRS, per the course schedule. It was drafted after SRS v3.2 was baselined, incorporating changes from the professor’s comments, the team’s discussion, AI analysis, and the architecture decisions in ADR-001 through ADR-006. It also reflects a constraint that became clear only once the team was underway: the professor assigned the team on 7/17/2026, eleven days after the class began, leaving roughly two weeks before PDR (Aug 1) to confirm the requirements/architecture baseline already reflected in the proposal, SRS, and ADRs. The experience-based estimate in §5.1.1 is scoped to the team's actual ≈ 8-week active window (7/17–9/12), not the full class term, for this reason. The schedule in §5.2.2 is cross-checked against the team's own Week 3 and Week 4 stand-up reports, which show programming did not start until Week 5 — later than an earlier draft of this plan assumed — since Weeks 2–4 went entirely to the proposal, SRS iterations, PDR prep, and the ADR set. The plan will be formally revisited at CDR (Aug 22), using the intervening weeks' stand-up reports (§5.3.5) deliverable status, not logged hours, per §5.3.6 as a check against the estimate; any re-baselining will be recorded as a dated revision to this document.
+2. References
+	•	Homeplate Proposal (Group 6), Master's Software Engineering, MSCS 2101.
+	•	Homeplate Software Requirements Specification, v3.2.
+	•	Homeplate Architecture Decision Records, ADR-001 through ADR-006.
+	•	IEEE Std 1058-1998, IEEE Standard for Software Project Management Plans.
+3. Definitions
+	•	ADR: Architecture Decision Record.
+	•	CDR: Critical Design Review.
+	•	FR / NFR: Functional Requirement / Non-Functional Requirement (SRS numbering).
+	•	MEHKO: Microenterprise Home Kitchen Operation — the California permit category (AB 626) that allows limited home-cooked meal sales.
+	•	PDR: Preliminary Design Review.
+	•	PII: Personally Identifiable Information.
+	•	SPMP: Software Project Management Plan (this document).
+	•	SRS: Software Requirements Specification.
+4. Project Organization
+4.1 External Interfaces
+Homeplate has no external paying client this term, and the course has no teaching assistant — the professor is the sole external interface, reviewing stakeholder, and grader. The professor also arranged the team itself, assigning members on 7/17/2026 rather than having students self-select, which is why the team's effective active window (§1.1.2, §5.1.1) begins there rather than at the 7/6/2026 class start. The professor does not have access to the team's Google Drive (§7.1), so the PDR, CDR, and Final deliverables, the 8/9/2026 SPMP/SRS submission, and the weekly stand-up reports are all submitted through Canvas instead. The professor provides feedback that the Project Manager triages (§7.6), and their sign-off at the Final presentation is the acceptance authority referenced in §6.4. There are no other external interfaces to manage (no subcontractors — §7.7 — and no production users during the academic term).
+4.2 Internal Structure
+The team is a flat, three-person structure with no separate reporting layers: the Project Manager (Nam Tran) and Assistant Project Manager (Lucya Chuang) coordinate scheduling and course-facing deliverables, while all three members co-own engineering decisions through the peer-reviewed architecture process already used for the ADRs. Given the team's size, standing committees or sub-teams are not warranted. Lucya Chuang and Gaetan Rieben are based in Southern California and Nam Tran in the northern Central Valley; since meeting the full team in person is impractical, all coordination happens remotely, over Discord and the weekly stand-up report (§5.3.5).
+4.3 Roles and Responsibilities
+Member
+Role(s)
+Primary Responsibilities
+Nam Tran
+Software Engineer, Documentation Lead, Project Manager
+Backend services (booking, safety alert, data lifecycle, outbox/worker); owns SPMP/SRS documentation; coordinates schedule and milestone deliverables.
+Lucya Chuang
+UI/UX Designer, Assistant Project Manager
+React Native client and web onboarding UI; presentation decks; supports the PM on scheduling and tracks task completion against §5.2.2.
+Gaetan Rieben
+Software Engineer, Quality Assurance
+Discovery/listing, review, messaging, and moderation-integration services; owns the test suite against SRS §4 and leads code review (§7.4).
+5. Managerial Process Plans
+5.1 Start-up Plan
+5.1.1 Estimation Plan
+Estimation is experience-based, not algorithmic (e.g., COCOMO), because the team has no calibrated LOC/productivity history of its own and COCOMO's inputs (size estimates, a validated cost-driver set) would themselves be guesses at this scale — an algorithmic estimate would just hide the same uncertainty behind more decimal places. Instead, the team is anchoring on its own recent, real data point: actual hours spent producing the proposal, SRS v3.2, and the six ADRs, all within the compressed window since the professor assigned the team on 7/17/2026 (§1.1.2, §1.2). Reasoning:
+	•	Active window: the capacity is scoped to the 7/17–9/12 window — ≈ 8 weeks — rather than the full term.
+	•	Nominal capacity: 3 members × 20 hrs/week × 8 weeks ≈ 480 person-hours.
+	•	Effective capacity: applying the same ≈70% utilization factor observed while producing the requirements/architecture deliverables in this window (once class time, cross-team coordination, and documentation overhead are subtracted) gives ≈336 person-hours of productive engineering time.
+	•	Phase allocation (experience-based, and compressed to reflect that PDR fell only ≈two weeks after the team formed): 10% design finalization/setup, already largely covered by the proposal/SRS/ADR work (≈ 34 hrs), 50% core implementation (≈ 168 hrs), 25% integration/testing/polish (≈ 84 hrs), 15% PM/documentation/review overhead — higher than a typical split, to account for the weekly stand-up reporting cadence (§5.3.5) — spread across the active window (≈ 50 hrs).
+This estimate is treated as uncertain by design: it is re-checked at CDR (§1.2, §5.3.2), roughly five of the eight active weeks in, against the deliverable-status trend in the weekly stand-up reports (§5.3.5–§5.3.6) — the team does not log hours per activity, so this is a schedule check, not a burn-rate check — and the risk register (§5.4, R-05) carries the consequence of the estimate being wrong.
+5.1.2 Staffing Plan
+The professor assigned the three members on 7/17/2026 (§4.1) rather than students self-selecting. No further staffing changes are planned; if a member becomes unavailable, workload is redistributed by R-04 in the risk register.
+5.1.3 Resource Acquisition Plan
+All tools and services used are free: Node.js/Express, PostgreSQL, Redis, React/React Native, GitHub (with GitHub Actions CI/CD) for source code, Google Drive for the team's internal shared documentation, and Canvas for submitting graded deliverables to the professor (§7.1). Also free: the AWS/GCP and Google Maps/Places API tiers, and Discord for the team's remote coordination (§4.2). AI coding assistants (Claude Code, Cursor, GitHub Copilot) are already available to the team through existing accounts. No acquisition lead time is required.
+5.1.4 Project Staff Training Plan
+No formal training budget or schedule is allocated. Ramp-up on framework- or API-specific gaps (e.g., Stripe/Maps integration details, Redis session patterns) happens informally in Weeks 1–2, using official documentation and AI coding assistants; this is folded into the design-finalization allocation in §5.1.1, not tracked separately.
+5.2 Work Plan
+5.2.1 Work Activities
+Work is organized into the following activities, each mapped to a lead per §4.3:
+ID
+Activity
+Lead
+WA-1
+Auth & eligibility policy (canReserveSeat/canPublishListing)
+Nam
+WA-2
+Discovery/Listing service + Maps/Places integration
+Gaetan
+WA-3
+Booking service (transactional outbox, atomic capacity check — FR-12/13)
+Nam + Gaetan
+WA-4
+Review and Messaging services
+Gaetan
+WA-5
+Safety Alert service (FR-07)
+Nam
+WA-6
+Data Lifecycle service (deletion/export — NFR-12/13)
+Nam
+WA-7
+Moderation integration (pre-filter + LLM classification — FR-08)
+Gaetan
+WA-8
+Media storage adapter (object storage, per-object delete)
+Gaetan
+WA-9
+React Native client + web onboarding UI
+Lucya
+WA-10
+Background worker/outbox dispatcher + adapters (FCM, SendGrid, LLM)
+Nam
+WA-11
+Test suite against SRS §4 (RT/ST/IT/LT)
+Gaetan (QA lead), all
+WA-12
+Documentation (design notes, maintenance notes)
+Nam (lead), Lucya
+WA-13
+PDR / CDR / Final preparation
+All
+WA-14
+SPMP v1.0 + SRS revision (due Aug 9, 2026)
+Nam (lead), Gaetan
+5.2.2 Schedule Allocation
+Weeks run Monday–Sunday, aligned to the team's Sunday stand-up report (§5.3.5). Weeks 1–2 are mostly pre-team; the ≈ 8-week active window used in §5.1.1 starts partway through Week 2. Weeks 1–4 are confirmed against the team's own Week 3 and Week 4 stand-up reports; programming did not begin until Week 5, later than planned, since Weeks 2–4 went to the proposal, SRS (v1.0 through v3.2), PDR prep, UML diagrams, and the ADR set.
+Week
+Dates
+Focus
+Milestone
+1–2
+Jul 6–19
+Class begins Jul 6; team not yet formed. Team officially assigned Fri Jul 17 — kickoff (Discord + Google Drive + role assignment); begin proposal and SRS v1.0 drafting.
+
+3
+Jul 20–26
+Proposal document and slides completed and submitted; SRS v1.0 first draft completed; tech-stack research and UI/UX research planned for Week 4.
+
+4
+Jul 27–Aug 2
+SRS revised multiple times (professor feedback + team analysis); UML diagrams and the ADR list completed; PDR prep; Lucya begins UI/UX concept research.
+PDR — Sat Aug 1, 2026
+5
+Aug 3–9
+Programming begins (WA-1, WA-2); SPMP v1.0 + SRS revision finalized (WA-14); UI/UX user-flow planning continues (WA-9).
+SPMP/SRS due — Sun Aug 9, 2026
+6
+Aug 10–16
+WA-1, WA-2 continue; WA-3, WA-4, WA-5, WA-6 begin (depend on WA-1/WA-2).
+
+7
+Aug 17–23
+WA-3–WA-6 continue; CDR deck prep; re-baseline estimate (§1.2).
+CDR — Sat Aug 22, 2026
+8
+Aug 24–30
+WA-7, WA-8, WA-10 (secondary integrations, start after WA-3–WA-6).
+
+9
+Aug 31–Sep 6
+WA-11 test execution against SRS §4 begins; bug fixing; WA-9 polish.
+
+10
+Sep 7–13
+WA-11 wraps up; final regression pass; WA-12 maintenance notes; WA-13 Final deck.
+Final — Sat Sep 12, 2026
+
+Figure 2. Work activities (§5.2.1) plotted against the schedule (§5.2.2), with dependency arrows and owner color-coding. Team-active weeks only (Wk 2–Wk 10); dashed lines mark the four milestones. Programming starts Week 5, per the team's actual Week 3–4 stand-up reports.
+5.2.3 Resource Allocation
+Hours are allocated against the ≈ 336-hour net capacity from §5.1.1 (scoped to the ≈ 8-week active window, not the full 10-week term), by the roles defined in §4.3. The weekly rate for each member is unchanged from a full-term plan — only the number of active weeks is compressed — and each average stays below the 20 hrs/week cap, leaving buffer for coursework and exam weeks.
+Member
+Primary Activities
+Approx. Hours (≈8 wk)
+Avg. hrs/week
+Nam Tran
+WA-1, WA-3, WA-5, WA-6, WA-10, WA-12/14 (lead), PM coordination
+112
+14
+Gaetan Rieben
+WA-2, WA-3, WA-4, WA-7, WA-8, WA-11 (QA lead), WA-14
+120
+15
+Lucya Chuang
+WA-9, WA-12 (support), WA-13 (decks), scheduling support
+104
+13
+5.2.4 Budget Allocation
+No monetary budget is allocated to this project; all infrastructure and tooling used are free tier (§5.1.3). The only tracked “budget” is person-hours, allocated in §5.2.3.
+5.3 Control Plan
+5.3.1 Requirements Control Plan
+SRS v3.2 is the frozen baseline. Any proposed requirement change is logged as a GitHub issue, reviewed by the full team, and either accepted (with the SRS revised and re-versioned, as in its existing revision history) or deferred to v2.0. No requirement changes are accepted after CDR without PM sign-off.
+5.3.2 Schedule Control Plan
+The PM checks WA-status against §5.2.2 weekly. CDR (Aug 22) is the formal re-baselining point described in §1.2; if a work activity is behind at that point, the lowest-priority backlog items (e.g., review/messaging polish) are cut before the core booking loop (WA-3) is touched.
+5.3.3 Budget Control Plan
+N/A — no monetary budget exists to control (§5.2.4). Free-tier API usage (Maps/Places, SendGrid, FCM) is monitored informally against documented rate limits so no paid tier is triggered accidentally.
+5.3.4 Quality Control Plan
+Every merge requires peer review (§7.4); the test suite (WA-11) against SRS §4 is the quality gate before a feature is considered done. See §7.4 for AI-generated-code-specific review requirements.
+5.3.5 Reporting Plan
+Every Sunday, the team submits a stand-up report to the professor through Canvas (there is no TA), covering the accomplishments since the last report, the plan for the following week, blockers/risks/help needed, each member's contributions (done and next), the status of each outstanding deliverable, and a brief note on where AI tools helped and how the output was verified. This is the team's primary recurring reporting mechanism; the PDR, CDR, and Final reviews (§7.5) are the larger, milestone-scale checkpoints. Nam Tran (PM) drafts the report on the team's Google Drive from the team's remote check-in (§4.2), then submits it through Canvas.
+5.3.6 Metrics Collection Plan
+The weekly stand-up report (§5.3.5) tracks deliverable status — each report's status section is checked against §5.2.2 to determine whether a work activity is on schedule, ahead of schedule, or behind schedule. The §5.1.1 estimate is therefore validated at CDR against this schedule-position trend, not against actual hours, which is a real limitation the team accepts given its size; no additional tooling is introduced solely to close that gap.
+5.4 Risk Management Plan
+Risks are rated Probability (Very Low → Very High) and Consequence (Insignificant → Catastrophic), and assigned a strategy of Avoidance, Minimization, or Contingency. R-07–R-09 are AI-specific risks, as the team relies on AI coding assistants (§1.1.2, §5.1.3).
+
+ID
+Risk
+Type
+Prob.
+Consequence
+Affects
+Strategy / Response
+R-01
+MEHKO / home-kitchen regulation blocks a real, paid live demo.
+Requirements/Organizational
+High
+Moderate
+Business
+Avoidance — the software demo is engineered to stand independently of any live/paid event; the one pilot dinner is framed as non-commercial cost-sharing to sidestep MEHKO's sale rules (per the proposal).
+R-02
+Two-sided cold start — no real host/guest pair available together for a live demo.
+Organizational
+Medium
+Moderate
+Business
+Avoidance — guests for the single pilot dinner are recruited from the team's own campus network so both sides are guaranteed to show; grading does not depend on organic marketplace liquidity.
+R-03
+Safety incident involving a guest/host during the pilot dinner.
+Organizational/People
+Low
+Major
+Business
+Minimization — liability waivers, a safety checklist, and known network-only recruiting for the pilot; FR-07 in-app safety alert is the technical backstop for v1.0 itself.
+R-04
+A team member is unavailable for an extended stretch within the 20 hrs/week cap (illness, coursework crunch).
+People
+Medium
+Major
+Project
+Contingency — mandatory peer review (§7.4) means no work activity has a single point of knowledge; PM redistributes tasks at the next weekly check (§5.3.2).
+R-05
+The experience-based estimate (§5.1.1) is optimistic and core implementation overruns.
+Estimation
+Medium-High
+Major
+Project
+Minimization — CDR (Aug 22) is a hard re-baselining checkpoint with two-thirds of the active window's stand-up deliverable-status trend known (§5.3.6); lowest-priority backlog items are cut first, never WA-3 (the core booking loop).
+R-06
+External API failure or free-tier rate-limit exhaustion (Maps/Places, SendGrid, FCM, moderation LLM).
+Technology
+Medium
+Minor
+Product
+Minimization — the outbox/adapter pattern and Redis caching (ADR-001/003/005) are already architected to degrade gracefully per NFR-09; caches are pre-warmed before any live demo.
+R-07
+AI-generated code is merged without the author fully understanding it.
+Technology/ People (AI)
+Medium-High
+Moderate
+Product
+Avoidance — mandatory peer review (§7.4) applies with no exception to AI-assisted code; the submitting author must be able to explain any AI-suggested code in review.
+R-08
+AI coding assistant hallucinates a dependency (a plausible but nonexistent or typosquatted package).
+Technology (AI)
+Medium
+Major
+Product
+Avoidance — no AI-suggested dependency is installed without a team member independently confirming it on the official npm/PyPI registry and checking its maintenance status first.
+R-09
+AI-generated code is insecure by default (missing validation, hard-coded secrets, missing auth checks).
+Technology (AI)
+Medium-High
+Major
+Product
+Minimization — security-relevant code paths are reviewed against the specific NFR they implement (not just generically); ST-01–ST-06 (SRS §4.3) must pass before such code is considered done.
+R-10
+Scope creep from PDR/CDR reviewer feedback.
+Requirements
+Medium
+Minor
+Project
+Contingency — the PM triages feedback within 48 hours of each review into “this sprint” vs. “v2.0 backlog” (§5.3.1).
+R-11
+Fully remote, geographically distributed team with no practical in-person meetings leads to misaligned understanding of a task.
+Organizational/People
+Medium
+Minor-Moderate
+Project
+Minimization — same time zone limits the damage; recurring Discord check-ins, the mandatory Sunday stand-up report (§5.3.5), and a single shared Google Drive (§7.1) as source of truth catch misalignment weekly rather than at a milestone.
+5.5 Close-out Plan
+All code is delivered via the team's GitHub repository; all documentation is finalized on the shared Google Drive (§7.1) and submitted to the professor through Canvas by the Final presentation (Sep 12, 2026), along with brief maintenance notes covering known v2.0 follow-ups. The team holds a short retrospective after the Final presentation to capture lessons for any future continuation of the project.
+6. Technical Process Plans
+6.1 Process Model
+The team uses a blended process: plan-driven at the milestone level, and agile at the execution level. The three fixed course gates (PDR, CDR, Final) are non-negotiable, so the overall shape of the plan is plan-driven — the schedule in §5.2.2 is organized as three sequential phases bounded by those gates, not as an open-ended backlog. Within each phase, however, the team works in short, informal Scrum-like iterations (roughly weekly check-ins, a shared task board, and continuous integration via GitHub Actions), because the requirements are relatively well understood (SRS v3.2 is already baselined) but the implementation details benefit from iteration and peer review. This mirrors how the team already operated during the requirements/architecture phase: a plan-driven document sequence (proposal → SRS → driver analysis → architecture → ADRs) produced through iterative peer review at each step.
+6.2 Methods, Tools, and Techniques
+	•	Method: incremental development within the phased schedule in §5.2.2.
+	•	Client: React Native (iOS/Android) plus a React web experience for host onboarding.
+	•	Server: Node.js/Express, PostgreSQL (source of truth), Redis (sessions/cache).
+	•	Tools: GitHub + GitHub Actions (CI/CD) for source code, Google Drive for the team's internal shared documentation, Canvas for submitting graded deliverables (§7.1), AWS/GCP free tier, AI coding assistants (Claude Code, Cursor, GitHub Copilot), Discord for the team's remote coordination (§4.2).
+	•	Technique: peer code review before merge (§7.4); weekly remote check-ins plus the Sunday stand-up report (§5.3.5).
+6.3 Infrastructure Plan
+Hosting runs on AWS/GCP free-tier instances with GitHub Actions for CI/CD, per the proposal's technical approach. No dedicated servers or paid infrastructure are provisioned for the academic term.
+6.4 Product Acceptance Plan
+Acceptance is defined as passing the verification protocol already specified in SRS §4 (functional, reliability, security, and performance tests — RT-01/02, ST-01–06, IT-03, LT-01/02) and receiving the professor's sign-off at the Final presentation (§4.1).
+7. Supporting Process Plans
+7.1 Configuration Management Plan
+Source code is version-controlled in a single GitHub repository; changes to the main branch require a pull request and at least one peer review (§7.4). All documents — the SRS, this SPMP, presentation decks, and weekly stand-up reports — are drafted and version-tracked on the team's Google Drive, which is for internal team use only. Each graded deliverable is exported and submitted separately through Canvas (§4.1) on its due date. The SRS and this SPMP follow the same dated-revision convention already used for the SRS's version history (e.g., v3.2).
+7.2 Verification and Validation Plan
+Verification and validation follow the protocol already defined in SRS §4 (functional test cases per FR, RT-01/02 for reliability, ST-01–06 for security/privacy, IT-03 for moderation accuracy, LT-01/02 for performance); this SPMP does not duplicate that detail and instead schedules its execution as WA-11 in §5.2.1–§5.2.2.
+7.3 Documentation Plan
+Nam Tran (Documentation lead, §4.3) maintains the SPMP, the SRS, and any design notes; Lucya Chuang supports presentation-facing documentation (PDR/CDR/Final decks). Drafts live on the team's shared Google Drive (§7.1); the professor only ever sees the version submitted through Canvas on each deliverable's due date, including the weekly stand-up reports (§5.3.5).
+7.4 Quality Assurance Plan
+Gaetan Rieben (QA lead, §4.3) owns test execution against SRS §4. Every pull request requires at least one peer review before merge; this applies without exception to AI-assisted code (R-07–R-09 in §5.4). Security-relevant code paths (auth, input handling) are additionally checked against the specific NFR/ST test they implement before being considered done.
+7.5 Reviews and Audits
+Three presentations gate the schedule: PDR (Aug 1, 2026), CDR (Aug 22, 2026), and the Final presentation (Sep 12, 2026); this SPMP and a revised SRS are also submitted as a milestone deliverable on Aug 9, 2026. All of these, plus the weekly Sunday stand-up report (§5.3.5), go through Canvas, since the professor does not have access to the team's Google Drive (§7.1). Internally, the team also requires peer code review before every merge (§7.4, §7.1).
+7.6 Problem Resolution Plan
+Issues (bugs, blockers, reviewer feedback) are logged as GitHub issues and triaged by the PM within 48 hours; anything that threatens a milestone is escalated at the next weekly check-in and handled per §5.3.2 and R-10 in the risk register.
+7.7 Subcontractor Management Plan
+N/A — the team uses no subcontractors; all work is performed by the three members in §4.3.
+7.8 Process Improvement Plan
+The team holds a retrospective after CDR and again after the Final presentation to check the §5.1.1 estimate against actuals and capture lessons (e.g., where AI-assistant use helped or introduced rework) for any future v2.0 planning.
+8. Additional Plans
+N/A — no additional plans beyond those in Sections 5–7 are required for a project of this scope and duration.

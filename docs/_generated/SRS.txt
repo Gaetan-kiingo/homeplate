@@ -1,0 +1,428 @@
+MSCS 2101 — Software Engineering
+Software Requirements Specification (SRS)
+Project: Homeplate — a meal-sharing social web app • Team: Lucya (Ju Hsin), Gaetan, Nam • Version 3.2 •  • July 31, 2026
+1. Introduction
+1.1 Purpose
+This document specifies the functional and non-functional requirements for Homeplate, a marketplace application platform that connects people through authentic, home-cooked meals. This document is intended for the development team, the course instructor, and the target users who reviewed it.
+1.2 Scope
+Homeplate lets a registered host user create and manage a dinner listing and lets a dining user book a seat. Homeplate v1.0 will focus on seat reservation and host-guest discovery functionalities. 
+	•	In scope for v1.0: user signup, create and manage listings, browse and reserve an available meal, booking confirmation notification, finished meal confirmation. 
+	•	Out of scope for v1.0: payment, AI-assisted listing, identity verification, GPS tracking. 
+1.3 Definitions, Acronyms, and Abbreviations
+EARS — Easy Approach to Requirements Syntax; NFR — Non-Functional Requirement; TLS — Transport Layer Security. See Appendix C for the full glossary.
+1.4 References
+Project Proposal (Homeplate, Module 2) and related diagram; California Assembly Bill AB 626 Regulations; course SRS template.
+1.5 Overview
+Section 2 provides the big picture; Section 3 gives detailed requirements; Section 4 explains verification. Appendices cover AI provenance, traceability, and the glossary.
+2. Overall Description
+2.1 Product Perspective
+Homeplate is a web application that depends heavily on user interactions. It depends on email-verified, action-eligible users and on agreements between guests and hosts to create reservations, confirm bookings, and ensure safety through eligibility checks and content moderation.
+2.1.1 System interfaces
+Homeplate v1.0 deploys as a single-region cloud system: a responsive React single-page application served to mobile and desktop browsers, a stateless Node.js/Express REST API tier, PostgreSQL as the source of truth, Redis for sessions and read caching, object storage for listing/review media (ADR-004), and a deferred-work mechanism — a background worker fed from a transactional outbox committed with the business change in one PostgreSQL transaction; the concrete technology and delivery semantics are design decisions recorded in ADR-003, not requirements. Four external services are consumed over the internet: Google Maps/Places (discovery and geocoding), Firebase Cloud Messaging (push), SendGrid (email, including safety-alert delivery), and an external LLM API (content moderation). Figure 1 shows the deployment view; every external dependency is isolated behind its own adapter so that failures degrade per NFR-09 rather than cascade.
+
+Figure 1 — Deployment diagram (v1.0): client, cloud tier, and external services.
+2.1.2 User interfaces
+A single responsive React web application serves both user groups on desktop and mobile browsers. Guests use it for discovery, booking, messaging, reviews, and safety alerts; hosts additionally use it for onboarding, listing creation, and administrative operations. Key interfaces follow WCAG 2.1 AA (NFR-07). No native mobile application is delivered in v1.0.
+2.1.3 Software interfaces
+Internal: RESTful API over HTTPS/JSON between the client and the Node.js/Express backend; PostgreSQL accessed via a connection pool; Redis for session and read caching. External: Google Maps/Places API (geocoding, location discovery), Firebase Cloud Messaging (push notifications), SendGrid (transactional email), and an external LLM API used only for content moderation in v1.0 (FR-08, NFR-10). All external use must remain within free-tier rate limits (constraint, section 2.4); each integration sits behind a dedicated adapter with timeout, retry, and fallback behavior (NFR-09).
+2.1.4 Communication interfaces
+All client-server communication uses HTTPS with TLS 1.2 or higher (NFR-03); plain HTTP is refused. The API exchanges JSON over REST. Outbound notifications use FCM (push) and SendGrid (email) via the deferred-work mechanism, so a notification-provider failure never rolls back or delays a booking transaction (FR-13, NFR-09).
+2.1.5 Memory
+Client: the web application shall run in a standard mobile browser within typical memory limits (target < 150 MB heap; no client-side storage of other users’ personal data). Server: the v1.0 deployment targets commodity cloud instances; the Redis working set (sessions plus hot listing/search cache for 200 concurrent users, NFR-01) is budgeted under 256 MB, and PostgreSQL is sized for the NFR-02 volumes (10,000 users, 1,000 listings/bookings per day) with headroom.
+2.1.6 Operation
+Two operating modes are defined. Normal mode: all functions available. Degraded mode (entered automatically when an external service fails, per NFR-09): the system displays an appropriate error message, serves cached or previously stored data where available, and defers non-critical actions (notifications, moderation requests) until the service recovers; bookings and listings that do not depend on the failed service continue. Administration is unattended apart from moderation review; daily automated database backups are retained for 30 days, consistent with the privacy retention rules (NFR-12).
+2.1.7 Site adaptation requirements
+The v1.0 deployment is configured for California, USA: MEHKO limits under AB 626 are enforced as configuration (maximum meals per host per day; one listing per host per day, section 3.4), and displayed times use the guest’s browser locale. Locale-specific policy (legal caps, host agreement text) is isolated in a configuration module so that operating in another jurisdiction requires a configuration change and legal review, not a redesign. No customer-site installation is required (hosted web application).
+2.2 Product Functions (summary)
+	•	Guest discovery engine: geo-mapping and preference filters (AI-based suggestions are deferred to v2.0, see section 1.2)
+	•	Host listing portal: scheduling and communication tools (the AI agent for generating descriptions and menus is deferred to v2.0, see section 1.2)
+	•	Safety features
+Figure 2 summarizes the use cases for the two user groups and the moderator role. Reserving a seat and creating a listing both require a complete, verified profile (FR-09, NFR-06).
+
+Figure 2 — Use case overview (v1.0). Dashed arrows show the profile-completeness precondition.
+2.3 User Characteristics
+There are three user roles:
+	•	Guests: locals, solo diners, and community members seeking authentic dining environments with a focus on social interaction.
+	•	Hosts: home cooks who are willing to self-host for supplemental income as well as companionship.
+	•	Moderators: Homeplate operations staff who review content flagged by the automated moderation pipeline (FR-08), decide escalated cases and appeals, and receive safety alerts (FR-07). Moderators act through a restricted administrative view; their decisions are logged (NFR-08).
+2.4 Constraints
+	•	Web-based: application must be responsive for mobile browsers
+	•	API: any API use must be within its free-tier rate limits
+	•	Regulatory compliance: The number of meals provided by the host per day is limited by California law, specifically MEHKO per California Assembly Bill AB 626 Regulations
+	•	Security: operations that create listings or reservations are limited to users who have completed email verification and profile completeness checks (NFR-06), over HTTPS-only transport (NFR-03). Multi-factor authentication and government-ID identity verification are deferred to v2.0 together with payments.
+Fixed technology constraints vs. open decisions: React (responsive web client), Node.js/Express, PostgreSQL, and Redis are fixed project constraints for v1.0. The internal structure that uses them — the deferred-work mechanism and its delivery semantics, media storage, and moderation runtime configuration — are open architectural decisions recorded in ADRs, not requirements of this SRS.
+2.5 Assumptions and Dependencies
+External APIs (Google Maps, FCM, SendGrid, LLM) are assumed to experience occasional outages; the system handles them under the degradation behavior of NFR-09 rather than assuming continuous uptime. TLS 1.2 or higher must be implemented to ensure security and stability.
+3. Specific Requirements
+3.1 Functional Requirements (EARS)
+ID
+Requirement (EARS)
+Priority
+Verify by
+FR-01
+The system shall allow users to search for meals by location, time, hosts, or cuisine type.
+Must
+Test
+FR-02
+When a user selects a meal listing, the system shall display what the dish is, the main ingredients, allergy warning, reviews, and any additional information regarding the host and meal. 
+Should
+Test
+FR-03
+When a guest selects a host, the system shall show the personal page of the host, including a self-introduction, example dishes, reviews, and clear pictures of the dining location and kitchen.
+Must
+Test
+FR-04
+When the end of the meal is confirmed by both the host and the guest on the app, the system shall change the booking status to “completed.” 
+Must
+Test
+FR-05
+The system shall allow both users and hosts to leave reviews for each other, including photos and a numerical rating.
+Must
+Test
+FR-06
+When users have confirmed a seat for a meal, the system shall open communication for the guests and the host for any questions.
+Should
+Test
+FR-07
+When a user submits a safety alert, the system shall persist the alert, notify the moderator, and attempt delivery to the user’s approved emergency-contact channel (email via SendGrid in v1.0); failed delivery shall be retried and remain visible for review.
+Should
+Test
+FR-08
+When user-generated content is submitted, the system shall apply the deterministic pre-filter and automated moderation flow, route flagged or low-confidence content to human review, and enforce the publication policy: public content (listings, reviews) remains pending until it passes moderation; private messages are delivered and scanned asynchronously; a moderation-provider outage keeps public content pending rather than publishing it unreviewed.
+Must
+Test
+FR-09
+While a user does not satisfy the eligibility policy for an action (canReserveSeat for reserving a seat; canPublishListing for creating a listing — NFR-06), the system shall restrict that action.
+Must
+Test
+FR-10
+When a person submits valid registration data, the system shall create an unverified account and send an email-verification request; only successful token confirmation shall mark the email as verified.
+Must
+Test
+FR-11
+When an eligible host submits complete listing data, the system shall create, update, or cancel the listing while enforcing the configured one-listing-per-host-per-day and meal/seat limits (AB 626).
+Must
+Test
+FR-12
+When an eligible guest requests a seat on a listing with remaining capacity, the system shall atomically create the booking and reduce available capacity; otherwise, it shall reject the request without changing capacity. A configurable per-guest limit on concurrent pending bookings shall be enforced.
+Must
+Test
+FR-13
+When a booking is created, cancelled, or changes status, the system shall enqueue the configured notification to affected users; notification-provider failure shall not roll back or delay the booking transaction.
+Must
+Test
+FR-14
+When a guest or host cancels a booking before the listing’s scheduled start, the system shall set the booking to cancelled, atomically restore the seat capacity, and notify the affected parties (FR-13).
+Should
+Test
+
+3.2 External Interface Requirements User Interface:
+	•	Responsive React web app available for desktop and mobile web browsers, dedicated to host onboarding, listing creation, and administrative operations.
+Software Interface:
+	•	Internal: 
+	•	RESTful API over HTTPS/JSON connecting the client app to the Node.js/Express backend, with PostgreSQL for database storage and Redis for session caching
+	•	Third-Party API Integrations:
+	•	Google Maps/Places API for location-based discovery and geolocation services.
+	•	Firebase Cloud Messaging (FCM) API for messaging (push notifications), SendGrid API for email communications.
+	•	External LLM/AI API for content moderation only (FR-08, NFR-10). Automated listing generation and AI recommendation matching are out of scope for v1.0 (section 1.2).
+Communications:
+	•	All client-server communication is encrypted with HTTPS/TLS 1.2+.
+3.3 Non-Functional / Quality Requirements
+ID
+Attribute
+Requirement (measurable)
+NFR-01
+Performance
+REST API shall deliver 95th-percentile response time under 500ms for core operations (e.g., browse listings, search, review), sustaining up to 200 concurrent users.
+NFR-02
+Scalability
+The system shall support at least 10,000 registered users and 1,000 active dinner listings/bookings per day while continuing to meet the NFR-01 latency targets.
+NFR-03
+Security
+All network transit across mobile, web, and backend services must strictly enforce HTTPS/TLS 1.2 or higher
+NFR-04
+Security
+User passwords shall be stored using an industry-standard hashing algorithm (e.g., Argon2id, bcrypt). No plain text password shall be stored.
+NFR-05
+Security (abuse case)
+Login attempts shall be rate-limited or temporarily locked after 5 failed attempts within 10 minutes to prevent brute-force attacks.
+NFR-06
+Security (safety)
+When a user registers or updates their profile, the system shall validate email verification and evaluate action-specific eligibility policies: canReserveSeat requires a verified email, full name, and phone number; canPublishListing additionally requires a completed host profile and host-agreement acceptance. Actions for which the user is ineligible are restricted (FR-09). The policies sit behind one interface, so v2.0 identity verification can replace the internal rules.
+NFR-07
+Accessibility 
+Key interfaces shall follow WCAG 2.1 AA accessibility guidelines.
+NFR-08
+Observability
+Important actions (ex., user registrations, booking, cancellation) shall be logged. The system shall also log and monitor errors; records shall be sufficient for developers to identify the cause. 
+NFR-09
+Availability / Resilience
+During the demo period, the system shall maintain 99% availability. If an external service (e.g., Google Maps, SendGrid, or Firebase Cloud Messaging) becomes unavailable, the system shall display an appropriate error message, use cache or previously stored data where available, and defer non-critical actions such as notifications or moderation requests until the external service becomes available again. 
+NFR-10
+Security (safety)
+The AI assistance used to detect and reduce spam, fraudulent activity, abusive language, and inappropriate content must operate with false positive and false negative rates of less than 5%.
+NFR-11
+Security
+The system shall validate and sanitize all user inputs to prevent SQL injections, cross-site scripting (XSS), and other injection attacks. 
+NFR-12
+Privacy (retention & deletion)
+Users shall be able to delete their account from the application. Upon deletion, all personal data (name, email, phone number, pictures) shall be erased or irreversibly anonymized within 30 days; reviews may be retained in anonymized form. Personal data of accounts inactive for 24 months shall be deleted after notice. Database backups containing deleted data shall expire within 30 days.
+NFR-13
+Privacy (data protection)
+The system shall collect only the personal data enumerated in section 3.4 (data minimization). Personal data shall be encrypted in transit (NFR-03) and at rest (AES-256 or equivalent); access shall be role-restricted and logged. On request, users shall receive a copy of their personal data within 30 days, consistent with California Consumer Privacy Act (CCPA) obligations. Emergency-contact details are a third party’s personal data: collected minimally (name, phone, email), used only for FR-07 alerts, and included in the registering user’s deletion scope.
+
+3.4 Data Requirements
+	•	USER: ID, password hash, email (unique, verified — FR-10), full name, phone number, action-eligibility flags (canReserveSeat, canPublishListing — NFR-06), optional emergency contact (name, phone, email — the email is the v1.0 delivery channel for FR-07 safety alerts)
+	•	BOOKING: unique ID, listing ID, guest user ID, status (pending, in progress, completed, cancelled), host and guest completion-confirmation flags (both required for completed — FR-04)
+	•	LISTING: unique ID, name, dish description with ingredients and allergy information (FR-02), images (object-storage references — ADR-004), date, location, duration, seat capacity and seats remaining (atomically maintained — FR-12), moderation status (pending/approved/rejected — FR-08). A host can have multiple listings, limited to one listing a day.
+	•	REVIEW: unique ID, target host user ID, numeric rating, text comments, pictures 
+	•	MESSAGE: unique ID, booking ID, sender user ID, body text (scanned by moderation, FR-08)
+	•	SAFETY_ALERT: unique ID, booking ID, raising user ID, delivery status (retried until delivered, FR-07)
+	•	MODERATION_DECISION: unique ID, content reference (listing/review/message), category, outcome, decided-by (pre-filter, LLM, or human), retained anonymized per NFR-12
+	•	NOTIFICATION_ATTEMPT: unique ID, recipient user ID, channel (push/email), status (sent, failed, retrying — FR-13)
+
+	•	Media: listing and review images are stored in object storage and referenced by key; the store must support per-object deletion, so NFR-12 erasure covers media (ADR-004).
+	•	Relationships: A User may act as a host (at most one host profile per user) and as a guest. A host publishes Listings (at most one listing per day, per the MEHKO constraint), each with seat capacity. A Booking associates exactly one guest User with exactly one Listing; reservation atomically decrements seats remaining (FR-12), and the booking carries the status lifecycle pending → in progress (automatically at the scheduled start) → completed (when both host and guest confirmation flags are stored, FR-04), with cancelled reachable until the scheduled start (FR-14, seat restored atomically). A completed Booking may generate up to two Reviews — guest about host and host about guest (FR-05). Figure 3 shows the entity-relationship model.
+
+Figure 3 — Entity-relationship diagram (v1.0 data model).
+	•	Data lifecycle: Personal data collected is limited to the attributes listed above (data minimization, NFR-13). Retention and deletion follow NFR-12: account deletion erases or anonymizes personal data within 30 days; anonymized reviews and aggregate statistics may be retained.
+
+Personal-data (PII) register. NFR-13 limits collection to the data enumerated in this section; the register below is the authoritative inventory used to verify deletion (ST-05) and export (ST-06).
+Data class
+Purpose
+Store
+Retention/deletion rule
+External recipients
+Account identity (name, email, phone, password hash)
+Authentication, eligibility (NFR-06)
+PostgreSQL
+Erased/anonymized ≤30 days after account deletion (NFR-12)
+None
+Emergency contact (name, phone, email) — third-party PII
+FR-07 safety alerts only
+PostgreSQL
+Deleted with the registering user’s account
+SendGrid (delivery only)
+Listing content incl. location and images
+Discovery (FR-01/02)
+PostgreSQL + object storage
+Deleted with host account; media deleted by object key (ADR-004)
+Google Maps (geocoding of address)
+Messages (host–guest)
+FR-06 communication; FR-08 scanning
+PostgreSQL
+Deleted with account; moderation evidence retained anonymized
+LLM API (moderation scan)
+Reviews and photos
+FR-05 community trust
+PostgreSQL + object storage
+Retained anonymized after account deletion (NFR-12)
+None
+Booking and safety-alert records
+FR-04/07/12/14; disputes
+PostgreSQL
+Anonymized after account deletion; alerts retained anonymized for safety audit
+FCM/SendGrid (notification delivery)
+Moderation decisions
+NFR-10 measurement, appeals
+PostgreSQL
+Retained anonymized (author identity severed on deletion)
+None
+Logs and notification attempts
+NFR-08 observability
+Log store / PostgreSQL
+User IDs only, never PII; retention-bound
+None
+3.5 Misuse and Abuse Cases
+The following abuse cases extend the requirements with the attacker’s perspective. Each is mitigated by named requirements and verified by the tests in section 4. Payment-related abuse (fraudulent payouts, chargeback disputes) is out of scope for v1.0 because no money moves through the platform; it must be revisited when payments return in v2.0.
+ID
+Abuse case
+Threat scenario
+Mitigation (requirements)
+AB-01
+Fake host / fake listing
+An attacker creates a host account with fabricated identity and stolen photos to collect bookings or lure guests to an unsafe location.
+Profile completeness gate before listing (FR-09, NFR-06); automated moderation of listings (FR-08, NFR-10); mutual reviews expose fakes (FR-05); safety alert path (FR-07). Government-ID verification planned for v2.0.
+AB-02
+Fraudulent / hoarding bookings
+A user mass-reserves seats they never intend to use, blocking real guests and wasting host effort.
+Eligibility gate (FR-09); atomic capacity check and per-guest concurrent pending-booking limit (FR-12); booking lifecycle logged for pattern detection (NFR-08).
+AB-03
+Spam or scripted listings
+Bots create listings at scale to advertise or phish.
+One-listing-per-host-per-day invariant (section 3.4 / AB 626); moderation pipeline (FR-08, NFR-10); input validation (NFR-11); login rate limiting (NFR-05).
+AB-04
+Abusive content in chat or reviews
+Harassment, hate speech, or inappropriate content in messages (FR-06) or reviews (FR-05).
+Automated moderation with human review and appeal (FR-08, NFR-10); safety alert to moderator (FR-07); moderation decisions logged (NFR-08).
+AB-05
+Account takeover
+Credential stuffing or brute force against user accounts.
+Password hashing (NFR-04); lockout after 5 failed attempts in 10 minutes (NFR-05); TLS everywhere (NFR-03). MFA planned for v2.0.
+AB-06
+Injection attacks
+SQL injection or XSS via search fields, listing text, chat, or reviews.
+Input validation and sanitization at every boundary (NFR-11); verified by security test ST-04.
+AB-07
+MEHKO evasion via duplicate accounts
+A host creates multiple accounts to exceed the legal daily meal limit.
+Unique verified email per account (FR-10, NFR-06); server-side single enforcement point for the daily cap (FR-11); anomaly review from logs (NFR-08). Phone-number uniqueness and identity verification are explicitly deferred to v2.0.
+AB-08
+Scraping of personal data
+Automated harvesting of host addresses and profiles.
+Session-authenticated API access with action eligibility (FR-09, NFR-06); data minimization in API responses (NFR-13). Read-API rate limiting is an explicitly deferred v2.0 control.
+4. Verification
+Each functional requirement is verified by at least one automated test, and each non-functional requirement by measurement, configuration review, integration test, or usability test, as detailed below and traced in Appendix B. Requirements marked Could/Demo are shown live rather than unit tested.
+4.1 Functional testing (TC-01 … TC-14)
+Every FR has an automated test at the API level (Jest + Supertest against a seeded test database), run in CI on every commit. Acceptance criteria mirror the EARS statements: for event-driven requirements the test fires the trigger and asserts the response; for state-driven requirements (e.g., FR-09) the test asserts both the restricted and permitted states.
+4.2 Integration testing (IT-01 … IT-04)
+Each external adapter (Google Maps, FCM, SendGrid, LLM) is tested against sandbox endpoints for the happy path and against injected failures for the degraded path. IT-03 verifies NFR-10 with a measurement protocol: a labeled evaluation set of at least 200 items (offensive, spam, fraudulent, and benign content in balanced proportions) is scored by the moderation pipeline; false positive and false negative rates must each remain below 5%. The evaluation set and results are versioned so the bound can be re-checked when the model or prompt changes. IT-04 verifies end-to-end safety-alert delivery (FR-07): alert persisted, moderator notified, emergency-contact email delivered via the SendGrid sandbox, and the retry path exercised by injecting a delivery failure.
+4.3 Security and privacy testing (ST-01 … ST-06)
+ST-01: TLS configuration scan (no protocol below 1.2, valid certificates). ST-02: code and configuration review of password handling (Argon2id/bcrypt parameters, no plaintext paths). ST-03: scripted brute-force attempt verifying lockout after 5 failures in 10 minutes. ST-04: injection test suite (OWASP ZAP baseline plus targeted SQLi/XSS payloads on every input). ST-05: account-deletion test verifying NFR-12 erasure, including backups expiration. ST-06: review of encryption at rest, role-based access to personal data, and the data-export path (NFR-13). The abuse cases of section 3.5 are exercised by ST-03/04/05 and the moderation tests.
+4.4 Performance and reliability testing (LT-01, LT-02, RT-01, RT-02)
+LT-01: load test (k6) of browse/search/review at 200 concurrent users asserting the 500 ms p95 budget (NFR-01), run against production-like data volumes; LT-01 also includes a concurrent-reservation race test asserting that FR-12 never overbooks a listing. LT-02: volume test at NFR-02 scale (10,000 users, 1,000 listings/bookings per day) while continuing to meet the NFR-01 targets. RT-01: dependency-failure drills — each external service is cut off in turn, and the system must show the required error message, serve cached data, and defer notifications/moderation per NFR-09, with recovery verified when the service returns. RT-02: deferred-work reliability — outbox processing after a crash, duplicate-delivery (idempotency), retry/backoff, and dead-letter handling (FR-13).
+4.5 Usability and accessibility testing (UT-01)
+A moderated usability test with at least 5 participants covering both roles (guest booking flow, host listing flow), combined with an automated WCAG 2.1 AA audit (axe-core) and manual keyboard/screen-reader spot checks on the key interfaces (NFR-07). Findings are triaged before the Critical Design Review.
+4.6 Observability verification (MT-01)
+A log-completeness review: the actions enumerated in NFR-08 (registration, booking, cancellation, moderation decisions) are performed in a test environment, and the resulting records are checked for presence, correlation IDs, and sufficiency to reconstruct causes, including the records needed to audit IT-03 moderation decisions.
+Appendix A — AI Assistance & Provenance
+Item
+Entry
+AI tools used
+Claude, Gemini, Cursor, GitHub Copilot, Grammarly
+What AI assisted with
+Additional research on the technologies and tools that will be used. Rephrasing rough requirements into clean EARS statements and other paraphrasing/spellchecking; drafting the initial FR and NFR tables; identifying conflicting points and risks. For v3.0: drafting the IEEE 830 subsections (2.1.1–2.1.7), the ER/use-case/deployment diagrams, the misuse/abuse case table, the privacy NFRs, and the expanded verification strategy in response to instructor feedback; the team reviewed, corrected, and approved all generated content. For v3.2: drafting the changes adopted from the peer Architecture & SRS Remediation Report (new FR-10–14, eligibility-policy split, moderation publication policy, PII register, consistency corrections); the team reviewed and approved each adopted recommendation and recorded open choices as team decisions.
+Key prompts/specs given
+“Give me a list of basic security standards and protocols for a web marketplace app,” “Rewrite these functional requirements using the EARS notation”
+Human-authored vs. generated
+AI drafted bullet-point ideas based on the project proposal. The team penned all text.  
+How output was reviewed/validated
+Non-functional requirements for network data in transit (section 2.5 and NFR-03) were further researched and verified without any AI help.
+
+Appendix B — Traceability Matrix
+Requirement
+Design element (SDD)
+Test case (STP)
+FR-01
+Search Service, Listing Service, Google Maps Adapter
+TC-01
+FR-02
+Meal Detail View
+TC-02
+FR-03
+Host Profile Service
+TC-03
+FR-04
+Booking Service (completion confirmations)
+TC-04
+FR-05
+Review Service
+TC-05
+FR-06
+Messaging Service
+TC-06
+FR-07
+Safety Alert Service, SendGrid Adapter
+TC-07, IT-04
+FR-08
+Moderation Module (pre-filter, LLM, human review, publication policy)
+TC-08, IT-03
+FR-09
+Eligibility Policy Service (canReserveSeat / canPublishListing)
+TC-09
+FR-10
+Registration & Email Verification Service
+TC-10
+FR-11
+Listing Service (MEHKO and seat limits)
+TC-11
+FR-12
+Booking Service (atomic capacity transaction)
+TC-12
+FR-13
+Transactional Outbox, Worker, Notification Adapters
+TC-13, RT-02
+FR-14
+Booking Service (cancellation, capacity restore)
+TC-14
+NFR-01
+REST API, Redis Cache
+LT-01
+NFR-02
+Backend System, PostgreSQL
+LT-02
+NFR-03
+Network Security Layer (TLS)
+ST-01
+NFR-04
+Authentication Service
+ST-02
+NFR-05
+Authentication Service (rate limiting)
+ST-03
+NFR-06
+Eligibility Policy Service, Email Verification
+IT-02
+NFR-07
+Web UI (React)
+UT-01
+NFR-08
+Logging & Monitoring Service
+MT-01
+NFR-09
+External Service Adapters, Deferred-Work Mechanism
+RT-01
+NFR-10
+AI Moderation Service
+IT-03
+NFR-11
+Input Validation Module
+ST-04
+NFR-12
+Data Lifecycle Service (deletion, retention, media)
+ST-05
+NFR-13
+Data Protection (encryption, access control, export)
+ST-06
+AB-01…AB-08
+Misuse cases (section 3.5)
+ST-03, ST-04, ST-05, IT-03, TC-12
+
+Appendix C — Glossary
+EARS (Easy Approach to Requirements Syntax)  NFR (Non-Functional Requirement)  TLS (Transport Layer Security) DDD (Database Design Description) STP (Software Test Plan) TC (Functional Test Case) 
+
+LT (Load/Performance Test) ST (Security Test) IT (Integration Test)  UT (Usability Test)  MT (Monitoring/Logging Test) RT (Reliability/Recovery Test)
+
+Revision History
+Version
+Date
+Author
+Summary
+1.0
+July 24, 2026
+Homeplate team
+Initial requirements (Module 3).
+2.0
+July 30, 2026
+Homeplate team
+Implementing Stripe is considered out of scope. Notably: 
+	•	FR-04 was updated to remove payment.
+	•	FR-10 was updated to remove identity verification
+	•	Previous NFR-06 about Stripe was removed
+	•	NFR-07 was updated to match FR-10
+Updated Section 3.2 External Interface Requirements regarding UI/UX and Stripe.
+Removed previous FR-07 regarding GPS tracking from Homeplate 1.0 to simplify the design.
+Updated Section 3.4 Data Requirements for additional required user data.
+3.0
+July 30, 2026
+Homeplate team
+Addressed instructor feedback: added IEEE 830 product-perspective subsections 2.1.1–2.1.7 with a deployment diagram; added a use case overview (2.2) and an ER diagram with explicit relationships (3.4); added misuse/abuse cases (new 3.5); added privacy NFR-12 (retention/deletion) and NFR-13 (data protection/CCPA); expanded the verification strategy into 4.1–4.6 and restored verification methods for NFR-08/NFR-10; updated Appendix B traceability matrix to current IDs (removed stale Stripe/GPS entries); resolved the MFA orphan constraint in 2.4; aligned 2.2/3.2 AI references with the v1.0 scope.
+3.1
+July 30, 2026
+Homeplate team
+Raised FR-07 (safety alert) from Could to Should to match its role as a primary use case (Figure 2) and as a mitigation for abuse cases AB-01/AB-04: with GPS tracking descoped, it is the only active in-event safety mechanism in v1.0, and it now rides on existing notification infrastructure. Added the optional emergency contact to the User entity (3.4) so the alert has a defined recipient; FR-07 is now verified by automated test TC-07 rather than live demo.
+3.2
+July 31, 2026
+Homeplate team
+Applied the peer remediation report. Added missing core FRs: FR-10 registration/email verification, FR-11 listing management, FR-12 atomic seat reservation with capacity and per-guest booking limit, FR-13 booking notifications (provider failure never rolls back a booking), FR-14 cancellation with capacity restore. Revised FR-07 (email delivery channel for emergency contacts), FR-08 (moderation lifecycle and pre-publication policy), FR-09/NFR-06 (action-specific eligibility: canReserveSeat / canPublishListing). Defined the full booking lifecycle (pending → in progress → completed, cancelled; dual confirmation flags) and seat-capacity data. Expanded 3.4 with Message, SafetyAlert, ModerationDecision, NotificationAttempt, media storage, and a PII register. Added Moderator role (2.3); separated fixed technology constraints from open architectural decisions (2.4); corrected uptime assumption (2.5), HTTPS wording (3.2), NFR-02 measurability, NFR-09 classification (Availability/Resilience), cover version, and glossary. Extended verification with TC-10–14, IT-04, RT-02, and a concurrency race test. Updated ER diagram and traceability matrix.
+

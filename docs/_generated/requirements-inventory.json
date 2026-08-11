@@ -1,0 +1,321 @@
+{
+  "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4",
+  "generated": "2026-08-11",
+  "requirements": [
+    {
+      "id": "FR-01",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "The system shall allow users to search for meals by location, time, hosts, or cuisine type.",
+      "designElement": "Search Service, Listing Service, Google Maps Adapter",
+      "testIds": ["TC-01", "LT-01"],
+      "acceptance": "GET /api/listings/search accepts any combination of {location+radiusKm, from/to datetime window, hostId, cuisine}. Against the seeded test DB: each filter alone and all four combined return exactly the expected listing IDs. Only listings with moderation_status='approved', status='active', and scheduled_start in the future are returned; a pending/rejected listing seeded in range is never returned. Address->coordinate resolution goes through the Maps adapter and the resolved coordinates + result page are written to Redis with a TTL; a second identical query performs zero adapter calls (assert on the adapter spy). With the Maps adapter forced to fail, a previously cached query still returns results plus a degraded-mode flag (NFR-09). p95 < 500 ms at 200 concurrent users in LT-01."
+    },
+    {
+      "id": "FR-02",
+      "kind": "functional",
+      "priority": "Should",
+      "text": "When a user selects a meal listing, the system shall display what the dish is, the main ingredients, allergy warning, reviews, and any additional information regarding the host and meal.",
+      "designElement": "Meal Detail View",
+      "testIds": ["TC-02"],
+      "acceptance": "GET /api/listings/:id for an approved listing returns, in one response: name, dish description, ingredients[], allergyWarnings[], date/duration, seatCapacity, seatsRemaining, image URLs derived from object-storage keys, host summary (display name, bio, average rating, review count) and the approved reviews for that host. Assert every field is present and equals the seeded value. A listing whose moderation_status is 'pending' or 'rejected' returns 404 to any user other than its owning host (the owner sees it with its moderation status). No host email, phone, or exact street address appears in the payload (NFR-13)."
+    },
+    {
+      "id": "FR-03",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When a guest selects a host, the system shall show the personal page of the host, including a self-introduction, example dishes, reviews, and clear pictures of the dining location and kitchen.",
+      "designElement": "Host Profile Service",
+      "testIds": ["TC-03"],
+      "acceptance": "GET /api/hosts/:id returns selfIntroduction, exampleDishes (the host's approved listings), reviews about the host with numeric ratings and an average, and kitchen/dining image URLs resolved from object-storage keys. Only approved reviews and approved media are returned. The response contains no email, phone, emergency contact, or password hash for any user (assert by key allowlist). Requesting a host profile without an authenticated session returns 401 (AB-08)."
+    },
+    {
+      "id": "FR-04",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When the end of the meal is confirmed by both the host and the guest on the app, the system shall change the booking status to \"completed\".",
+      "designElement": "Booking Service (completion confirmations)",
+      "testIds": ["TC-04"],
+      "acceptance": "POST /api/bookings/:id/confirm-completion sets host_confirmed or guest_confirmed depending on caller identity. After exactly one confirmation the booking status is still 'in progress' and the response reports awaiting the other party. After both confirmations status='completed' and completed_at is set. Repeating a confirmation is idempotent (no state change, 200). A user who is neither the booking's guest nor the listing's host gets 403. Confirming a booking that is 'pending' (before scheduled start) or 'cancelled' returns 409."
+    },
+    {
+      "id": "FR-05",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "The system shall allow both users and hosts to leave reviews for each other, including photos and a numerical rating.",
+      "designElement": "Review Service",
+      "testIds": ["TC-05"],
+      "acceptance": "POST /api/bookings/:id/reviews accepts {rating: integer 1..5, comment: string, imageKeys: string[]} from the guest (about the host) and from the host (about the guest). Rating outside 1..5 or non-integer returns 422. A review on a booking whose status is not 'completed' returns 409. A second review by the same author on the same booking returns 409 (at most two reviews per booking, one per direction). A created review is stored with moderation_status='pending' and is absent from GET /api/hosts/:id and GET /api/listings/:id until approved (FR-08)."
+    },
+    {
+      "id": "FR-06",
+      "kind": "functional",
+      "priority": "Should",
+      "text": "When users have confirmed a seat for a meal, the system shall open communication for the guests and the host for any questions.",
+      "designElement": "Messaging Service",
+      "testIds": ["TC-06"],
+      "acceptance": "POST /api/bookings/:id/messages and GET /api/bookings/:id/messages succeed only for the booking's guest and the listing's host, and only while the booking status is pending, in progress, or completed; a cancelled booking returns 409 and a third party returns 403. A posted message is persisted and returned immediately (delivered), and in the SAME PostgreSQL transaction an outbox row of type 'moderation.scan' referencing the message ID is written — assert both rows exist and that no LLM adapter call occurred on the request path. Messages are never withheld pending moderation (ADR-002)."
+    },
+    {
+      "id": "FR-07",
+      "kind": "functional",
+      "priority": "Should",
+      "text": "When a user submits a safety alert, the system shall persist the alert, notify the moderator, and attempt delivery to the user's approved emergency-contact channel (email via SendGrid in v1.0); failed delivery shall be retried and remain visible for review.",
+      "designElement": "Safety Alert Service, SendGrid Adapter",
+      "testIds": ["TC-07", "IT-04"],
+      "acceptance": "POST /api/bookings/:id/safety-alerts persists a SAFETY_ALERT row (booking_id, raising_user_id, delivery_status='pending') and an outbox row in one transaction, and returns 201 within the request without calling SendGrid inline. The worker then (a) creates a moderator-queue entry, (b) sends the emergency-contact email through the SendGrid adapter, (c) sets delivery_status='delivered'. With an injected SendGrid failure, delivery_status becomes 'retrying', attempts increment with exponential backoff, the alert remains listed in GET /api/moderation/alerts, and after max attempts it is dead-lettered but still visible. If the raising user has no emergency contact, the moderator notification still succeeds and delivery_status='no_channel'."
+    },
+    {
+      "id": "FR-08",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When user-generated content is submitted, the system shall apply the deterministic pre-filter and automated moderation flow, route flagged or low-confidence content to human review, and enforce the publication policy: public content (listings, reviews) remains pending until it passes moderation; private messages are delivered and scanned asynchronously; a moderation-provider outage keeps public content pending rather than publishing it unreviewed.",
+      "designElement": "Moderation Module (pre-filter, LLM, human review, publication policy)",
+      "testIds": ["TC-08", "IT-03"],
+      "acceptance": "Every listing, review, and message submission runs the deterministic pre-filter (blocklist, regex, per-user submission rate limit) before any LLM call; a blocklist hit yields moderation_status='rejected' with decided_by='pre-filter' and zero LLM adapter calls. Content passing the pre-filter is scanned by the worker via the LLM adapter, which returns {category, confidence}; confidence below MODERATION_CONFIDENCE_THRESHOLD or any flagged category creates a moderator-queue item and leaves public content pending. Approved public content becomes visible only after moderation_status='approved'. Messages are readable immediately regardless of scan state; a message later flagged is hidden and queued. With the LLM adapter forced to fail for all attempts, listings and reviews stay 'pending' indefinitely (assert they never appear in search/detail) while the job is retried. Every outcome writes a MODERATION_DECISION row with category, outcome, decided_by in {pre-filter, llm, human}."
+    },
+    {
+      "id": "FR-09",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "While a user does not satisfy the eligibility policy for an action (canReserveSeat for reserving a seat; canPublishListing for creating a listing — NFR-06), the system shall restrict that action.",
+      "designElement": "Eligibility Policy Service (canReserveSeat / canPublishListing)",
+      "testIds": ["TC-09"],
+      "acceptance": "State-driven, both states asserted. Restricted: a user missing email verification, full name, or phone gets 403 with reason codes from POST /api/bookings; a user missing a completed host profile or host-agreement acceptance gets 403 from POST /api/listings. Permitted: once the missing attributes are set, the identical request succeeds. Both checks are served by the single exported policy module (canReserveSeat / canPublishListing); a repository-wide grep proves no other module re-implements either predicate (ADR-006)."
+    },
+    {
+      "id": "FR-10",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When a person submits valid registration data, the system shall create an unverified account and send an email-verification request; only successful token confirmation shall mark the email as verified.",
+      "designElement": "Registration & Email Verification Service",
+      "testIds": ["TC-10"],
+      "acceptance": "POST /api/auth/register with valid data creates a USER row with email_verified=false, an Argon2id/bcrypt password hash (never the plaintext), and, in the same transaction, an outbox row of type 'email.verification' carrying only IDs. A duplicate email returns 409 (unique constraint, AB-07). GET/POST /api/auth/verify-email with the correct single-use token sets email_verified=true and consumes the token; a wrong, already-used, or expired (> EMAIL_TOKEN_TTL_HOURS) token returns 400 and leaves email_verified=false. No email adapter call occurs on the request path."
+    },
+    {
+      "id": "FR-11",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When an eligible host submits complete listing data, the system shall create, update, or cancel the listing while enforcing the configured one-listing-per-host-per-day and meal/seat limits (AB 626).",
+      "designElement": "Listing Service (MEHKO and seat limits)",
+      "testIds": ["TC-11"],
+      "acceptance": "POST /api/listings by a canPublishListing-eligible host creates a listing with moderation_status='pending'. A second listing by the same host whose scheduled date (in the configured locale timezone) equals an existing non-cancelled listing's date returns 409 MEHKO_DAILY_LISTING_LIMIT — enforced by a DB unique index on (host_id, local_date) so concurrent duplicate creations cannot both commit. seatCapacity greater than config.mehko.maxMealsPerDay (default 30 per AB 626) returns 422; the configured weekly cap (default 60) is enforced across the host's rolling 7-day window. PATCH updates and POST /api/listings/:id/cancel work only for the owning host (403 otherwise); a material content edit resets moderation_status to 'pending'. Cancelling a listing with active bookings cancels them and enqueues notifications (FR-13)."
+    },
+    {
+      "id": "FR-12",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When an eligible guest requests a seat on a listing with remaining capacity, the system shall atomically create the booking and reduce available capacity; otherwise, it shall reject the request without changing capacity. A configurable per-guest limit on concurrent pending bookings shall be enforced.",
+      "designElement": "Booking Service (atomic capacity transaction)",
+      "testIds": ["TC-12", "LT-01"],
+      "acceptance": "POST /api/bookings inserts the BOOKING row and decrements listings.seats_remaining in ONE PostgreSQL transaction using a conditional UPDATE (`SET seats_remaining = seats_remaining - 1 WHERE id = $1 AND seats_remaining > 0`) or SELECT ... FOR UPDATE. With seats_remaining=1 and N=50 concurrent requests, exactly 1 booking is created, seats_remaining=0, and the other 49 receive 409 with capacity unchanged (LT-01 race test asserts sum(bookings)=capacity, never overbooked). A guest already holding config.booking.maxConcurrentPending (default 3) pending bookings receives 409 BOOKING_LIMIT (AB-02). An ineligible guest receives 403 (FR-09) and no row is written. A booking on one's own listing returns 409."
+    },
+    {
+      "id": "FR-13",
+      "kind": "functional",
+      "priority": "Must",
+      "text": "When a booking is created, cancelled, or changes status, the system shall enqueue the configured notification to affected users; notification-provider failure shall not roll back or delay the booking transaction.",
+      "designElement": "Transactional Outbox, Worker, Notification Adapters",
+      "testIds": ["TC-13", "RT-02"],
+      "acceptance": "Every booking create/cancel/status transition writes exactly one outbox row per affected recipient in the SAME transaction as the booking row (assert both committed or neither, by forcing a post-insert error and observing zero rows of both). Outbox payloads contain IDs only — a test asserts no email address, phone number, or name appears in any payload JSON (ADR-003). With the SendGrid and FCM adapters forced to throw, POST /api/bookings still returns 201 in under 500 ms and the booking is committed. The worker records a NOTIFICATION_ATTEMPT per try with status in {sent, failed, retrying}, retries with exponential backoff up to config.outbox.maxAttempts, and dead-letters afterwards. RT-02: after a simulated worker crash mid-job the job is re-claimed and delivered exactly once per recipient (idempotency key asserted)."
+    },
+    {
+      "id": "FR-14",
+      "kind": "functional",
+      "priority": "Should",
+      "text": "When a guest or host cancels a booking before the listing's scheduled start, the system shall set the booking to cancelled, atomically restore the seat capacity, and notify the affected parties (FR-13).",
+      "designElement": "Booking Service (cancellation, capacity restore)",
+      "testIds": ["TC-14"],
+      "acceptance": "POST /api/bookings/:id/cancel by the guest or the listing's host before scheduled_start sets status='cancelled', increments listings.seats_remaining by exactly 1, and writes the notification outbox rows — all in one transaction. seats_remaining never exceeds seat_capacity (asserted after repeated/concurrent cancel attempts; a second cancel is idempotent and does not double-restore). Cancelling at or after scheduled_start returns 409. A non-participant returns 403."
+    },
+    {
+      "id": "NFR-01",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "REST API shall deliver 95th-percentile response time under 500ms for core operations (e.g., browse listings, search, review), sustaining up to 200 concurrent users.",
+      "designElement": "REST API, Redis Cache",
+      "testIds": ["LT-01"],
+      "acceptance": "k6 scenario at 200 concurrent virtual users for >= 5 minutes against production-like seed volumes exercising GET /api/listings/search, GET /api/listings/:id, GET /api/hosts/:id and GET /api/hosts/:id/reviews reports http_req_duration p(95) < 500 ms with error rate < 1%. The measured p95 number is recorded in the run report; a run that cannot reach 200 VUs on the host machine must report the achieved level and be marked untestable rather than passed."
+    },
+    {
+      "id": "NFR-02",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "The system shall support at least 10,000 registered users and 1,000 active dinner listings/bookings per day while continuing to meet the NFR-01 latency targets.",
+      "designElement": "Backend System, PostgreSQL",
+      "testIds": ["LT-02"],
+      "acceptance": "The volume seed loads >= 10,000 users, >= 1,000 listings for a single day and >= 1,000 bookings for that day. With that dataset present, the LT-01 scenario is re-run and still reports p(95) < 500 ms. EXPLAIN ANALYZE on the search query shows index usage (no sequential scan on listings) and required indexes exist on (scheduled_start), (host_id, local_date), (moderation_status), and the geo/cuisine filter columns."
+    },
+    {
+      "id": "NFR-03",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "All network transit across mobile, web, and backend services must strictly enforce HTTPS/TLS 1.2 or higher.",
+      "designElement": "Network Security Layer (TLS)",
+      "testIds": ["ST-01"],
+      "acceptance": "The HTTPS server is created with minVersion 'TLSv1.2' (configuration review asserts the literal option). A plain-HTTP request to the service is refused with 403/426 and an 'HTTPS required' body — never served content and never 200. HSTS (Strict-Transport-Security, max-age >= 15552000) is present on every response. A TLS scan of the running dev server negotiates TLS 1.2/1.3 only and fails for TLS 1.0/1.1. Test-mode transport relaxation is gated behind an explicit config flag that fails closed when NODE_ENV=production."
+    },
+    {
+      "id": "NFR-04",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "User passwords shall be stored using an industry-standard hashing algorithm (e.g., Argon2id, bcrypt). No plain text password shall be stored.",
+      "designElement": "Authentication Service",
+      "testIds": ["ST-02"],
+      "acceptance": "users.password_hash matches the Argon2id ($argon2id$) or bcrypt ($2b$) format with documented parameters (Argon2id memoryCost >= 19456 KiB, timeCost >= 2; or bcrypt cost >= 12). Registering then querying the DB shows the plaintext appears in no column. A grep over the whole repository proves no logger, error handler, or response serializer emits the password field (the request validation layer redacts it). Two registrations with the same password produce different hashes (per-user salt)."
+    },
+    {
+      "id": "NFR-05",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "Login attempts shall be rate-limited or temporarily locked after 5 failed attempts within 10 minutes to prevent brute-force attacks.",
+      "designElement": "Authentication Service (rate limiting)",
+      "testIds": ["ST-03"],
+      "acceptance": "Five failed POST /api/auth/login attempts for the same account within a 10-minute sliding window cause the 6th attempt to return 429 with Retry-After, even when the credentials are correct. The counter is stored in Redis keyed by account and by source IP with a 600-second TTL. After the lockout window elapses (clock advanced in test) a correct login succeeds. A successful login resets the counter. ST-03 scripts the full sequence and asserts the exact 5-in-10-minutes boundary (attempt 5 fails as invalid credentials, attempt 6 is locked out)."
+    },
+    {
+      "id": "NFR-06",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "When a user registers or updates their profile, the system shall validate email verification and evaluate action-specific eligibility policies: canReserveSeat requires a verified email, full name, and phone number; canPublishListing additionally requires a completed host profile and host-agreement acceptance. Actions for which the user is ineligible are restricted (FR-09). The policies sit behind one interface, so v2.0 identity verification can replace the internal rules.",
+      "designElement": "Eligibility Policy Service, Email Verification",
+      "testIds": ["IT-02", "TC-09"],
+      "acceptance": "A single module exports evaluate(userId, action) plus canReserveSeat and canPublishListing and is the only place those rules exist. Truth-table test: canReserveSeat is true only when email_verified AND full_name AND phone_number are all present; canPublishListing additionally requires host_profile_complete AND host_agreement_accepted_at. Each false case returns machine-readable reason codes. Registration and profile update recompute and persist the eligibility flags on the USER row, and the flags equal the policy result after every mutation."
+    },
+    {
+      "id": "NFR-07",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "Key interfaces shall follow WCAG 2.1 AA accessibility guidelines.",
+      "designElement": "Web UI (React)",
+      "testIds": ["UT-01"],
+      "acceptance": "An automated axe-core audit over the key React interfaces (search/browse, listing detail, host profile, booking flow, signup/login, messaging, moderator queue) reports zero violations of impact 'serious' or 'critical' against the wcag2a/wcag2aa rule sets. Keyboard-only traversal reaches every interactive control with a visible focus indicator; all images carry alt text; form controls have associated labels and errors are announced via aria-live; colour contrast >= 4.5:1 for body text. The 5-participant moderated usability study is a human activity recorded as such."
+    },
+    {
+      "id": "NFR-08",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "Important actions (ex., user registrations, booking, cancellation) shall be logged. The system shall also log and monitor errors; records shall be sufficient for developers to identify the cause.",
+      "designElement": "Logging & Monitoring Service",
+      "testIds": ["MT-01"],
+      "acceptance": "Performing registration, booking creation, booking cancellation, and a moderation decision in a test environment produces one structured JSON audit record each, containing event name, correlation/request ID, actor user ID, subject entity ID, outcome, and timestamp. Every request carries a correlation ID that propagates into the outbox payload and into the worker's log lines for the resulting job (assert the same ID appears on both sides). Errors log message, stack, correlation ID and HTTP status. Logs contain user IDs only — a scan of captured log output finds no email address, phone number, name, or password (SRS §3.4 PII register)."
+    },
+    {
+      "id": "NFR-09",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "During the demo period, the system shall maintain 99% availability. If an external service (e.g., Google Maps, SendGrid, or Firebase Cloud Messaging) becomes unavailable, the system shall display an appropriate error message, use cache or previously stored data where available, and defer non-critical actions such as notifications or moderation requests until the external service becomes available again.",
+      "designElement": "External Service Adapters, Deferred-Work Mechanism",
+      "testIds": ["RT-01"],
+      "acceptance": "Each adapter (Maps, SendGrid, FCM, LLM, object storage) enforces a timeout (default 3000 ms), bounded retries with exponential backoff, and a documented fallback. RT-01 cuts off each service in turn: with Maps down, search returns cached results and a degraded-mode indicator plus a user-facing message; with SendGrid or FCM down, bookings still commit and notification jobs remain queued and are delivered after recovery; with the LLM down, public content stays 'pending' and messages still deliver; with object storage down, listing detail renders with a placeholder rather than a 500. No unhandled 5xx is returned in any drill, and every deferred job completes once the service is restored."
+    },
+    {
+      "id": "NFR-10",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "The AI assistance used to detect and reduce spam, fraudulent activity, abusive language, and inappropriate content must operate with false positive and false negative rates of less than 5%.",
+      "designElement": "AI Moderation Service",
+      "testIds": ["IT-03"],
+      "acceptance": "A versioned labelled evaluation set of at least 200 items (offensive, spam, fraudulent and benign in balanced proportions, checked into tests/fixtures/moderation-eval/vN/) is scored end-to-end through the real pipeline (pre-filter then LLM). The harness prints and asserts falsePositiveRate < 0.05 and falseNegativeRate < 0.05 and fails if the set contains fewer than 200 items. Results (set version, model/prompt version, counts, both rates) are written to a versioned results file so the bound can be re-checked when the model or prompt changes."
+    },
+    {
+      "id": "NFR-11",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "The system shall validate and sanitize all user inputs to prevent SQL injections, cross-site scripting (XSS), and other injection attacks.",
+      "designElement": "Input Validation Module",
+      "testIds": ["ST-04"],
+      "acceptance": "Every route declares a schema (body, query, params) enforced by one shared validation middleware; a test enumerates the router and fails if any route lacks a schema. Unknown properties are stripped and type/length/range violations return 422 with field-level errors and no stack trace. All SQL is parameterized — a repository grep proves no string-concatenated or template-literal-interpolated SQL exists. ST-04 fires SQLi payloads (e.g. `' OR 1=1 --`, `'; DROP TABLE users; --`) and XSS payloads (e.g. `<script>alert(1)</script>`, `<img src=x onerror=...>`) at every input boundary (search, listing text, chat, reviews, profile) and asserts: no 500, no data leakage, tables intact, and stored/returned text is escaped or sanitized so no executable markup survives."
+    },
+    {
+      "id": "NFR-12",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "Users shall be able to delete their account from the application. Upon deletion, all personal data (name, email, phone number, pictures) shall be erased or irreversibly anonymized within 30 days; reviews may be retained in anonymized form. Personal data of accounts inactive for 24 months shall be deleted after notice. Database backups containing deleted data shall expire within 30 days.",
+      "designElement": "Data Lifecycle Service (deletion, retention, media)",
+      "testIds": ["ST-05"],
+      "acceptance": "DELETE /api/users/me marks the account deleted and enqueues an erasure job with a due date of now + config.privacy.erasureDays (30). Running the lifecycle job erases or irreversibly anonymizes name, email, phone, emergency contact and password hash on the USER row, deletes every media object owned by the user from object storage by key via the media adapter (assert delete-by-key called per key and that a subsequent fetch 404s), and rewrites reviews, bookings and safety alerts to anonymized author references while retaining them. ST-05 asserts a full-database scan finds none of the user's PII strings after the job, and that the backup-retention configuration/script expires backups older than 30 days. An inactivity sweep flags accounts with last_active_at older than 24 months, records the notice, and erases after the notice period."
+    },
+    {
+      "id": "NFR-13",
+      "kind": "nonfunctional",
+      "priority": "Must",
+      "text": "The system shall collect only the personal data enumerated in section 3.4 (data minimization). Personal data shall be encrypted in transit (NFR-03) and at rest (AES-256 or equivalent); access shall be role-restricted and logged. On request, users shall receive a copy of their personal data within 30 days, consistent with CCPA obligations. Emergency-contact details are a third party's personal data: collected minimally (name, phone, email), used only for FR-07 alerts, and included in the registering user's deletion scope.",
+      "designElement": "Data Protection (encryption, access control, export)",
+      "testIds": ["ST-06"],
+      "acceptance": "A schema test asserts the USER/emergency-contact columns are exactly the SRS §3.4 set — no extra personal attribute is stored, and API responses are built from explicit field allowlists. Phone number and emergency-contact fields are stored encrypted at rest with AES-256-GCM using a key from the environment (the ciphertext in the column is not the plaintext; decryption round-trips), and the deployment note documents volume/disk encryption for the rest. Personal-data reads by a Moderator/admin role are permitted only for that role (403 otherwise) and each such read writes an access-log record with actor, subject and purpose. POST /api/users/me/export produces a machine-readable copy of every PII class in the §3.4 register for the requesting user within the 30-day SLA (job created immediately, due date asserted), and the export contains that user's data only."
+    },
+    {
+      "id": "AB-01",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Fake host / fake listing: an attacker creates a host account with fabricated identity and stolen photos to collect bookings or lure guests to an unsafe location.",
+      "designElement": "Misuse cases (SRS §3.5) — Eligibility Policy Service, Moderation Module, Review Service, Safety Alert Service",
+      "testIds": ["ST-05", "IT-03", "TC-09", "TC-08", "TC-07"],
+      "acceptance": "A host account that has not completed the profile/host-agreement gate cannot publish (403, FR-09/NFR-06). Every created listing enters moderation_status='pending' and is invisible in search until approved (FR-08); a listing flagged by the pipeline is routed to the moderator queue and never published. Mutual reviews are attributable to completed bookings only (FR-05) and the safety-alert path is reachable from an active booking (FR-07). The test asserts an unapproved/unverified host's listing never appears in GET /api/listings/search."
+    },
+    {
+      "id": "AB-02",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Fraudulent / hoarding bookings: a user mass-reserves seats they never intend to use, blocking real guests and wasting host effort.",
+      "designElement": "Misuse cases (SRS §3.5) — Eligibility Policy Service, Booking Service, Logging",
+      "testIds": ["TC-12", "ST-04", "LT-01"],
+      "acceptance": "A scripted guest attempting 20 sequential bookings is stopped at config.booking.maxConcurrentPending (default 3) with 409 BOOKING_LIMIT; the 4th onward create no rows and leave seats_remaining unchanged. Ineligible users are blocked before any capacity check (FR-09). Every create/cancel writes an audit record with actor and booking IDs so the pattern is reconstructable (NFR-08). Concurrent hoarding attempts never overbook (FR-12 race assertion)."
+    },
+    {
+      "id": "AB-03",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Spam or scripted listings: bots create listings at scale to advertise or phish.",
+      "designElement": "Misuse cases (SRS §3.5) — Listing Service (MEHKO invariant), Moderation Module, Input Validation, Auth rate limiting",
+      "testIds": ["IT-03", "ST-04", "ST-03", "TC-11"],
+      "acceptance": "A script creating 10 listings for the same host and date yields exactly 1 persisted listing and 9 x 409 (DB unique index on (host_id, local_date)). Listing text runs the deterministic pre-filter; spam samples from the IT-03 labelled set are rejected or queued and never published. Malformed/oversized payloads are rejected by the validation layer with 422. Login rate limiting (NFR-05) blocks scripted credential cycling used to spin up posting accounts."
+    },
+    {
+      "id": "AB-04",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Abusive content in chat or reviews: harassment, hate speech, or inappropriate content in messages (FR-06) or reviews (FR-05).",
+      "designElement": "Misuse cases (SRS §3.5) — Moderation Module, Safety Alert Service, Logging",
+      "testIds": ["IT-03", "TC-08", "TC-06", "TC-05", "TC-07"],
+      "acceptance": "Abusive review text never becomes publicly visible: it is either rejected by the pre-filter or held pending and routed to the moderator queue. Abusive message text is delivered (per FR-08 policy) but asynchronously scanned; a flagged message is hidden from subsequent GETs and appears in the moderator queue. A moderator can escalate to a safety alert, and every moderation decision writes a MODERATION_DECISION row with category, outcome and decided_by (NFR-08). Offensive items from the >=200-item labelled set are detected within the <5% false-negative bound (IT-03)."
+    },
+    {
+      "id": "AB-05",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Account takeover: credential stuffing or brute force against user accounts.",
+      "designElement": "Misuse cases (SRS §3.5) — Authentication Service (hashing, rate limiting), Network Security Layer",
+      "testIds": ["ST-03", "ST-02", "ST-01"],
+      "acceptance": "A scripted brute-force of 50 attempts against one account is locked out after 5 failures within 10 minutes (429 with Retry-After) and correct credentials are still refused during the lockout. Passwords are stored only as Argon2id/bcrypt hashes (ST-02) so a stolen dump yields no plaintext. All login traffic is HTTPS/TLS 1.2+ and plain HTTP is refused (ST-01). Session tokens are opaque, >= 128 bits of entropy, stored in Redis with a TTL, and delivered in an HttpOnly, Secure, SameSite cookie; logout deletes the Redis session so the token is unusable afterwards."
+    },
+    {
+      "id": "AB-06",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Injection attacks: SQL injection or XSS via search fields, listing text, chat, or reviews.",
+      "designElement": "Misuse cases (SRS §3.5) — Input Validation Module",
+      "testIds": ["ST-04"],
+      "acceptance": "The ST-04 payload suite (SQLi and XSS vectors) is fired at every input boundary — search query params, listing create/update text, chat messages, review comments, profile fields, moderation notes. Assertions: no request returns 500, no response contains unescaped payload markup, the users/listings/bookings tables are intact after the run, and no query is built by string concatenation (static grep). An OWASP ZAP baseline scan against the running app reports no high-risk alerts."
+    },
+    {
+      "id": "AB-07",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "MEHKO evasion via duplicate accounts: a host creates multiple accounts to exceed the legal daily meal limit.",
+      "designElement": "Misuse cases (SRS §3.5) — Registration/Email Verification, Listing Service (single enforcement point), Logging",
+      "testIds": ["TC-10", "TC-11", "MT-01"],
+      "acceptance": "users.email carries a unique constraint; a second registration with the same email returns 409 and creates no row, and an account cannot publish until that email is verified (FR-10). The daily cap is enforced in exactly one server-side place (the listing service, backed by the DB unique index) — a grep proves no second implementation and no client-side-only check. Listing creations are logged with host ID and local date so duplicate-account patterns are reviewable (NFR-08). Phone-number uniqueness and identity verification are recorded as deferred to v2.0 and are explicitly not implemented."
+    },
+    {
+      "id": "AB-08",
+      "kind": "abuse",
+      "priority": "Must",
+      "text": "Scraping of personal data: automated harvesting of host addresses and profiles.",
+      "designElement": "Misuse cases (SRS §3.5) — Session authentication, Eligibility Policy, Data minimization in API responses",
+      "testIds": ["ST-06", "ST-04"],
+      "acceptance": "Every profile, listing-detail, host-profile and messaging endpoint requires a valid session; unauthenticated requests get 401 and are never served personal data. Responses are built from explicit field allowlists: host email, phone, emergency contact and exact street address never appear in any list or detail payload (only approximate/geocoded area is exposed pre-booking; the precise address is released only to a confirmed guest of that booking). A test enumerates every public response schema and fails on any disallowed PII key. Read-API rate limiting is documented as an explicitly deferred v2.0 control and is not implemented."
+    }
+  ]
+}

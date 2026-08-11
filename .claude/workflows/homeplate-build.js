@@ -1,10 +1,7 @@
 export const meta = {
   name: 'homeplate-build',
   description: 'Coordinator plans from the SRS + SPMP + ADRs, implementers build in dependency waves, verifiers test every requirement/module/function and drive repair rounds',
-  whenToUse:
-    'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and ADR-001..006. ' +
-    'args: {mode:"full"|"plan"|"implement"|"verify", repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. ' +
-    'mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
+  whenToUse: 'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and ADR-001..006. args: {mode:"full"|"plan"|"implement"|"verify", repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
   phases: [
     { title: 'Plan', detail: 'coordinator normalizes SRS/SPMP/ADRs into a requirement inventory + work waves' },
     { title: 'Scaffold', detail: 'one agent lays down the repo skeleton, deps, DB migrations, test harness' },
