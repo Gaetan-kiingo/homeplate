@@ -1,6 +1,6 @@
 # ADR-004: Media storage — object storage with per-object deletion
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-31
 - **Deciders:** Lucya Chuang, Gaetan Rieben, Nam Tran
 - **Related requirements:** FR-02 (meal detail), FR-03 (host profile), FR-05 (reviews), NFR-12 (data deletion)
