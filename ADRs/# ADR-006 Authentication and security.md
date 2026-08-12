@@ -1,6 +1,6 @@
 # ADR-006: Authentication and security boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-31
 - **Deciders:** Lucya Chuang, Gaetan Rieben, Nam Tran
 - **Related requirements:** NFR-03 (transport security), NFR-04 (password hashing), NFR-05 (rate limiting), NFR-06 (eligibility gate), NFR-11 (input validation)
