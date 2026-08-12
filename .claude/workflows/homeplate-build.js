@@ -1,7 +1,7 @@
 export const meta = {
   name: 'homeplate-build',
   description: 'Coordinator plans from the SRS + SPMP + ADRs, implementers build in dependency waves, verifiers test every requirement/module/function and drive repair rounds',
-  whenToUse: 'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and ADR-001..006. args: {mode:"full"|"plan"|"implement"|"verify", repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
+  whenToUse: 'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and the ADR set. args: {mode:"full"|"plan"|"implement"|"verify", repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
   phases: [
     { title: 'Plan', detail: 'coordinator normalizes SRS/SPMP/ADRs into a requirement inventory + work waves' },
     { title: 'Scaffold', detail: 'one agent lays down the repo skeleton, deps, DB migrations, test harness' },
@@ -45,7 +45,7 @@ PROJECT: Homeplate v1.0 — a two-sided home-cooked-meal marketplace (MSCS 2101,
 AUTHORITATIVE DOCUMENTS
 - SRS v3.2 (FROZEN BASELINE): ${SRS_DOC}
 - SPMP v1.0 (process/work breakdown): ${SPMP_DOC}
-- ADR-001 .. ADR-006 (architecture decisions, markdown): ${ADR_DIR}
+- Architecture decision records (markdown, ADR-001 upward): ${ADR_DIR}
 - Code repository (git, remote git@github.com:Gaetan-kiingo/homeplate.git): ${REPO}
 - Plain-text extractions and plan artifacts: ${GEN}
 
@@ -57,7 +57,8 @@ giving up. Extract them with:
   textutil -convert txt -output "${GEN}/SRS.txt" "<path to the SRS .docx>"      # macOS
   textutil -convert txt -output "${GEN}/SPMP.txt" "<path to the SPMP .docx>"
 On Linux use \`pandoc -t plain\` or \`python3 -m docx2txt\` instead of textutil.
-Reuse those .txt files if they already exist. Read ALL six ADR markdown files in ${ADR_DIR}.
+Reuse those .txt files if they already exist. List ${ADR_DIR} and read EVERY ADR markdown file you
+find there — the set grows as the team decides things, so never assume a fixed count.
 If you truly cannot locate the SRS, stop and say so — do NOT invent requirements from memory.
 
 CONFLICT RULE (from SPMP §1.1.2): SRS v3.2 is the frozen requirements baseline. Where the SPMP
@@ -71,7 +72,7 @@ FIXED TECHNOLOGY (SRS §2.4 — not open to reinterpretation)
 React responsive web client · Node.js/Express stateless REST API · PostgreSQL as source of truth ·
 Redis for sessions and read caching only. Object storage for media (ADR-004). Free-tier only.
 
-BINDING ARCHITECTURE INVARIANTS (ADR-001..006) — treat these as acceptance criteria, not advice:
+BINDING ARCHITECTURE INVARIANTS (ADR-001..011) — treat these as acceptance criteria, not advice:
 1. ADR-001/003 — Modular monolith. A booking row and its outbox row commit in the SAME PostgreSQL
    transaction. An in-process background worker polls the outbox and performs deferred work through
    per-service adapters with retry, backoff and dead-letter handling. REQUEST HANDLERS MUST NEVER
@@ -91,6 +92,28 @@ BINDING ARCHITECTURE INVARIANTS (ADR-001..006) — treat these as acceptance cri
    HTTPS/TLS 1.2+ only, plain HTTP refused. Validation at the API boundary. Eligibility
    (canReserveSeat / canPublishListing) is ONE policy interface consulted by every flow — never
    reimplemented per module. No MFA, no ID verification, no payments (all deferred to v2.0).
+6. ADR-007 — The moderation LLM stage calls the GOOGLE GEMINI FREE TIER through the provider-agnostic
+   adapter (LLM_MODERATION_BASE_URL / LLM_MODERATION_API_KEY / MODERATION_MODEL). Never hardcode a
+   provider, a model id or a key. CI and the automated suite use a deterministic MOCK adapter; only
+   the IT-03 measurement run may call the live API. Record the model id with any IT-03 result.
+7. ADR-008 — The NFR-10 evaluation set is SYNTHETIC (team-authored, never scraped), balanced across
+   offensive/spam/fraudulent/benign, >=200 items, versioned under tests/fixtures/moderation-eval/vN/.
+   NO NFR-10 PASS MAY BE CLAIMED WITHOUT A RECORDED HUMAN LABEL SIGN-OFF (reviewer, date, set version)
+   in the results file. An unreviewed run reports provisional numbers only.
+8. ADR-009 — MEHKO caps are CONFIGURATION in src/config/, never inline: 1 listing/host/day,
+   30 meals/day, 60 meals/week, day and week boundaries evaluated in America/Los_Angeles (never UTC,
+   never the caller's timezone). ONE server-side enforcement point for every listing create/update
+   path. A client-side cap enforces nothing.
+9. ADR-010 — Progressive host-address disclosure. The PUBLIC serializer (coarsened coordinates +
+   neighbourhood/city label) is the DEFAULT on every read path; exact street address and precise
+   coordinates go only to a guest holding a pending/in-progress booking on that listing, or to a
+   moderator handling an FR-07 alert on it. Redis caches PUBLIC precision only — a cache read must
+   never be able to leak an exact location. This is a safety property: one forgotten serializer in
+   search, listing detail, host profile, messaging or a moderation view leaks it silently.
+10. ADR-011 — EMAIL via SendGrid is the v1.0 notification channel (FR-13, FR-14, FR-07). The FCM push
+   adapter is implemented but gated behind notifications.push.enabled, DEFAULT FALSE. Dev and the whole
+   test suite use a mock transport that records a NOTIFICATION_ATTEMPT row instead of sending; tests
+   assert on persisted attempts, never on a third party's behaviour. Both adapters stay worker-only.
 
 SCOPE (SRS §1.2): signup, listing create/manage, browse/reserve, booking notification, meal
 completion, reviews, messaging, safety alerts, moderation, data lifecycle/privacy.
@@ -303,9 +326,10 @@ the happy path AND against injected failures for the degraded path (SRS §4.2). 
 not a smoke test: build or extend a versioned labeled evaluation set of AT LEAST 200 items (offensive, spam,
 fraudulent and benign in balanced proportions), score it through the real moderation pipeline, and report the
 measured false-positive and false-negative rates. NFR-10 requires each to be under 5% — report the actual
-numbers, and fail the check if the bound is missed or if the set is smaller than 200. IT-04: alert persisted,
-moderator notified, emergency-contact email delivered through the SendGrid sandbox, retry path exercised by
-injecting a delivery failure.`,
+numbers, and fail the check if the bound is missed, if the set is smaller than 200, or if the results file carries
+no recorded human label sign-off (ADR-008 — an unreviewed set yields provisional numbers, never a pass). IT-04:
+alert persisted, moderator notified, emergency-contact email delivered through the SendGrid MOCK transport
+(ADR-011 — no live sends in the suite), retry path exercised by injecting a delivery failure.`,
   },
   {
     key: 'st-security',
@@ -344,7 +368,7 @@ axe-core WCAG 2.1 AA audit over the key React interfaces plus keyboard-navigatio
   },
   {
     key: 'adr-conformance',
-    title: 'ADR-001..006 conformance — architectural invariants',
+    title: 'ADR conformance — architectural and policy invariants',
     brief: `Audit the code against each binding invariant in the CONTEXT block and report one check per ADR.
 Concretely: (a) grep every Express route handler and prove no external adapter (Maps, FCM, SendGrid, LLM, object
 storage) is called inline on the request path — only worker code may; (b) prove the business row and its outbox row
@@ -352,7 +376,16 @@ are written in ONE PostgreSQL transaction, with no dual write; (c) prove outbox 
 personal data; (d) prove the moderation pre-filter runs before the LLM stage and that public content cannot publish
 without approval; (e) prove media is referenced by key and per-object deletion is wired into account deletion;
 (f) prove exactly one eligibility-policy interface exists and that no module reimplements canReserveSeat or
-canPublishListing locally; (g) prove Redis holds sessions and cache only — never source-of-truth business state.`,
+canPublishListing locally; (g) prove Redis holds sessions and cache only — never source-of-truth business state;
+(h) ADR-007: prove no provider, model id or API key is hardcoded, and that the test suite uses the mock adapter;
+(i) ADR-009: prove the MEHKO caps come from config, that there is exactly ONE server-side enforcement point, and
+that day/week boundaries use America/Los_Angeles — write a test that submits a second listing just after local
+midnight from a different client timezone and assert it is refused; (j) ADR-010: enumerate EVERY endpoint that
+returns listing or host data and assert the public serializer is the default — check search results, listing
+detail, host profile, messaging payloads, moderation views and the Redis-cached copies, and prove an exact
+address is returned ONLY to a guest with a pending/in-progress booking on that listing; (k) ADR-011: prove push
+is disabled by default, that no live send occurs in the suite, and that every attempt writes a
+NOTIFICATION_ATTEMPT row.`,
   },
   {
     key: 'coverage',
@@ -438,7 +471,7 @@ const plan = await agent(
 YOU ARE THE COORDINATOR. You plan; you do not write application code.
 
 Do this, in order:
-1. Extract the SRS and SPMP to text (commands above) and read them in full. Read all six ADRs. Then survey the
+1. Extract the SRS and SPMP to text (commands above) and read them in full. Read every ADR. Then survey the
    existing repository state — what already exists at ${REPO} decides whether this is a green-field build or an
    increment on work in progress. Never assume the repo is empty; check.
 2. Build the requirement inventory: EVERY FR-01..FR-14, NFR-01..NFR-13 and AB-01..AB-08 from SRS §3, with the

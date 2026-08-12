@@ -1,3 +1,8 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
 # Homeplate v1.0 — Build Plan
 
 Derived from **SRS v3.2** (frozen baseline), **SPMP v1.0**, and **ADR-001…006**.
@@ -24,7 +29,7 @@ Repository state at planning time: **green-field for application code**. The rep
 | Validation | `zod` schemas at the API boundary + shared sanitizer | NFR-11, ADR-006 |
 | Passwords | Argon2id via `@node-rs/argon2` (prebuilt binaries). Documented fallback: `bcryptjs` cost 12 if the prebuilt binary is unavailable on the build host — record it as a deviation | NFR-04 |
 | Sessions | Opaque 256-bit token in an HttpOnly/Secure/SameSite=Lax cookie; session record in Redis with TTL | ADR-006 |
-| Moderation LLM | HTTPS adapter, provider configurable by env; default Anthropic Messages API (`MODERATION_MODEL=claude-opus-5`) with a JSON-schema structured output returning `{category, confidence}` | ADR-002, FR-08 |
+| Moderation LLM | HTTPS adapter, provider configurable by env (`LLM_MODERATION_BASE_URL`, `LLM_MODERATION_API_KEY`, `MODERATION_MODEL`); **Google Gemini free tier** is the configured provider, returning structured `{category, confidence}`. Model id pinned at implementation time and recorded with the IT-03 results. Mock adapter in CI | **ADR-007**, ADR-002, FR-08 |
 | Maps | Google Maps/Places Geocoding + Places over HTTPS behind one adapter, results cached in Redis | ADR-005 |
 | Email / push | SendGrid (`@sendgrid/mail`) and Firebase Cloud Messaging (`firebase-admin`), worker-only | SRS §2.1.3, FR-13, FR-07 |
 | Server tests | Jest + Supertest against a seeded test database; k6 (load), axe-core (a11y), OWASP ZAP baseline (ST-04) | SRS §4 |
@@ -221,23 +226,32 @@ up automatically.
 
 ## 6. Open questions for the team
 
-Each is resolved here with the reading most faithful to the SRS, and flagged for confirmation.
+Each is resolved here with the reading most faithful to the SRS. Items 2, 4, 5, 6 and 11 were
+**decided by the team on 2026-08-12** and are now recorded as ADR-007 … ADR-011; the rest remain
+provisional readings awaiting confirmation.
 
 1. **React Native vs React web.** SPMP §5.2.1/§6.2 name React Native; SRS §2.1.2 mandates a single
    responsive React *web* app and states no native app ships in v1.0. **SRS wins — web only.**
-2. **AB 626 numeric caps are not in the SRS.** SRS §2.1.7 says the caps are configuration. Defaults
-   used: 1 listing per host per day (stated in §3.4), 30 meals/day and 60 meals/week (the actual
-   AB 626 limits). Team must confirm the numbers and the legal review note.
+   *Still open as a documentation defect: the SPMP should be corrected at CDR.*
+2. ~~**AB 626 numeric caps are not in the SRS.**~~ **DECIDED — see [ADR-009](../../ADRs/#%20ADR-009%20MEHKO%20capacity%20limits.md).**
+   Confirmed by the team as correct for California: 1 listing/host/day, 30 meals/day, 60 meals/week,
+   day and week boundaries evaluated in `America/Los_Angeles`, enforced at one server-side point.
+   Re-confirm at CDR before claiming regulatory compliance.
 3. **Per-guest concurrent pending-booking limit (FR-12) has no stated value.** Default 3, configurable.
-4. **Notification channel.** FR-13 says "the configured notification". Web push via FCM needs a
-   service worker and VAPID key the team does not have; **email (SendGrid) is the default channel and
-   the FCM adapter ships behind a config flag**, satisfying "configured" without blocking the demo.
-5. **Moderation LLM provider is not free-tier.** The adapter is provider-agnostic
-   (`LLM_MODERATION_BASE_URL`, `LLM_MODERATION_API_KEY`, `MODERATION_MODEL`) so CI and the automated
-   test suite run against a deterministic mock; IT-03's 200-item measurement needs one real key. Team
-   must decide who supplies it.
-6. **The >=200-item labelled evaluation set does not exist yet.** U4-MODERATION authors and versions
-   it; it must be reviewed by a human before the NFR-10 result is claimed.
+4. ~~**Notification channel.**~~ **DECIDED — see [ADR-011](../../ADRs/#%20ADR-011%20Notification%20channel.md).**
+   Email via SendGrid is the v1.0 channel for FR-13, FR-14 and FR-07. The FCM adapter still ships but
+   behind `notifications.push.enabled`, defaulting to false. Dev and the whole test suite use a mock
+   transport that records NOTIFICATION_ATTEMPT rows rather than sending.
+5. ~~**Moderation LLM provider is not free-tier.**~~ **DECIDED — see [ADR-007](../../ADRs/#%20ADR-007%20Moderation%20LLM%20provider.md).**
+   Google Gemini's free tier is the configured provider, behind the existing provider-agnostic adapter.
+   CI runs the mock; only the IT-03 measurement calls the live API.
+   **Open action carried by ADR-007:** free tiers commonly permit provider use of submitted content,
+   and the pipeline scans private messages (§3.4 PII register). Read Gemini's current free-tier data-use
+   terms and record the finding in ST-06 *before* sending any real user content.
+6. ~~**The >=200-item labelled evaluation set does not exist yet.**~~ **DECIDED — see [ADR-008](../../ADRs/#%20ADR-008%20Moderation%20evaluation%20set.md).**
+   U4-MODERATION authors it as synthetic, balanced, versioned content under
+   `tests/fixtures/moderation-eval/v1/`. **No NFR-10 pass may be claimed until a human reviews and
+   signs off the labels**; the sign-off is recorded in the results file with the set and model versions.
 7. **Encryption at rest (NFR-13).** Free-tier PostgreSQL offers no TDE. Plan: application-level
    AES-256-GCM for phone and emergency-contact columns with a key from the environment, plus a
    documented volume-encryption assumption for the rest. Confirm this satisfies ST-06.
@@ -249,9 +263,13 @@ Each is resolved here with the reading most faithful to the SRS, and flagged for
    this is a scheduled sweep on the same worker process).
 10. **Emergency contact is optional (§3.4).** If absent, FR-07 still persists the alert and notifies
     the moderator; delivery status is recorded as `no_channel` rather than failed.
-11. **Host address exposure.** The SRS requires location for discovery (FR-01) but also data
-    minimization (NFR-13). Plan: approximate area pre-booking, exact address released only to a
-    confirmed guest of that booking.
+11. ~~**Host address exposure.**~~ **DECIDED — see [ADR-010](../../ADRs/#%20ADR-010%20Host%20address%20disclosure.md).**
+    Progressive disclosure: approximate area (coarsened coordinates, neighbourhood/city label) to
+    everyone; exact street address only to a guest holding a `pending`/`in progress` booking on that
+    listing, and to a moderator handling an FR-07 alert. The public serializer is the **default**, and
+    the Redis cache stores public precision only, so a cache read cannot leak an exact location.
+    Every public read path — search, listing detail, host profile, messaging, moderation views — must
+    be asserted against the public shape by the `st-security` and `adr-conformance` lanes.
 12. **NFR-01 at 200 concurrent users** cannot be honestly demonstrated on arbitrary laptop hardware.
     LT-01/LT-02 report measured numbers; a run that cannot reach 200 VUs is marked untestable with
     the achieved level, never reported as a pass.
