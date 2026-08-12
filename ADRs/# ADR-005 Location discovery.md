@@ -1,6 +1,6 @@
 # ADR-005: Location discovery — third-party mapping and geocoding service
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-31
 - **Deciders:** Lucya Chuang, Gaetan Rieben, Nam Tran
 - **Related requirements:** FR-01 (search), NFR-01 (latency), NFR-09 (degradation)
