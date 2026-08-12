@@ -1,6 +1,6 @@
 # ADR-003: Deferred-work mechanism — PostgreSQL outbox/job table, in-process worker
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-31
 - **Deciders:** Lucya Chuang, Gaetan Rieben, Nam Tran
 - **Related requirements:** FR-07 (safety alerts), FR-08 (moderation), FR-13 (provider failure), NFR-09 (degradation)
