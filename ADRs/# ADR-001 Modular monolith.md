@@ -1,6 +1,6 @@
 # ADR-001: Modular monolith with a transactional outbox, PostgreSQL as source of truth
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-07-31
 - **Deciders:** Lucya Chuang, Gaetan Rieben, Nam Tran
 - **Related requirements:** FR-08 (moderation), FR-09 (eligibility gate), FR-12 (atomic capacity), FR-13 (provider failure), NFR-01 (latency), NFR-02 (scalability), NFR-09 (degradation), NFR-10 (moderation accuracy), NFR-12 (data deletion)
