@@ -220,11 +220,28 @@ async function send(input, { log } = {}) {
   // 5. Deliver under the NFR-09 resilience contract: per-attempt timeout from config,
   //    bounded retries, exponential backoff. Each try is persisted (recordTry) so the row
   //    reads 'retrying' between attempts and attempt_count matches reality.
+  //
+  //    Terminal-write ordering (MTUT-02): withResilience ABANDONS a try whose per-attempt
+  //    budget expires — it rejects without awaiting fn — so a slow recordTry UPDATE can
+  //    still be in flight when the loop exits. Every recordTry promise is therefore
+  //    tracked (catch-wrapped: settlement only, the try itself still propagates errors)
+  //    and awaited before markFailed/markSent below; otherwise the stale 'retrying' write
+  //    could land AFTER the terminal status and leave the row 'retrying' forever, breaking
+  //    the NFR-09/FR-07 audit trail ("a provider outage yields a failed ROW").
   let lastErrorMessage = null;
+  const tryWrites = [];
+  const settleTryWrites = () => Promise.all(tryWrites);
   try {
     await withResilience(
       async ({ attempt: tryNumber, signal }) => {
-        await repo.recordTry(attempt.id, tryNumber > 1 ? lastErrorMessage : null);
+        const write = repo.recordTry(attempt.id, tryNumber > 1 ? lastErrorMessage : null);
+        tryWrites.push(
+          write.then(
+            () => undefined,
+            () => undefined
+          )
+        );
+        await write;
         return adapter.deliver({
           userId,
           channel,
@@ -249,7 +266,9 @@ async function send(input, { log } = {}) {
     );
   } catch (err) {
     // Provider outage / exhausted retries: a FAILED ROW, not a thrown error (NFR-09 —
-    // the outbox worker must keep draining its batch).
+    // the outbox worker must keep draining its batch). Any try abandoned by the timeout
+    // must land its 'retrying' write BEFORE the terminal status goes down (MTUT-02).
+    await settleTryWrites();
     const failed = await repo.markFailed(attempt.id, scrubErrorMessage(err));
     jobLog.warn(
       {
@@ -264,6 +283,9 @@ async function send(input, { log } = {}) {
     return { status: 'failed', attemptId: attempt.id };
   }
 
+  // Same ordering guarantee on the success path: an earlier abandoned try must not be able
+  // to overwrite 'sent' with a stale 'retrying' (MTUT-02).
+  await settleTryWrites();
   const sent = await repo.markSent(attempt.id);
   jobLog.info(
     {

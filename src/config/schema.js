@@ -112,6 +112,16 @@ const rawSchema = z.object({
   MAPS_API_KEY: optionalString,
   MAPS_CACHE_TTL_SECONDS: intWithDefault(86400),
 
+  // search result-page cache (FR-01, NFR-01, NFR-09 — U3-SEARCH caches whole result pages in
+  // Redis via cache.wrap; this TTL is that cache's, distinct from the geocode cache above)
+  SEARCH_CACHE_TTL_SECONDS: intWithDefault(60),
+
+  // media upload surface (ADR-004; FR-02/FR-05 media supply — U3-HOSTS-MEDIA validates
+  // {contentType ∈ allowlist, sizeBytes ≤ cap} and issues time-boxed upload targets)
+  MEDIA_MAX_UPLOAD_BYTES: intWithDefault(5242880),
+  MEDIA_UPLOAD_URL_TTL_SECONDS: intWithDefault(900),
+  MEDIA_ALLOWED_CONTENT_TYPES: z.string().optional().default('image/jpeg,image/png,image/webp'),
+
   // moderation LLM (ADR-007 — provider-agnostic; provider/model/key come from env ONLY)
   LLM_MODERATION_MODE: z.enum(['mock', 'live']).optional(),
   LLM_MODERATION_BASE_URL: optionalString,
@@ -219,6 +229,21 @@ function validateEnv(rawEnv) {
   if (mapsMode === 'live' && !e.MAPS_API_KEY) {
     problems.push('MAPS_API_KEY is required when MAPS_MODE=live (ADR-005)');
   }
+  // Media content-type allowlist (ADR-004): comma-separated MIME types, each type/subtype.
+  const allowedContentTypes = e.MEDIA_ALLOWED_CONTENT_TYPES.split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowedContentTypes.length === 0) {
+    problems.push('MEDIA_ALLOWED_CONTENT_TYPES must list at least one MIME type (ADR-004)');
+  }
+  for (const mime of allowedContentTypes) {
+    if (!/^[\w.+-]+\/[\w.+-]+$/.test(mime)) {
+      problems.push(
+        `MEDIA_ALLOWED_CONTENT_TYPES entry "${mime}" is not a valid type/subtype MIME type`
+      );
+    }
+  }
+
   if (moderationMode === 'live') {
     // ADR-007: never hardcode a provider, a model id or a key — live mode demands all three.
     if (!e.LLM_MODERATION_BASE_URL)
@@ -279,6 +304,16 @@ function validateEnv(rawEnv) {
       mode: mapsMode,
       apiKey: e.MAPS_API_KEY,
       cacheTtlSeconds: e.MAPS_CACHE_TTL_SECONDS,
+    },
+    search: {
+      // FR-01 / NFR-01 / NFR-09 — U3-SEARCH result-page cache TTL (cache.wrap key TTL).
+      cacheTtlSeconds: e.SEARCH_CACHE_TTL_SECONDS,
+    },
+    media: {
+      // ADR-004 / FR-02 / FR-05 — U3-HOSTS-MEDIA upload validation caps and target expiry.
+      maxUploadBytes: e.MEDIA_MAX_UPLOAD_BYTES,
+      uploadUrlTtlSeconds: e.MEDIA_UPLOAD_URL_TTL_SECONDS,
+      allowedContentTypes,
     },
     moderation: {
       mode: moderationMode,

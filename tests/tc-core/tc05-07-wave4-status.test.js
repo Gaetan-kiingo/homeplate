@@ -1,29 +1,30 @@
-// tests/tc-core — verifier lane "tc-core": TC-01..TC-07 covering FR-01..FR-07
-// (discovery, listing detail, host profile, meal completion, reviews, messaging, safety alert).
+// tests/tc-core/tc05-07-wave4-status.test.js — verifier lane "tc-core": TC-05..TC-07 status
+// probes for FR-05 (reviews), FR-06 (messaging), FR-07 (safety alerts).
 //
-// BUILD-WAVE STATUS PROBES. This run built waves 1-2 only (foundation + platform services);
-// the marketplace modules that implement FR-01..FR-07 (listings, search, hosts, bookings,
-// reviews, messaging, moderation, safety) land in waves 3-4. This suite therefore:
+// Wave 3 built listings/search/hosts/bookings only; reviews, messaging, moderation and safety
+// land in wave 4 (build-plan §7: FR-05/06/07 remain `not_implemented`, never skipped/failed).
+// This suite therefore:
 //
-//   1. PROVES BY EXECUTION that every FR-01..FR-07 endpoint is currently absent — each probe
-//      first asserts src/modules/<name>/routes.js is not on disk, then asserts the live app
-//      answers the endpoint with the structured JSON 404 envelope (NFR-08: JSON error, never
-//      HTML; correlation ID present). If a wave-3 module lands, the routes.js-absence
-//      assertion fails LOUDLY, telling the tc-core lane to replace these probes with the
-//      real TC-01..TC-07 acceptance tests from requirements-inventory.json.
+//   1. PROVES BY EXECUTION that the FR-05..FR-07 endpoints are still absent — each probe
+//      asserts src/modules/<name>/routes.js is not on disk, then that the live app answers
+//      with the structured JSON 404 envelope (NFR-08). The paths nest under /api/bookings,
+//      which IS mounted since wave 3 — multi-segment suffixes like /:id/reviews match none of
+//      the bookings router's routes and must still fall through to the registry 404.
+//      When a wave-4 module lands, the routes.js-absence assertion fails LOUDLY, telling this
+//      lane to replace the probes with the real TC-05..TC-07 acceptance tests.
 //
-//   2. PROVES the §3.4 schema substrate wave 1 already shipped for these requirements holds
-//      its invariants against the real database (SRS §4.1: Jest + seeded test DB):
-//        FR-04 — bookings_completed_requires_both_confirmations CHECK: single confirmation
-//                can NEVER yield status='completed'; both flags can.
-//        FR-05 — reviews rating CHECK 1..5, one-review-per-(booking,author) UNIQUE,
-//                moderation_status defaults to 'pending' (stays pending until FR-08 approval).
-//        FR-06 — messages row persists FK'd to a booking; moderation_status defaults
-//                'pending' as the ADR-002 async-scan state (delivery never waits on it).
-//        FR-07 — safety_alerts row persists with delivery_status defaulting 'pending';
+//   2. PROVES the §3.4 schema substrate for FR-05..FR-07 holds its invariants against the
+//      real database (SRS §4.1):
+//        FR-05 — reviews rating CHECK 1..5, one-review-per-(booking,author) UNIQUE (max two,
+//                one per direction), moderation_status defaults 'pending' (FR-08 gate).
+//        FR-06 — messages persist FK'd to a booking; moderation_status defaults 'pending'
+//                as the ADR-002 async-scan state (delivery never waits on it).
+//        FR-07 — safety_alerts rows persist with delivery_status defaulting 'pending';
 //                notification_attempts (ADR-011 assert-on-rows table) exists.
 //
-// No application source is touched; this lane owns tests/tc-core only.
+// This file supersedes tc-core-wave-status.test.js: its TC-01..TC-04 probes were replaced by
+// the real acceptance suites tc01-search / tc02-listing-detail / tc03-host-profile /
+// tc04-completion in this run, exactly as that file's own header instructed.
 'use strict';
 
 const fs = require('fs');
@@ -42,28 +43,25 @@ const {
 } = require('../helpers/db');
 
 const MODULES_DIR = path.join(__dirname, '..', '..', 'src', 'modules');
-// Any syntactically valid UUID works for absent-route probes — the 404 must come from the
-// route registry (no module mounted), not from a handler's not-found branch.
 const SOME_UUID = '00000000-0000-4000-8000-000000000000';
 
-/** Fails loudly when a wave-3/4 module has landed: these probes must then be replaced. */
+/** Fails loudly when a wave-4 module has landed: these probes must then be replaced. */
 function assertModuleStillAbsent(name) {
   const routesPath = path.join(MODULES_DIR, name, 'routes.js');
   if (fs.existsSync(routesPath)) {
     throw new Error(
-      `src/modules/${name}/routes.js now exists — the wave has landed. Replace the ` +
-        'tc-core wave-status probes with the real TC acceptance tests for this module.'
+      `src/modules/${name}/routes.js now exists — wave 4 has landed. Replace the tc-core ` +
+        'wave-4 status probes with the real TC acceptance tests for this module.'
     );
   }
 }
 
-/** Common assertions for "endpoint not implemented yet": structured JSON 404, never HTML. */
+/** "Endpoint not implemented yet": structured JSON 404 envelope, never HTML (NFR-08). */
 function expectStructuredNotFound(res) {
   expect(res.status).toBe(404);
   expect(res.headers['content-type']).toMatch(/application\/json/);
   expect(res.body).toHaveProperty('error.code', 'NOT_FOUND');
   expect(res.body.error).toHaveProperty('correlationId');
-  // NFR-08: no HTML error page, no stack trace in the body.
   expect(JSON.stringify(res.body)).not.toMatch(/<html|at\s+\S+\s+\(/i);
 }
 
@@ -78,34 +76,9 @@ afterAll(async () => {
 });
 
 // ------------------------------------------------------------------------------------------
-// 1. FR-01..FR-07 endpoint surface — not implemented in waves 1-2 (by plan), proven live.
+// 1. FR-05..FR-07 endpoint surface — wave 4 pending, proven live.
 // ------------------------------------------------------------------------------------------
-describe('FR-01..FR-07 endpoint surface (waves 3-4 pending)', () => {
-  test('TC-01 / FR-01 — GET /api/listings/search is not implemented yet', async () => {
-    assertModuleStillAbsent('search');
-    assertModuleStillAbsent('listings');
-    const res = await request(app).get('/api/listings/search').query({ cuisine: 'test' });
-    expectStructuredNotFound(res);
-  });
-
-  test('TC-02 / FR-02 — GET /api/listings/:id is not implemented yet', async () => {
-    assertModuleStillAbsent('listings');
-    const res = await request(app).get(`/api/listings/${SOME_UUID}`);
-    expectStructuredNotFound(res);
-  });
-
-  test('TC-03 / FR-03 — GET /api/hosts/:id is not implemented yet', async () => {
-    assertModuleStillAbsent('hosts');
-    const res = await request(app).get(`/api/hosts/${SOME_UUID}`);
-    expectStructuredNotFound(res);
-  });
-
-  test('TC-04 / FR-04 — POST /api/bookings/:id/confirm-completion is not implemented yet', async () => {
-    assertModuleStillAbsent('bookings');
-    const res = await request(app).post(`/api/bookings/${SOME_UUID}/confirm-completion`).send({});
-    expectStructuredNotFound(res);
-  });
-
+describe('FR-05..FR-07 endpoint surface (wave 4 pending)', () => {
   test('TC-05 / FR-05 — POST /api/bookings/:id/reviews is not implemented yet', async () => {
     assertModuleStillAbsent('reviews');
     const res = await request(app)
@@ -135,60 +108,10 @@ describe('FR-01..FR-07 endpoint surface (waves 3-4 pending)', () => {
 });
 
 // ------------------------------------------------------------------------------------------
-// 2. §3.4 schema substrate already shipped for FR-04..FR-07 — invariants proven on the DB.
+// 2. §3.4 schema substrate for FR-05..FR-07 — invariants proven on the DB.
 // ------------------------------------------------------------------------------------------
-describe('FR-04 substrate — dual-confirmation CHECK (bookings)', () => {
-  test('a single confirmation can never produce status=completed', async () => {
-    // Host-only confirmation refused by the database.
-    await withRollback(async (client) => {
-      const booking = await makeBooking({ status: 'in_progress' }, client);
-      await client.query('SAVEPOINT sp');
-      await expect(
-        client.query(
-          `UPDATE bookings
-             SET status = 'completed', host_confirmed_completion = true
-           WHERE id = $1`,
-          [booking.id]
-        )
-      ).rejects.toMatchObject({
-        code: '23514',
-        constraint: 'bookings_completed_requires_both_confirmations',
-      });
-      await client.query('ROLLBACK TO SAVEPOINT sp');
-
-      // Guest-only confirmation refused too.
-      await client.query('SAVEPOINT sp2');
-      await expect(
-        client.query(
-          `UPDATE bookings
-             SET status = 'completed', guest_confirmed_completion = true
-           WHERE id = $1`,
-          [booking.id]
-        )
-      ).rejects.toMatchObject({ code: '23514' });
-      await client.query('ROLLBACK TO SAVEPOINT sp2');
-
-      // Both confirmations: completed is accepted.
-      const { rows } = await client.query(
-        `UPDATE bookings
-           SET status = 'completed',
-               host_confirmed_completion = true,
-               guest_confirmed_completion = true
-         WHERE id = $1
-         RETURNING status, host_confirmed_completion, guest_confirmed_completion`,
-        [booking.id]
-      );
-      expect(rows[0]).toEqual({
-        status: 'completed',
-        host_confirmed_completion: true,
-        guest_confirmed_completion: true,
-      });
-    });
-  });
-});
-
 describe('FR-05 substrate — reviews invariants', () => {
-  test('rating outside 1..5 is refused; valid review defaults to moderation pending; one review per author per booking', async () => {
+  test('rating outside 1..5 refused; new review defaults moderation pending; one review per author per booking, two per booking max', async () => {
     await withRollback(async (client) => {
       const booking = await makeBooking(
         {
@@ -230,10 +153,8 @@ describe('FR-05 substrate — reviews invariants', () => {
         },
         client
       );
-      // FR-05/FR-08: a new review is pending until moderation approves it.
-      expect(review.moderation_status).toBe('pending');
+      expect(review.moderation_status).toBe('pending'); // FR-05/FR-08 gate
 
-      // Second review by the SAME author on the same booking: refused (unique).
       await client.query('SAVEPOINT sp3');
       await expect(
         insertRow(
@@ -279,10 +200,8 @@ describe('FR-06 substrate — messages persist against a booking', () => {
       );
       expect(message.id).toBeTruthy();
       expect(message.booking_id).toBe(booking.id);
-      // ADR-002: this column is the asynchronous scan state — delivery never waits on it.
       expect(message.moderation_status).toBe('pending');
 
-      // A message may not reference a nonexistent booking (FK enforced).
       await client.query('SAVEPOINT sp');
       await expect(
         insertRow(
@@ -312,8 +231,6 @@ describe('FR-07 substrate — safety_alerts and notification_attempts', () => {
   });
 
   test('notification_attempts (ADR-011 assert-on-rows substrate) exists and is queryable', async () => {
-    // FR-07's delivery evidence in the automated suite is NOTIFICATION_ATTEMPT rows, never
-    // SendGrid's behaviour. The wave-4 flow will write here; today the table must exist.
     await expect(countRows('notification_attempts')).resolves.toEqual(expect.any(Number));
   });
 });

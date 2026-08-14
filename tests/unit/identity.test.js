@@ -742,12 +742,15 @@ describe('email.verification outbox handler (FR-10 end-to-end, ADR-011)', () => 
   // touched by the request-path tests above.
   let dispatch;
   let mockTransport;
+  let notificationRepo;
 
   beforeAll(() => {
     // eslint-disable-next-line global-require
     dispatch = require('../../src/outbox/dispatch');
     // eslint-disable-next-line global-require
     mockTransport = require('../../src/adapters/mockTransport');
+    // eslint-disable-next-line global-require
+    notificationRepo = require('../../src/modules/notifications/repo');
   });
 
   beforeEach(() => {
@@ -832,8 +835,16 @@ describe('email.verification outbox handler (FR-10 end-to-end, ADR-011)', () => 
     mockTransport.injectFailures(1 + config.adapters.retryMax);
     await expect(handler.handle(job.payload, ctxFor(job))).rejects.toThrow(/delivery failed/);
 
+    // Deterministic by contract, not by luck: transport.send() awaits the settlement of
+    // every recordTry write before the terminal markFailed, so once handle() has rejected
+    // the row MUST read 'failed' — even when a slow try was abandoned by the per-attempt
+    // timeout under full-suite load (MTUT-02). ORDER BY pins rows[0] should the schema
+    // ever allow more than one row per recipient.
     let attempt = (
-      await query('SELECT * FROM notification_attempts WHERE recipient_user_id = $1', [user.id])
+      await query(
+        'SELECT * FROM notification_attempts WHERE recipient_user_id = $1 ORDER BY created_at ASC, id ASC',
+        [user.id]
+      )
     ).rows[0];
     expect(attempt.status).toBe('failed');
     expect(attempt.last_error).not.toBeNull();
@@ -842,10 +853,77 @@ describe('email.verification outbox handler (FR-10 end-to-end, ADR-011)', () => 
     const retry = await handler.handle(job.payload, ctxFor(job));
     expect(retry.status).toBe('sent');
     attempt = (
-      await query('SELECT * FROM notification_attempts WHERE recipient_user_id = $1', [user.id])
+      await query(
+        'SELECT * FROM notification_attempts WHERE recipient_user_id = $1 ORDER BY created_at ASC, id ASC',
+        [user.id]
+      )
     ).rows[0];
     expect(attempt.status).toBe('sent');
     expect(attempt.attempt_count).toBeGreaterThanOrEqual(2);
+  }, 30000);
+
+  test('a try abandoned by the per-attempt timeout can never overwrite the terminal failed status (NFR-09, MTUT-02 regression)', async () => {
+    // Deterministic reproduction of the full-suite flake MTUT-02: withResilience abandons a
+    // try whose per-attempt budget expires WITHOUT awaiting it, so a slow recordTry UPDATE
+    // (status 'retrying') could land AFTER markFailed and leave the row 'retrying' forever.
+    // The first recordTry below stays pending past the per-attempt timeout (the try is
+    // abandoned) and is released only once markFailed has actually committed — exactly the
+    // interleaving the flake needs — with a cancellable fallback timer so the FIXED
+    // transport (which refuses to call markFailed until every recordTry settled) cannot
+    // deadlock. The terminal row must still read 'failed'.
+    const { user, job } = await registeredJob();
+    const handler = dispatch.loadHandlers({ log: logger }).get('email.verification');
+
+    const realRecordTry = notificationRepo.recordTry;
+    const realMarkFailed = notificationRepo.markFailed;
+
+    let markFailedCommitted;
+    const markFailedGate = new Promise((resolve) => {
+      markFailedCommitted = resolve;
+    });
+    let fallbackTimer = null;
+    // Comfortably after the unguarded loop would have exhausted (timeout + both backoffs).
+    const fallback = new Promise((resolve) => {
+      fallbackTimer = setTimeout(resolve, config.adapters.timeoutMs + 3000);
+    });
+
+    let staleWrite = null; // the abandoned try's UPDATE — awaited before the SELECT below
+    const recordTrySpy = jest
+      .spyOn(notificationRepo, 'recordTry')
+      .mockImplementationOnce((...args) => {
+        staleWrite = (async () => {
+          await Promise.race([markFailedGate, fallback]);
+          return realRecordTry(...args);
+        })();
+        return staleWrite;
+      });
+    const markFailedSpy = jest
+      .spyOn(notificationRepo, 'markFailed')
+      .mockImplementation(async (...args) => {
+        const row = await realMarkFailed(...args);
+        markFailedCommitted(); // stale UPDATE is released strictly AFTER 'failed' committed
+        return row;
+      });
+
+    try {
+      mockTransport.injectFailures(1 + config.adapters.retryMax);
+      await expect(handler.handle(job.payload, ctxFor(job))).rejects.toThrow(/delivery failed/);
+      expect(staleWrite).not.toBeNull(); // the abandoned try really was in flight
+      await staleWrite; // the stale 'retrying' UPDATE has fully settled before we look
+
+      const attempt = (
+        await query(
+          'SELECT * FROM notification_attempts WHERE recipient_user_id = $1 ORDER BY created_at ASC, id ASC',
+          [user.id]
+        )
+      ).rows[0];
+      expect(attempt.status).toBe('failed'); // never 'retrying' — the stale write lost
+      expect(attempt.last_error).not.toBeNull();
+    } finally {
+      clearTimeout(fallbackTimer);
+      recordTrySpy.mockRestore();
+      markFailedSpy.mockRestore();
+    }
   }, 30000);
 
   test('handler rejects a malformed payload (caller bug → outbox dead-letter path)', async () => {

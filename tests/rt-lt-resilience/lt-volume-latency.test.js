@@ -136,15 +136,29 @@ describe('LT-02 — NFR-02 volume dataset', () => {
   }, 60000);
 });
 
-describe('LT-01 — approximation probe only (core NFR-01 endpoints are wave-3 and absent)', () => {
-  test('the NFR-01 core read endpoints do not exist yet (this is the LT-01 blocker, recorded)', async () => {
+describe('LT-01 — approximation probe (state-aware: full LT-01 lands with the wave-3 read paths)', () => {
+  test('NFR-01 core endpoints: 404 documented while their wave-3 module is absent, mounted once it lands', async () => {
+    // State-aware wave-status marker (scaffold reconciliation for the wave-3 run): while a
+    // module's routes.js is not on disk the endpoint 404s (the recorded LT-01 blocker); once
+    // the unit lands, the route must be mounted (any non-404 — behaviour belongs to the
+    // unit's own tests and this run's verifier extensions, build-plan §7).
+    const fs = require('fs');
+    const path = require('path');
+    const routesOnDisk = (name) =>
+      fs.existsSync(path.join(__dirname, '..', '..', 'src', 'modules', name, 'routes.js'));
     const app = createApp({ logger: quiet });
+
     const search = await request(app).get('/api/listings/search').query({ cuisine: 'mexican' });
-    expect(search.status).toBe(404); // wave-3 module not mounted — LT-01 cannot be run
+    if (routesOnDisk('search')) expect(search.status).not.toBe(404);
+    else expect(search.status).toBe(404); // wave-3 module not mounted — LT-01 cannot be run
+
     const hosts = await request(app).get('/api/hosts/00000000-0000-4000-8000-000000000000');
-    expect(hosts.status).toBe(404);
+    if (routesOnDisk('hosts')) expect(hosts.status).not.toBe(404);
+    else expect(hosts.status).toBe(404);
+
     const bookings = await request(app).post('/api/bookings').send({});
-    expect(bookings.status).toBe(404); // FR-12 race test target absent
+    if (routesOnDisk('bookings')) expect(bookings.status).not.toBe(404);
+    else expect(bookings.status).toBe(404); // FR-12 race test target absent
   });
 
   test('200-concurrent-client probe against GET /api/users/me (approximation; measured numbers recorded)', async () => {

@@ -7,323 +7,372 @@ output:
 
 Derived from **SRS v3.2** (frozen baseline), **SPMP v1.0**, and **ADR-001…011**.
 Companion artifact: `requirements-inventory.json` (all 14 FR + 13 NFR + 8 AB with executable
-acceptance criteria).
+acceptance criteria — unchanged from the 2026-08-12 inventory; only the buildRun record moved).
 
-**Revision 2026-08-12.** Supersedes the 2026-08-11 plan. Two changes of substance:
+**Revision 2026-08-14.** Supersedes the 2026-08-12 plan (its content is preserved below where it
+still describes reality). Changes of substance:
 
-1. ADR-007…011 are now recorded, so five items that were open questions are decided and folded into
-   the acceptance criteria (moderation provider, evaluation set, MEHKO caps, address disclosure,
-   notification channel).
-2. **This build run implements waves 0–2 only** — repository bootstrap, foundation, and platform
-   services / external adapters. Waves 3–6 (marketplace features, trust & safety, React client) are
-   kept below as the roadmap but are explicitly **not built in this run**.
-
-Repository state at planning time: **still green-field for application code**. `git ls-files` shows
-only `ADRs/`, `Weekly Report/`, `.claude/workflows/homeplate-build.js` and `docs/_generated/`. There
-is no `package.json`, `src/`, `client/`, migration or test file. Everything below is a new build.
+1. **Waves 0–2 are BUILT.** `npm run build` passes (56 source files, 3 migrations, app factory
+   boots); the repository contains config, schema/migrations, DB/Redis clients, observability,
+   validation, HTTPS enforcement, outbox+worker, auth/identity, eligibility, media service, and
+   all five external adapters with their unit and lane tests. This is an **increment**, not a
+   green-field build.
+2. **This run implements wave 3 — core marketplace** (the units the 2026-08-12 plan's §4 named
+   U3-LISTINGS, U3-SEARCH, U3-HOSTS-MEDIA, U3-BOOKINGS), split here into two dependency layers
+   (3A write core, 3B read surface) because two of the four units import serializer/URL modules
+   the other two own. Waves 4–6 remain the roadmap and are **not built in this run**.
+3. Five mechanism decisions this decomposition had to make (search-path Maps use, media upload
+   without request-path adapters, the `pending → in_progress` trigger, `bookings.completed_at`,
+   the `/api/listings/search` mount) are recorded in §6 as team-visible readings, none blocking.
 
 ---
 
-## 1. Stack
+## 1. Stack (unchanged, now on disk)
 
 | Concern | Choice | Why |
 |---|---|---|
-| Client (wave 5+, not this run) | React 18 + Vite, responsive single-page web app | SRS §2.1.2 (SPMP §5.2.1's "React Native" loses to the SRS) |
-| API | Node.js 20+ / Express 4, stateless REST over HTTPS/JSON | SRS §2.4 fixed constraint |
-| Language | JavaScript, CommonJS on the server (ESM in the client later) | No transpile step; Jest + Supertest work out of the box (SRS §4.1) |
-| Source of truth | PostgreSQL 16 via `pg` connection pool, parameterized SQL only | SRS §2.4, NFR-11 |
-| Cache / sessions | Redis 7 via `ioredis` — **sessions and read cache only** | SRS §2.4, ADR-001, ADR-006 |
-| Media | S3-compatible object storage (MinIO locally) via `@aws-sdk/client-s3`, referenced by key | ADR-004 |
-| Deferred work | PostgreSQL outbox table + in-process polling worker, per-service adapters | ADR-001 / ADR-003 |
-| Validation | `zod` schemas at the API boundary + shared sanitizer | NFR-11, ADR-006 |
-| Passwords | Argon2id via `@node-rs/argon2` (prebuilt binaries). Documented fallback: `bcryptjs` cost 12 if no prebuilt binary exists on the build host — record it as a deviation in the ST-02 notes | NFR-04 |
-| Sessions | Opaque 256-bit token in an HttpOnly/Secure/SameSite=Lax cookie; session record in Redis with TTL | ADR-006 |
-| Moderation LLM | Provider-agnostic HTTPS adapter (`LLM_MODERATION_BASE_URL`, `LLM_MODERATION_API_KEY`, `MODERATION_MODEL`); **Google Gemini free tier** is the configured provider, returning `{category, confidence}`. Model id pinned in config and recorded with IT-03 results. Deterministic mock in CI | **ADR-007**, ADR-002, FR-08 |
-| Maps | Google Maps/Places Geocoding + Places behind one adapter, results cached in Redis at **public precision only** | ADR-005, **ADR-010** |
-| Email / push | SendGrid (`@sendgrid/mail`) is the v1.0 channel; FCM (`firebase-admin`) ships behind `notifications.push.enabled = false`. Both worker-only, both mocked in dev and test | **ADR-011**, FR-13, FR-07 |
-| Server tests | Jest 29 + Supertest against a seeded test database; k6 (load), axe-core (a11y), OWASP ZAP baseline (ST-04) | SRS §4 |
-| Package manager | npm (Node 20+) | SPMP §5.1.3 free tier |
-| Local infra | Docker Compose: PostgreSQL, Redis, MinIO | SPMP §5.1.3, ADR-004 |
+| API | Node.js 20+ / Express 4, CommonJS, stateless REST over HTTPS/JSON | SRS §2.4; built (waves 0–2) |
+| Source of truth | PostgreSQL 16 via `pg`, parameterized SQL only | SRS §2.4, NFR-11 |
+| Cache / sessions | Redis 7 via `ioredis` — sessions and read cache only | ADR-001/006 |
+| Media | S3-compatible object storage (MinIO locally), referenced by key | ADR-004 |
+| Deferred work | `outbox_jobs` table + in-process polling worker (`FOR UPDATE SKIP LOCKED`, retry/backoff/dead-letter) | ADR-001/003; built |
+| Validation | `zod` schemas via `src/middleware/validate.js` | NFR-11 |
+| Moderation LLM | Provider-agnostic adapter, Gemini free tier configured, deterministic mock in CI | ADR-007 |
+| Maps | Google Maps/Places adapter, Redis cache at public precision only | ADR-005, ADR-010 |
+| Email / push | SendGrid channel; FCM behind `notifications.push.enabled=false`; mock transport in dev/test recording NOTIFICATION_ATTEMPT rows | ADR-011 |
+| Tests | Jest 29 + Supertest; k6 (LT), axe-core (UT-01), ZAP baseline (ST-04) | SRS §4 |
+| Package manager / infra | npm; Docker Compose (PostgreSQL 5432, Redis 6379, MinIO 9000/9001) | SPMP §5.1.3, free tier |
 
-### Directory layout
+### Directory layout (repo-relative; **bold** = new in this run)
 
 ```
-db/migrations/            numbered .sql migrations (source of truth for the §3.4 schema)
-scripts/                  migrate.js, seed.js, worker.js, check-build.js, gen-dev-certs.sh
-src/config/               env schema, fail-fast loader, locale/AB 626 caps (SRS §2.1.7, ADR-009)
-src/db/                   pg pool, withTransaction, redis client, field-level encryption
-src/lib/                  logger, errors, resilience, httpClient, cache, sanitize, geoPrecision
-src/middleware/           requestContext, errorHandler, security (TLS/HSTS), validate
-src/routes/               router registry that mounts src/modules/*/routes.js
-src/adapters/             maps, sendgrid, fcm, llmModeration, objectStorage (worker-side only)
-src/outbox/               outbox.enqueue, dispatch registry, worker; handlers/*.js
-src/modules/              auth, users, eligibility, media, notifications        (waves 0-2)
-                          listings, search, hosts, bookings, reviews, messaging,
-                          moderation, safety, privacy                          (waves 3-4)
-client/                   React + Vite responsive web app                       (waves 5-6)
-tests/unit/               implementer-written unit/integration tests
-tests/helpers/            shared test env, DB/Redis harness
+db/migrations/            0001 core schema, 0002 indexes, 0003 outbox, **0004 bookings.completed_at**
+scripts/                  migrate.js, seed.js, worker.js, dev.js, check-build.js, gen-dev-certs.sh
+src/config/               env schema, fail-fast loader, locale/AB 626 caps (ADR-009)
+src/db/                   pool, withTransaction, redis, fieldCrypto
+src/lib/                  logger, errors, resilience, httpClient, cache, sanitize, geoPrecision,
+                          **mediaUrls.js** (local URL derivation/presigning — no network call)
+src/middleware/           requestContext, errorHandler, security, validate
+src/routes/index.js       route registry (mounts src/modules/*/routes.js; wave-3 names already known)
+src/adapters/             maps, sendgrid, fcm, llmModeration(+mock), objectStorage
+src/outbox/               outbox, dispatch, worker; handlers/emailVerification.js,
+                          **handlers/listingGeocode.js, bookingNotifications.js, bookingPromote.js**
+src/modules/              auth, users, eligibility, media, notifications        (waves 0–2, built)
+                          **listings, search, hosts, bookings** (+ **media/routes.js**)  (this run)
+                          reviews, messaging, moderation, safety, privacy       (wave 4)
+src/schemas/              common, auth, **listings, bookings, search, hosts, media**
+client/                   React + Vite responsive web app                       (waves 5–6)
+tests/unit/               implementer unit/integration tests (per unit)
 tests/<lane>/             verifier lanes (tc-core, tc-booking, it-adapters, st-security,
                           rt-lt-resilience, mt-ut-quality, adr-conformance, coverage)
-tests/fixtures/           seed data + the versioned >=200-item moderation eval set (IT-03)
-docs/_generated/          this plan, the requirement inventory, extracted SRS/SPMP text
+docs/_generated/          this plan, requirements-inventory.json, SRS.txt, SPMP.txt
 ```
 
-### Conventions that make parallel work safe
+### Conventions that make parallel work safe (carried forward, binding)
 
-1. **File ownership is exclusive.** No two units in the same wave own the same path. A unit may
-   *import* a sibling's module through the `publicInterface` declared for that sibling, but must
-   never edit a file it does not own. Where a wave-mate's contract is needed before it exists
-   (e.g. `src/config`), the contract in this document is the specification; the implementer codes
-   against it.
-2. **Route registry (`src/routes/index.js`, owned by U1-HTTP).** It resolves a known list of
-   `src/modules/<name>/routes.js` paths, mounts each that exists, and logs a startup warning for
-   each that does not. Real logic, no stub — later waves drop a router in and it is mounted with no
-   edit to a shared file. After wave 2 the mounted set is auth + users only, and that is expected.
-3. **Outbox handler discovery (`src/outbox/dispatch.js`, owned by U2-OUTBOX).** The dispatcher reads
-   `src/outbox/handlers/*.js` at startup; each file exports `{ type, handle(payload, ctx) }`.
-   Feature units own individual handler files, so no shared registry file is ever edited twice.
-4. **Client route discovery (`client/src/App.jsx`, owned by U5-SHELL, wave 5).** Routes are collected
-   with `import.meta.glob('./features/*/routes.jsx', { eager: true })`, valid with zero matches.
+1. **File ownership is exclusive within a wave.** A unit may *import* a sibling's module only
+   through the `publicInterface` contract in this plan, and never edits a file it does not own.
+   This revision goes one step further: where the 2026-08-12 plan let same-wave units import
+   not-yet-written sibling files, this run **splits those pairs into two layers (3A → 3B)** so
+   every import target exists before its importer is built.
+2. **Route registry** (`src/routes/index.js`, wave 1) already knows the module names `listings`,
+   `search`, `hosts`, `bookings`. Dropping `src/modules/<name>/routes.js` on disk mounts it at
+   `/api/<name>` (or at the module's exported `basePath`) with no edit to any shared file.
+3. **Outbox handler discovery** (`src/outbox/dispatch.js`): each `src/outbox/handlers/*.js`
+   exports `{ type, handle(payload, ctx) }` and is auto-registered. Feature units own individual
+   handler files. An enqueued type with no registered handler retries and dead-letters at the
+   attempt cap; `outbox.requeueDeadLetter(jobId)` re-opens it once the handler lands (see §6.2).
+4. **Migrations are append-only.** A wave never edits an applied migration; new columns arrive as
+   new numbered files. This run appends exactly one: `0004` (owned by U3-BOOKINGS).
 
 ---
 
-## 2. Commands
+## 2. Commands (unchanged; all in package.json today)
 
 | Purpose | Command |
 |---|---|
-| install | `npm install` (client added in wave 5: `npm --prefix client install`) |
-| infra | `docker compose up -d` (PostgreSQL 5432, Redis 6379, MinIO 9000/9001) |
-| migrate | `npm run migrate` (applies `db/migrations/*.sql` in order, records them in `schema_migrations`) |
-| seed | `npm run seed` / `npm run seed:volume` (NFR-02 scale, for LT-02) |
-| build | `npm run build` → `node scripts/check-build.js`: loads and validates the env schema, parses every migration for ordering/duplicate version, syntax-checks every `src/**/*.js`, and boots the Express app factory when it exists. There is no transpile step for the CommonJS server; the client bundle joins this command in wave 5 |
+| install | `npm install` |
+| infra | `docker compose up -d` (PostgreSQL, Redis, MinIO) |
+| migrate | `npm run migrate` |
+| seed | `npm run seed` / `npm run seed:volume` (NFR-02 scale for LT-02) |
+| build | `npm run build` (`scripts/check-build.js`: env schema, migration ordering, syntax, app boot) |
 | test | `npm test` (Jest over `tests/**`; `npm run test:unit` for the unit subset) |
-| lint | `npm run lint` (ESLint + Prettier check over `src`, `scripts`, `tests`) |
-| dev | `docker compose up -d && npm run dev` (API + outbox worker concurrently) |
-| load | `npm run test:load` (k6, LT-01/LT-02 — meaningful from wave 3 on) |
-
-TLS for local development: `scripts/gen-dev-certs.sh` writes a self-signed cert into `certs/`
-(git-ignored). The server binds HTTPS with `minVersion: 'TLSv1.2'` and refuses plain HTTP with
-`403 HTTPS required`; Supertest exercises the Express app directly with transport enforcement
-switched off by an explicit config flag that fails closed when `NODE_ENV=production`.
+| lint | `npm run lint` |
+| dev | `docker compose up -d && npm run dev` (API + outbox worker) |
+| load | `npm run test:load` (k6 — **meaningful from this wave on**: LT-01/LT-02 now have read paths) |
 
 ---
 
 ## 3. Waves built in this run
 
-A wave is a dependency layer: wave *N* may assume waves *1…N-1* exist on disk.
+Wave numbering continues from the built waves 0–2. Wave 3A may assume waves 0–2 exist on disk;
+wave 3B may additionally assume 3A.
 
-### Wave 0 — Repository bootstrap (1 unit)
+### Wave 3A — Marketplace write core (2 units)
 
-| Unit | Title | Requirements | Owns |
+| Unit | Title | Requirements | Owns (exclusive) |
 |---|---|---|---|
-| U0-BOOTSTRAP | npm project, Docker Compose infra, Jest/ESLint/CI, build check | NFR-02, NFR-08, NFR-11 (toolchain only) | `package.json`, `.nvmrc`, `.gitignore`, `docker-compose.yml`, `jest.config.js`, `.eslintrc.json`, `.eslintignore`, `.prettierrc`, `.github/workflows/ci.yml`, `scripts/check-build.js`, `tests/helpers/env.js`, `tests/unit/bootstrap.test.js`, `README.md` |
+| U3-LISTINGS | Listing service: MEHKO enforcement, moderation gating, progressive-disclosure serializers, deferred geocoding | FR-11, FR-02, FR-08 (enqueue + pending-until-approved), FR-09 (consumes gate), NFR-08, NFR-11, NFR-13, AB-01, AB-03, AB-07, AB-08 | `src/modules/listings/{repo,mehko,serializers,access,service,routes}.js`, `src/schemas/listings.js`, `src/lib/mediaUrls.js`, `src/outbox/handlers/listingGeocode.js`, `tests/unit/listings.test.js` |
+| U3-BOOKINGS | Booking service: atomic capacity, lifecycle (pending→in_progress→completed, cancel), transactional notifications | FR-12, FR-04, FR-13, FR-14, AB-02, NFR-08, NFR-11 | `db/migrations/0004_bookings_completed_at.sql`, `src/modules/bookings/{repo,service,lifecycle,routes}.js`, `src/schemas/bookings.js`, `src/outbox/handlers/{bookingNotifications,bookingPromote}.js`, `tests/unit/bookings.test.js` |
 
-Split out of wave 1 because every other unit's tests need `package.json` and the Jest configuration
-to exist before they can run — it is a hard ordering dependency, not a parallel peer. Jest is
-configured **without** `passWithNoTests`, so an empty suite fails rather than passing vacuously.
+**U3-LISTINGS specification highlights**
 
-### Wave 1 — Foundation (5 units)
+- **One MEHKO enforcement point** (`src/modules/listings/mehko.js`, ADR-009): computes
+  `local_date` from `scheduled_start` in `config.mehko.timezone` (`America/Los_Angeles`, via
+  `Intl.DateTimeFormat` — no new dependency), checks `listingsPerHostPerDay` (backed by the
+  0002 unique index on `(host_id, local_date) WHERE status <> 'cancelled'`, so concurrent
+  duplicates cannot both commit — the service maps the constraint violation to
+  `409 MEHKO_DAILY_LISTING_LIMIT`), `maxMealsPerDay` (seat_capacity + same-day non-cancelled
+  seats ≤ 30 → else `422 MEHKO_DAILY_MEAL_LIMIT`), and `maxMealsPerWeek` (Monday-anchored LA
+  week, ≤ 60). Consulted by create, update, and cancel/re-create paths; numbers only ever read
+  from `config.mehko` — never inline (adr-conformance greps for the literals).
+- **Serializers are the ADR-010 chokepoint** (`serializers.js`): `publicListing(row, media)` —
+  coarse_lat/coarse_lng/area_label/city only, explicit key allowlist, **no** address_line/lat/lng,
+  no host email/phone; `privilegedListing(row, media)` adds exact address + precise coordinates.
+  `access.js` exports `canViewPreciseLocation(viewer, listingId, client?)` → true only for
+  (a) a guest with a booking on that listing in `pending`/`in_progress`, or (b) a caller with the
+  `moderator` role handling an open safety alert on that listing's bookings — case (b) writes an
+  `access_log` row (actor, subject host, purpose `'fr07_safety_alert'`). Search (3B), host
+  profile (3B), and any future read path import THESE modules rather than shaping rows themselves.
+- **Geocoding is deferred** (ADR-001/003): `POST /api/listings` persists the address fields and
+  enqueues `listing.geocode` (payload `{listingId}`) in the same transaction; the
+  `listingGeocode` handler (worker-only) calls the Maps adapter, writes `lat/lng`,
+  `coarse_lat/coarse_lng` (via `geoPrecision.coarsen`) and `area_label`. Safe because the listing
+  is `moderation_status='pending'` — invisible publicly — until approved, by which time geocoding
+  has long completed; a Maps outage delays map placement, never listing creation (NFR-09).
+- **Moderation substrate** (FR-08): create and material update (title/description/ingredients
+  change) set/reset `moderation_status='pending'` and enqueue `moderation.scan`
+  (payload `{contentType:'listing', contentId}`) in the same transaction. The scan handler is
+  wave-4 (U4-MODERATION); until then jobs dead-letter harmlessly and content **stays pending —
+  the safe direction** (see §6.2). Owner sees own pending listing on `GET /api/listings/:id`;
+  everyone else gets 404 until approved.
+- **Routes** (`/api/listings`): `POST /` (requireSession + requireEligibility(PUBLISH_LISTING)),
+  `GET /:id` — **the `:id` param is regex-constrained to a UUID** so `/api/listings/search`
+  falls through to the search router (3B, §6.5) — `PATCH /:id`, `POST /:id/cancel` (owner-only,
+  403 otherwise; cancel sets `status='cancelled'`, cancels active bookings via SQL and enqueues
+  one `notify.booking` job per affected guest in the same transaction — handler owned by
+  U3-BOOKINGS, type contract below). Every mutation writes an NFR-08 audit log line
+  (event, actor, listing id, outcome, correlationId). Image URLs in responses come from
+  `src/lib/mediaUrls.js` (below) over `media_objects` rows (`entity_type='listing'`).
+- **`src/lib/mediaUrls.js`** (ADR-004-adjacent, request-path-safe): derives a GET URL for a
+  storage key by **local computation only** — S3 presign (SigV4 is pure crypto over
+  `config.objectStorage`) or plain `endpoint/bucket/key` concatenation for the mock/dev store.
+  It performs no network I/O and imports nothing from `src/adapters/`, so the adr-conformance
+  boot check stays green (§6.3). Also exports `createUploadTarget(userId, kind, contentType)` →
+  `{storageKey, uploadUrl, headers, expiresAt}` with the key namespaced
+  `<kind>/<userId>/<uuid>.<ext>` so a user can only ever upload under their own prefix.
 
-| Unit | Title | Requirements | Owns |
+**U3-BOOKINGS specification highlights**
+
+- **Migration 0004** adds `completed_at timestamptz` to `bookings` (FR-04 acceptance asserts it).
+  Append-only; nothing in 0001–0003 is edited.
+- **Atomic reservation** (FR-12): inside `withTransaction` — (1)
+  `pg_advisory_xact_lock` on the guest id to make the per-guest cap race-free, (2) count guest's
+  `pending` bookings `>= config.booking.maxConcurrentPending` → `409 BOOKING_LIMIT` (AB-02),
+  (3) conditional
+  `UPDATE listings SET seats_remaining = seats_remaining - 1 WHERE id=$1 AND seats_remaining > 0
+  AND status='active' AND moderation_status='approved' AND scheduled_start > now()` — zero rows →
+  `409 NO_CAPACITY` (or 404 if not visible), (4) `INSERT booking (status='pending')`, (5) enqueue
+  `notify.booking` per recipient (guest and host) **and** `booking.promote` with
+  `availableAt = scheduled_start`, same client. Booking own listing → 409. Ineligible → 403 via
+  `requireEligibility(RESERVE_SEAT)` before any capacity work (FR-09). The DB CHECK
+  (`seats_remaining >= 0 AND <= seat_capacity`) makes overbooking and over-restoring impossible
+  even if service logic regresses.
+- **Cancellation** (FR-14): guest or listing host, strictly before `scheduled_start`
+  (else 409); `UPDATE bookings SET status='cancelled', cancelled_at=now() WHERE id=$1 AND status
+  = 'pending' RETURNING …` — zero rows on a repeat means idempotent no-restore; seat restored
+  (`seats_remaining + 1`) and `notify.booking` rows written in the same transaction.
+  Non-participant → 403.
+- **Completion** (FR-04): `POST /api/bookings/:id/confirm-completion` sets the caller's flag
+  (guest_confirmed_completion / host_confirmed_completion) only while `in_progress`
+  (pending/cancelled → 409); both flags → `status='completed'`, `completed_at=now()` (the 0001
+  CHECK already refuses `completed` without both flags). Repeat confirmation → 200 no-op.
+  Third party → 403.
+- **Lifecycle** (`lifecycle.js` + `bookingPromote` handler): promotion `pending → in_progress`
+  is a **per-booking scheduled outbox job** enqueued at creation with
+  `availableAt = scheduled_start` (deviation from the old §4 note's "periodic job" — §6.4).
+  Handler: booking no longer `pending` → done; listing's `scheduled_start` moved later → enqueue
+  a fresh promote job for the new instant and finish; else set `in_progress`. Idempotent under
+  redelivery (keyed on `ctx.idempotencyKey`).
+- **`bookingNotifications` handler** (FR-13 end-to-end, following the wave-2
+  `emailVerification.js` precedent so wave 3 closes the loop): consumes `notify.booking`
+  (payload `{bookingId, event, recipientUserId}` — **IDs only**, enforced by
+  `outbox.assertIdOnlyPayload`), loads what it needs by ID, and calls the wave-2
+  `notifications/transport.send({userId, channel, template, params, idempotencyKey})`, which
+  resolves to the mock in dev/test and records a NOTIFICATION_ATTEMPT row (ADR-011). Events:
+  `created`, `cancelled_by_guest`, `cancelled_by_host`, `listing_cancelled`, `completed`.
+  U4-NOTIFY's former scope collapses into this file; wave 4 keeps only reviews/moderation
+  notification handlers.
+- **Read routes**: `GET /api/bookings` (own bookings, both roles) and `GET /api/bookings/:id`
+  (participant-only) — booking payloads reference the listing by ID + public fields; the
+  privileged address stays on `GET /api/listings/:id` (single ADR-010 chokepoint).
+
+### Wave 3B — Marketplace read surface (2 units)
+
+| Unit | Title | Requirements | Owns (exclusive) |
 |---|---|---|---|
-| U1-CONFIG | Config module, env schema, locale/AB 626 caps | NFR-13, NFR-12, NFR-05, NFR-09, FR-11, FR-12, FR-13, FR-08 | `src/config/{index,schema,locale}.js`, `.env.example`, `tests/unit/config.test.js` |
-| U1-DB | SRS §3.4 schema, migrations, pool/tx/Redis clients, field encryption, cache helper | NFR-02, NFR-13, NFR-11, NFR-01, NFR-12, FR-11, FR-12, AB-07 | `db/migrations/0001_core_schema.sql`, `db/migrations/0002_indexes_constraints.sql`, `scripts/{migrate,seed}.js`, `src/db/{pool,tx,redis,fieldCrypto}.js`, `src/lib/cache.js`, `tests/helpers/{db,redis}.js`, `tests/fixtures/seed/base.json`, `tests/unit/db.test.js` |
-| U1-OBS | Structured logging, error taxonomy, correlation IDs, resilience + HTTP client | NFR-08, NFR-09 | `src/lib/{logger,errors,resilience,httpClient}.js`, `src/middleware/{requestContext,errorHandler}.js`, `tests/unit/observability.test.js` |
-| U1-VALID | Input validation and sanitization layer | NFR-11, AB-06 | `src/middleware/validate.js`, `src/lib/sanitize.js`, `src/schemas/common.js`, `tests/unit/validation.test.js` |
-| U1-HTTP | Express app factory, HTTPS/TLS enforcement, security headers, route registry | NFR-03, NFR-08, NFR-11, AB-05 | `src/app.js`, `src/server.js`, `src/middleware/security.js`, `src/routes/index.js`, `scripts/gen-dev-certs.sh`, `tests/unit/app.test.js` |
+| U3-SEARCH | Search/discovery with Redis result cache and degraded mode | FR-01, NFR-01, NFR-02, NFR-09, NFR-11, AB-08 | `src/modules/search/{repo,service,routes}.js`, `src/schemas/search.js`, `tests/unit/search.test.js` |
+| U3-HOSTS-MEDIA | Host profile page + media HTTP surface (upload targets, attach) | FR-03, FR-02/FR-05 (media supply), NFR-13, AB-08, ADR-004 | `src/modules/hosts/{repo,service,serializers,routes}.js`, `src/modules/media/routes.js`, `src/schemas/{hosts,media}.js`, `tests/unit/hosts-media.test.js` |
 
-**U1-CONFIG is the only home for jurisdiction and policy numbers** (ADR-009, SRS §2.1.7): 1 listing
-per host per day, 30 meals/host/day, 60 meals/host/week, day and week boundaries evaluated in
-`America/Los_Angeles`; plus `booking.maxConcurrentPending = 3`, `privacy.erasureDays = 30`,
-`privacy.inactivityMonths = 24`, `privacy.coarsenRadiusMeters`, `auth.loginMaxAttempts = 5` /
-`auth.loginWindowSeconds = 600`, `adapters.timeoutMs = 3000`, `notifications.push.enabled = false`,
-and the moderation provider variables. Loading is fail-fast: a missing required secret aborts start-up
-rather than defaulting.
+**U3-SEARCH specification highlights**
 
-**U1-DB owns the whole SRS §3.4 schema** — `users`, `host_profiles`, `email_verification_tokens`,
-`listings`, `bookings`, `reviews`, `messages`, `safety_alerts`, `moderation_decisions`,
-`moderation_queue`, `notification_attempts`, `media_objects`, `data_requests`, `access_log` — plus
-the invariants downstream units depend on: unique `users.email`; unique `(host_id, local_date)` on
-non-cancelled listings (FR-11/AB-07); `CHECK (seats_remaining >= 0 AND seats_remaining <=
-seat_capacity)` (FR-12/FR-14); `CHECK (rating BETWEEN 1 AND 5)`; moderation-status enums defaulting
-to `pending` for listings and reviews. Tables whose services arrive in waves 3–4 are still created
-now — the schema is one migration surface, and creating it once avoids a later unit editing an
-earlier unit's migration.
+- **Route**: `GET /api/listings/search` — the module exports
+  `{ basePath: '/api/listings', router }`; mount order (listings first, `:id` UUID-constrained)
+  makes `/search` reach it (§6.5). Query params (all optional, any combination):
+  `location` + `radiusKm`, `from`/`to`, `hostId`, `cuisine`, plus pagination. Zod-validated;
+  unknown params stripped (NFR-11).
+- **Visibility invariant**: only `moderation_status='approved' AND status='active' AND
+  scheduled_start > now()` rows are ever returned, shaped by **U3-LISTINGS' `publicListing`
+  serializer** — coarse coordinates + area label only (ADR-010; the adr-conformance lane asserts
+  no exact address/precise coordinate in any search payload).
+- **Location resolution**: `location` strings resolve through the wave-2 Maps adapter
+  (**call-time require** — request-path use of the *read* adapter is the ADR-005 design and does
+  not touch the deferred-work rule; reading recorded in §6.1). The adapter already caches
+  geocodes in Redis at public precision; the search service additionally caches result pages via
+  `cache.wrap` (key = hash of normalized query, TTL from config) — a repeat query performs zero
+  provider calls. Distance filtering compares against the listing's **coarse** coordinates
+  (the public precision is also the honest precision — ADR-010).
+- **Degraded mode** (NFR-09/RT-01): Maps failure + cache miss → `503 SEARCH_DEGRADED` with a
+  user-facing message for location queries; cached queries and non-location queries keep working,
+  responses carry a `degraded: true` flag when served stale.
+- **NFR-02**: the search SQL is written against the 0002 indexes (`scheduled_start`,
+  `moderation_status`, `cuisine`, `(coarse_lat, coarse_lng)`, partial public-search index);
+  acceptance includes an `EXPLAIN` check showing no sequential scan at volume seed.
 
-### Wave 2 — Platform services and external adapters (6 units)
+**U3-HOSTS-MEDIA specification highlights**
 
-| Unit | Title | Requirements | Owns |
-|---|---|---|---|
-| U2-OUTBOX | Transactional outbox, dispatcher, worker with retry/backoff/dead-letter | FR-13, NFR-09, NFR-08 | `db/migrations/0003_outbox.sql`, `src/outbox/{outbox,dispatch,worker}.js`, `src/outbox/handlers/.gitkeep`, `scripts/worker.js`, `tests/unit/outbox.test.js` |
-| U2-IDENTITY | Passwords, sessions, login rate limiting, registration, email verification, profile | FR-10, NFR-04, NFR-05, NFR-06, NFR-03, NFR-08, AB-05, AB-07 | `src/modules/auth/{passwords,sessions,rateLimit,middleware,service,routes}.js`, `src/modules/users/{repo,service,tokens,routes}.js`, `src/schemas/auth.js`, `src/outbox/handlers/emailVerification.js`, `tests/unit/identity.test.js` |
-| U2-ELIGIBILITY | The single eligibility policy interface | FR-09, NFR-06, AB-01, AB-02, AB-08 | `src/modules/eligibility/{policy,repo,middleware}.js`, `tests/unit/eligibility.test.js` |
-| U2-ADAPTERS-COMMS | SendGrid + FCM adapters, mock transport, notification-attempt recording | FR-13, FR-14, FR-07, NFR-09, NFR-08 | `src/adapters/{sendgrid,fcm,mockTransport}.js`, `src/modules/notifications/{transport,repo}.js`, `tests/unit/adapters-comms.test.js` |
-| U2-ADAPTER-MAPS | Google Maps/Places adapter, Redis geo/result cache, coordinate coarsening | FR-01, NFR-01, NFR-09, NFR-13, AB-08 | `src/adapters/maps.js`, `src/lib/geoPrecision.js`, `tests/unit/adapter-maps.test.js` |
-| U2-MEDIA-LLM | Object-storage adapter (per-object delete), media service, moderation LLM adapter + mock | FR-02, FR-03, FR-05, FR-08, NFR-09, NFR-10, NFR-12 | `src/adapters/{objectStorage,llmModeration,llmModeration.mock}.js`, `src/modules/media/{repo,service}.js`, `tests/unit/adapters-media-llm.test.js` |
+- **`GET /api/hosts/:id`** (session required — 401 unauthenticated, AB-08): `selfIntroduction`
+  (host_profiles.bio), `exampleDishes` (the host's approved active listings via U3-LISTINGS'
+  `publicListing`), approved reviews about the host (rating, body, created_at, anonymized-safe
+  author display) + `averageRating`/`reviewCount`, kitchen/dining images
+  (`media_objects` `entity_type='host_profile'` → `mediaUrls`). Response built from an explicit
+  key allowlist: **no** email, phone, emergency contact, password hash, exact address (NFR-13);
+  `GET /api/hosts/:id/reviews` for the paginated list (LT-01 exercises it).
+- **Media HTTP surface** (`src/modules/media/routes.js`, mounts at `/api/media` — module `media`
+  is already in the registry): `POST /api/media/uploads` (authenticated) validates
+  `{kind ∈ media_entity_type, contentType ∈ allowlist, sizeBytes ≤ cap}` and returns
+  `mediaUrls.createUploadTarget(...)` — the client PUTs bytes **directly to object storage**;
+  the API never proxies bytes and never calls an adapter (§6.3). `POST /api/media`
+  (authenticated) records `{storageKey, kind, entityId?}` via the wave-2
+  `mediaService.attach(userId, key, kind, …)` after asserting the key sits under the caller's
+  own `<kind>/<userId>/` prefix (403 otherwise). `DELETE /api/media/:id` marks the row deleted;
+  physical per-key deletion stays on the worker/erasure path (ADR-004, NFR-12).
+- Attaching listing images (`entityId` = listing) checks the caller owns that listing; review
+  images arrive in wave 4 through the same endpoint (no new surface needed).
 
-Notes on the boundaries:
-
-- **The outbox moved from wave 1 to wave 2.** Its tests need real PostgreSQL transaction and
-  `FOR UPDATE SKIP LOCKED` semantics against the wave-1 pool and applied migrations, so it cannot be
-  built in parallel with the unit that creates them.
-- **Registration and login are one unit.** Registration needs the password hasher and the session
-  issuer; splitting them would make one unit's tests depend on a concurrently-built sibling.
-- **`src/outbox/handlers/emailVerification.js` belongs to U2-IDENTITY** rather than waiting for the
-  wave-4 notification unit, so FR-10 is end-to-end after this run: register → outbox row → worker →
-  recorded delivery attempt. It codes against the transport contract published by U2-ADAPTERS-COMMS.
-- **Adapters are library code with no Express routes.** Nothing in `src/adapters/` is reachable from
-  a request handler; only `src/outbox/handlers/*` and worker code may import them (ADR-001/003).
-- **ADR-010 starts here, not in wave 3.** `src/lib/geoPrecision.js` produces the coarsened
-  coordinates and area label, and the Maps adapter writes **only public precision** into Redis, so no
-  later cache read can leak an exact location even if a serializer is forgotten.
-
-### Public interfaces other units may rely on
+### Public interfaces this run publishes (waves 4–6 rely on these)
 
 | Unit | Contract |
 |---|---|
-| U1-CONFIG | `require('../config')` → frozen `config` object with the sections listed above; throws on invalid/missing env at load |
-| U1-DB | `src/db/pool.js` → `{ query(text, params), getClient() }`; `src/db/tx.js` → `withTransaction(fn)` passing a client; `src/db/redis.js` → `{ redis, key(ns, ...parts) }`; `src/db/fieldCrypto.js` → `{ encrypt(plaintext), decrypt(ciphertext) }` (AES-256-GCM); `src/lib/cache.js` → `{ get, set, wrap(key, ttl, fn), del }` |
-| U1-OBS | `logger.child({ correlationId })` with `.info/.warn/.error`; `AppError` subclasses carrying `status` + `code`; `withResilience(fn, { timeoutMs, retries, backoff, onFallback })`; `httpClient.request()` |
-| U1-VALID | `validate({ body, query, params })` Express middleware returning 422 with field errors; `sanitize.text/html/identifier` |
-| U1-HTTP | `createApp()` → configured Express app; route registry mounting `src/modules/*/routes.js` |
-| U2-OUTBOX | `enqueue(client, { type, payload, dedupeKey, availableAt })` — **must be called with the same client as the business write**; handler shape `{ type, handle(payload, ctx) }` |
-| U2-IDENTITY | `requireSession` middleware setting `req.auth = { userId, sessionId, roles }`; `authService.register/login/logout/verifyEmail` |
-| U2-ELIGIBILITY | `policy.evaluate(userId, action)` → `{ allowed, reasons[] }`; `canReserveSeat(user)`, `canPublishListing(user)`; `requireEligibility(action)` middleware reading `req.auth.userId` |
-| U2-ADAPTERS-COMMS | `transport.send({ userId, channel, template, params, idempotencyKey })` → records a NOTIFICATION_ATTEMPT row and returns `{ status }`; resolves to the mock in dev/test and honours `notifications.push.enabled` |
-| U2-ADAPTER-MAPS | `geocode(address)`, `searchArea(query)`; `geoPrecision.coarsen(lat, lng)` → `{ lat, lng, areaLabel }` |
-| U2-MEDIA-LLM | `objectStorage.put/get/deleteByKey(key)`; `mediaService.attach/list/deleteForUser(userId)`; `llmModeration.classify(text)` → `{ category, confidence, model }` |
+| U3-LISTINGS | `serializers.publicListing(row, media)` / `serializers.privilegedListing(row, media)`; `access.canViewPreciseLocation(viewer, listingId, client?)`; `mehko.assertWithinCaps(client, {hostId, scheduledStart, seatCapacity, excludeListingId?})` → throws typed AppError; `repo.findById`, `repo.findApprovedByHost`; routes `POST/GET/PATCH /api/listings…` as above; outbox types **`listing.geocode`** `{listingId}`, **`moderation.scan`** `{contentType, contentId}` (handler lands in wave 4); `mediaUrls.urlForKey(key)`, `mediaUrls.createUploadTarget(userId, kind, contentType)` |
+| U3-BOOKINGS | routes `POST /api/bookings`, `POST /api/bookings/:id/{cancel,confirm-completion}`, `GET /api/bookings[/:id]`; outbox types **`notify.booking`** `{bookingId, event, recipientUserId}`, **`booking.promote`** `{bookingId}`; `repo.findParticipantBooking(bookingId, userId)` (wave-4 messaging/reviews/safety gate on participant + status through this) |
+| U3-SEARCH | `GET /api/listings/search` returning `{results: publicListing[], degraded?: true, page…}` |
+| U3-HOSTS-MEDIA | `GET /api/hosts/:id`, `GET /api/hosts/:id/reviews`; `POST /api/media/uploads`, `POST /api/media`, `DELETE /api/media/:id` (wave-4 reviews attach photos through these) |
 
 ---
 
-## 4. Roadmap — waves 3–6 (NOT built in this run)
-
-Retained from the 2026-08-11 plan so the team keeps the full picture; unchanged in content.
+## 4. Roadmap — waves 4–6 (NOT built in this run)
 
 | Wave | Units |
 |---|---|
-| 3 — Core marketplace | U3-LISTINGS (FR-11, FR-02, AB-01/03/07) · U3-SEARCH (FR-01, NFR-01, NFR-09) · U3-HOSTS-MEDIA (FR-03, NFR-13, AB-08) · U3-BOOKINGS (FR-12, FR-13, FR-14, FR-04, AB-02) |
-| 4 — Trust, safety, data lifecycle | U4-REVIEWS-MESSAGING (FR-05, FR-06, AB-04) · U4-MODERATION (FR-08, NFR-10, incl. the ADR-008 evaluation set) · U4-SAFETY (FR-07) · U4-PRIVACY (NFR-12, NFR-13) · U4-NOTIFY (FR-13 booking handlers) |
+| 4 — Trust, safety, data lifecycle | U4-REVIEWS-MESSAGING (FR-05, FR-06, AB-04) · U4-MODERATION (FR-08, NFR-10, ADR-008 eval set, **owns the `moderation.scan` handler and must `requeueDeadLetter` the wave-3 scan jobs on landing — §6.2**) · U4-SAFETY (FR-07) · U4-PRIVACY (NFR-12, NFR-13 erasure/export jobs) · U4-NOTIFY (residual non-booking notification handlers — booking handlers landed in U3-BOOKINGS) |
 | 5 — Client foundation | U5-SHELL · U5-API-AUTH · U5-UI-KIT (NFR-07, SRS §2.1.2) |
 | 6 — Client features | U6-DISCOVERY · U6-BOOKING · U6-COMMUNITY · U6-ACCOUNT-MOD |
 
-U3-BOOKINGS is the core loop (SPMP WA-3, never cut per SPMP §5.3.2). `lifecycle.js` there owns the
-scheduled `pending → in progress` transition, run as a periodic job on the wave-2 worker.
+---
+
+## 5. Binding invariants every unit is checked against (unchanged, restated)
+
+1. **No inline deferred-work adapter calls.** Request handlers never import `src/adapters/*` at
+   module scope, and app boot loads none (adr-conformance lane). SendGrid/FCM/LLM/objectStorage
+   writes are worker-only. The Maps **read** adapter on the search path is the one documented
+   exception, per ADR-005 and §6.1 — call-time required, resilience-wrapped, cache-first.
+2. **One transaction, no dual writes.** Business row + outbox row commit together via
+   `withTransaction`; payloads carry IDs only (`assertIdOnlyPayload` enforces it at enqueue).
+3. **Pending until approved.** Listings and reviews default `pending` and are filtered from every
+   public read path; a moderation outage leaves them pending forever. Messages deliver
+   immediately, scanned async.
+4. **One eligibility interface** (`src/modules/eligibility/policy.js`) — wave 3 consumes
+   `requireEligibility`, never re-implements.
+5. **One MEHKO enforcement point**, caps from `src/config`, boundaries in `America/Los_Angeles`.
+6. **Public serializer by default** (ADR-010): `publicListing` is the only shape search, host
+   pages, and booking payloads emit; `privilegedListing` only behind
+   `canViewPreciseLocation` (moderator case access-logged). Redis caches public precision only.
+7. **Media by key** in object storage; per-object deletion on erasure (ADR-004).
+8. **Email is the channel; push is off** (ADR-011); tests assert on NOTIFICATION_ATTEMPT rows.
+9. **Redis = sessions + cache only.** 10. **HTTPS/TLS 1.2+, boundary validation, no
+   MFA/ID-verification/payments.** 11. **No secrets in code; `.env.example` documents all.**
 
 ---
 
-## 5. Binding invariants every unit is checked against
+## 6. Decisions and open questions from this run
 
-1. **No inline adapter calls.** Request handlers may not import `src/adapters/*`. Only
-   `src/outbox/handlers/*` and worker code may (ADR-001/003; `adr-conformance` lane).
-2. **One transaction, no dual writes.** A business row and its outbox row commit together via
-   `withTransaction`; the outbox payload carries IDs only — never names, emails or phone numbers.
-3. **Pending until approved.** Listings and reviews default to `moderation_status = 'pending'` and
-   are filtered out of every public read path. A moderation outage leaves them pending forever; it
-   must never publish unreviewed content. Messages deliver immediately and are scanned async.
-4. **One eligibility interface.** `canReserveSeat` / `canPublishListing` exist once, in
-   `src/modules/eligibility/policy.js`. No module re-implements them.
-5. **One MEHKO enforcement point**, reading caps from `src/config`, evaluating day/week boundaries in
-   `America/Los_Angeles` (ADR-009).
-6. **Public serializer by default** (ADR-010). Exact address and precise coordinates only to a guest
-   holding a `pending`/`in progress` booking on that listing, or a moderator handling an FR-07 alert
-   (access-logged). Redis caches public precision only.
-7. **Media by key.** Listing/review/profile media live in object storage, referenced from PostgreSQL
-   by key, deleted per object during account erasure (ADR-004, NFR-12).
-8. **Email is the channel; push is off** (ADR-011). Dev and the entire test suite use the mock
-   transport and assert on persisted NOTIFICATION_ATTEMPT rows.
-9. **Redis holds sessions and cache only.** No business state whose loss would change a booking,
-   listing or moderation outcome.
-10. **HTTPS/TLS 1.2+ only**, validation at the API boundary, no MFA / ID verification / payments.
-11. **No secrets in code.** Every key comes from the environment and is documented in `.env.example`.
+Items 1–13 of the 2026-08-12 plan's §8 stand as recorded there (with 2, 4, 5, 6, 11 decided as
+ADR-007…011 and item 14's ratification still pending). New readings this decomposition had to
+take — each chosen for fidelity to the SRS/ADRs, none blocking, all flagged for the team:
 
----
-
-## 6. Verification expectations for this run
-
-The lanes still run, but most FR-level lanes have nothing to exercise yet. Rules for this run:
-
-- A check whose implementing code belongs to waves 3–6 is reported **`not_implemented`**, never
-  skipped and never counted as a pass or a failure.
-- The **`adr-conformance`** and **`coverage`** lanes are the primary signal at this stage. Conformance
-  checks that are already meaningful after wave 2: no request-path import of `src/adapters/*`;
-  outbox enqueue only inside `withTransaction`; outbox payloads free of PII; caps present in
-  `src/config` and absent as inline literals in `src/`; `notifications.push.enabled` false by default;
-  Redis cache values carrying no exact coordinates; no hardcoded provider/model/key in the LLM
-  adapter; sessions/rate-limit state in Redis, business state in PostgreSQL.
-- Requirements fully verifiable after wave 2: **FR-10, FR-13** (mechanism), **NFR-03, NFR-04, NFR-05,
-  NFR-06, NFR-08, NFR-09** (adapter-level), **NFR-11, NFR-13** (field encryption, allowlists),
-  **FR-09, AB-05, AB-06**.
-- **NFR-10 cannot be claimed at all** until the ADR-008 evaluation set exists (wave 4) *and* a human
-  has signed off its labels. **NFR-01/NFR-02** need wave-3 read paths before LT-01/LT-02 mean
-  anything; a load run before then is not evidence.
+1. **Maps on the search request path vs. the worker-only adapter rule.** ADR-001/003's inline-call
+   ban exists so a provider failure never blocks or rolls back a business transaction; ADR-005
+   *by design* puts Maps on the FR-01 read path with timeout/retry/cache fallback (NFR-09's
+   degraded mode is meaningless otherwise — there is no deferred way to answer a live location
+   query). Reading: deferred-work adapters (SendGrid, FCM, LLM, object storage) are worker-only
+   without exception; the Maps read adapter is callable from the search service via call-time
+   require, keeping app boot adapter-free (the existing adr-conformance checks pass unchanged).
+   Listing-address geocoding still runs on the worker (`listing.geocode`). Team should ratify.
+2. **`moderation.scan` jobs dead-letter until wave 4.** Wave 3 enqueues them (FR-08 substrate,
+   same-transaction guarantee); no handler exists until U4-MODERATION. The worker retries then
+   dead-letters — content **stays pending**, which is FR-08's required failure direction; nothing
+   publishes unreviewed. U4-MODERATION's acceptance includes requeueing wave-3 dead letters.
+3. **Media upload without request-path adapters.** Bytes never transit the API: the server issues
+   a locally-computed upload target (S3 presign is pure SigV4 crypto over config — no network
+   call, no `src/adapters` import), the client PUTs straight to storage, then registers the key.
+   Server-generated keys are namespaced per user, so cross-user attachment is impossible. This
+   honors ADR-001 (nothing on the request path can block on the storage provider) and ADR-004
+   (storage by key behind the adapter for worker-side get/delete). Team should ratify.
+4. **`pending → in_progress` as a scheduled outbox job**, not a periodic sweep: enqueued with the
+   booking (`availableAt = scheduled_start`), transactional, idempotent, self-repairing when a
+   listing's start moves. Deviation from the 2026-08-12 §4 note ("periodic job"); mechanically
+   simpler on the existing worker and avoids editing wave-2-owned scripts. Flagged for the team.
+5. **`/api/listings/search` mount.** The Appendix-B "Search Service" stays its own module;
+   it exports `basePath: '/api/listings'` and the listings router constrains `:id` to a UUID so
+   `/search` falls through. Two routers on one base path is standard Express layering.
+6. **`bookings.completed_at`** was not in the wave-1 schema; FR-04's acceptance asserts it. Added
+   as append-only migration 0004 — no applied migration is edited.
+7. **LT-01/LT-02 become meaningful after this wave** (the read paths now exist) but remain
+   host-hardware-bound: a run that cannot reach 200 VUs reports the achieved level and is marked
+   untestable, never passed (2026-08-12 §8 item 12 unchanged). NFR-10 remains unclaimable until
+   the ADR-008 set exists **and** carries a human label sign-off (wave 4).
 
 ---
 
-## 7. Mapping to the SPMP work activities
+## 7. Verification expectations for this run
 
-| SPMP activity | Units (this run in bold) |
+- Newly fully verifiable at the API level: **FR-11, FR-12, FR-14, FR-04, FR-02, FR-03, FR-01**
+  (TC-01…04, TC-11, TC-12, TC-14; LT-01's race test), **FR-13 end-to-end** (enqueue → worker →
+  NOTIFICATION_ATTEMPT; TC-13, RT-02 already exercise the mechanism), **AB-02, AB-03, AB-07,
+  AB-08** (serializer allowlists), plus the wave-2 set (FR-09/10, NFR-03/04/05/06/08/09/11/13).
+- Still `not_implemented`, never skipped/failed: FR-05, FR-06, FR-07, FR-08 (pipeline — the
+  substrate rows ARE asserted), NFR-10, NFR-12 (erasure job), NFR-07/UT-01 (client).
+- The **adr-conformance** lane gains teeth this wave: it must now enumerate search, listing
+  detail, host profile and booking payloads and fail on any exact address/precise coordinate
+  outside the pending/in-progress-guest and access-logged-moderator cases (ADR-010's stated
+  failure mode), assert MEHKO literals appear only in `src/config`, and re-assert boot loads no
+  adapter now that four new modules mount.
+
+---
+
+## 8. Mapping to the SPMP work activities
+
+| SPMP activity | Status after this run |
 |---|---|
-| WA-1 Auth & eligibility | **U2-IDENTITY, U2-ELIGIBILITY** |
-| WA-2 Discovery/listing + Maps | **U2-ADAPTER-MAPS**, U3-LISTINGS, U3-SEARCH |
-| WA-3 Booking (outbox, atomic capacity) | **U2-OUTBOX**, U3-BOOKINGS |
-| WA-4 Review & messaging | U4-REVIEWS-MESSAGING |
-| WA-5 Safety alert | U4-SAFETY |
-| WA-6 Data lifecycle | U4-PRIVACY |
-| WA-7 Moderation integration | **U2-MEDIA-LLM** (LLM adapter), U4-MODERATION |
-| WA-8 Media storage adapter | **U2-MEDIA-LLM**, U3-HOSTS-MEDIA |
-| WA-9 Web client | U5-*, U6-* |
-| WA-10 Worker/outbox dispatcher + adapters | **U2-OUTBOX, U2-ADAPTERS-COMMS**, U4-NOTIFY |
-| WA-11 Test suite vs SRS §4 | verification lanes (`tests/<lane>/`) |
-| WA-12/13/14 Documentation, reviews, SPMP/SRS | team activities, outside this build |
+| WA-1 Auth & eligibility | built (wave 2) |
+| WA-2 Discovery/listing + Maps | **completed by U3-LISTINGS + U3-SEARCH** (adapter was wave 2) |
+| WA-3 Booking — the never-cut core loop (SPMP §5.3.2) | **completed by U3-BOOKINGS** (outbox was wave 2) |
+| WA-8 Media storage | **completed by U3-HOSTS-MEDIA** (adapter/service were wave 2) |
+| WA-10 Worker/dispatcher + adapters | built (wave 2) + wave-3 handlers |
+| WA-4/5/6/7 Reviews·messaging / safety / lifecycle / moderation | wave 4 |
+| WA-9 Web client | waves 5–6 |
+| WA-11 Test suite vs SRS §4 | verifier lanes, extended per §7 |
 
-Waves 0–2 cover the foundation of WA-1, WA-3 and WA-10 and the adapter halves of WA-2, WA-7, WA-8.
-Per SPMP §5.2.2 that is Week 5–6 work; the schedule assumption is unchanged.
-
----
-
-## 8. Open questions for the team
-
-Items 2, 4, 5, 6 and 11 were **decided by the team on 2026-08-12** and are recorded as ADR-007…011.
-The rest remain provisional readings — each is resolved here with the reading most faithful to the
-SRS, and none blocks the build.
-
-1. **React Native vs React web.** SPMP §5.2.1/§6.2 name React Native; SRS §2.1.2 mandates a single
-   responsive React *web* app and states no native app ships in v1.0. **SRS wins — web only.** Still
-   open as a documentation defect: the SPMP should be corrected at CDR.
-2. ~~**AB 626 numeric caps are not in the SRS.**~~ **DECIDED — ADR-009.** 1 listing/host/day,
-   30 meals/day, 60 meals/week, boundaries in `America/Los_Angeles`, one server-side enforcement
-   point. Re-confirm at CDR before claiming regulatory compliance.
-3. **Per-guest concurrent pending-booking limit (FR-12) has no stated value.** Default 3, configurable
-   in `src/config`. Enforced from wave 3; the config key exists from wave 1.
-4. ~~**Notification channel.**~~ **DECIDED — ADR-011.** Email via SendGrid for FR-13/FR-14/FR-07; FCM
-   behind `notifications.push.enabled = false`; mock transport in dev and the whole test suite.
-5. ~~**Moderation LLM provider is not free-tier.**~~ **DECIDED — ADR-007.** Google Gemini free tier
-   behind the provider-agnostic adapter; CI runs the mock; only IT-03 calls the live API.
-   **Open action carried by ADR-007:** free tiers commonly permit provider use of submitted content
-   and the pipeline scans private messages (§3.4 PII register) — read the current free-tier data-use
-   terms and record the finding in ST-06 *before* sending any real user content.
-6. ~~**The >=200-item labelled evaluation set does not exist.**~~ **DECIDED — ADR-008.** U4-MODERATION
-   authors it as synthetic, balanced, versioned content under `tests/fixtures/moderation-eval/v1/`.
-   **No NFR-10 pass without a recorded human label sign-off.**
-7. **Encryption at rest (NFR-13).** Free-tier PostgreSQL offers no TDE. Plan: application-level
-   AES-256-GCM (`src/db/fieldCrypto.js`, U1-DB) for phone and emergency-contact columns with a key
-   from the environment, plus a documented volume-encryption assumption for the rest. Confirm this
-   satisfies ST-06.
-8. **Backup expiry (NFR-12).** No managed backup service exists in the academic environment. Plan:
-   a retention sweep script plus a documented 30-day policy; ST-05 verifies it as configuration
-   review, not as a live backup deletion.
-9. **`pending → in progress` (FR-04/§3.4)** is not attached to a user action. Implemented in wave 3 as
-   a periodic job on the wave-2 worker at the listing's scheduled start.
-10. **Emergency contact is optional (§3.4).** If absent, FR-07 still persists the alert and notifies
-    the moderator; delivery status is recorded as `no_channel` rather than failed.
-11. ~~**Host address exposure.**~~ **DECIDED — ADR-010.** Progressive disclosure, public serializer by
-    default, public precision only in Redis.
-12. **NFR-01 at 200 concurrent users** cannot be honestly demonstrated on arbitrary laptop hardware.
-    LT-01/LT-02 report measured numbers; a run that cannot reach 200 VUs is marked untestable with
-    the achieved level, never reported as a pass.
-13. **UT-01's 5-participant moderated usability study** is a human activity outside automation.
-14. **New — the ADRs are `Proposed`/single-decider.** ADR-001 and ADR-003…006 are still `Proposed`,
-    and ADR-007…011 were decided by one member pending team ratification. The build treats all of
-    them as binding; the team should ratify them at the next stand-up so the code and the record
-    agree.
+Per SPMP §5.2.2 this is Week 6–7 work (WA-2/WA-3 continuing); the schedule position is
+consistent with the plan, with CDR (Aug 22) next.

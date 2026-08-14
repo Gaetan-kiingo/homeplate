@@ -121,8 +121,23 @@ describe('MT-01 / NFR-08 — registration audit record', () => {
   test('the worker log lines for the resulting job carry the SAME correlation ID (both sides)', async () => {
     const before = lines.length;
     const registry = loadHandlers({ log: recLogger });
-    const stats = await pollOnce({ registry, log: recLogger });
-    expect(stats.claimed).toBeGreaterThanOrEqual(1);
+    // Drain rather than poll once: sibling suites (e.g. tests/unit/bookings.test.js) may
+    // leave their own due jobs in the shared test outbox, and pollOnce claims oldest-first
+    // with a bounded batch — so poll until THIS user's email.verification job has left
+    // 'pending' (bounded so a regression cannot loop forever).
+    let totalClaimed = 0;
+    for (let i = 0; i < 25; i += 1) {
+      const stats = await pollOnce({ registry, log: recLogger });
+      totalClaimed += stats.claimed;
+      const { rows } = await query(
+        `SELECT status FROM outbox_jobs
+         WHERE type = 'email.verification' AND payload->>'userId' = $1`,
+        [userId]
+      );
+      if (rows.length === 1 && rows[0].status !== 'pending') break;
+      if (stats.claimed === 0) break; // queue drained without reaching the job — fail below
+    }
+    expect(totalClaimed).toBeGreaterThanOrEqual(1);
 
     const workerLines = records().slice();
     const delivered = workerLines.filter(

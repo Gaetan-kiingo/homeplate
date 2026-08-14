@@ -86,6 +86,35 @@ async function findByKey(storageKey, client = null) {
 }
 
 /**
+ * Single row by id, scoped to its owner in the statement itself (or null) — so callers can
+ * keep "not found" and "not yours" indistinguishable (AB-08). Returns delete-marked rows
+ * too (deletedAt set), letting the owner's DELETE stay idempotent.
+ */
+async function findOwnedById(ownerUserId, id, client = null) {
+  const { rows } = await run(
+    `SELECT * FROM media_objects WHERE id = $1 AND owner_user_id = $2`,
+    [id, ownerUserId],
+    client
+  );
+  return toMediaObject(rows[0]);
+}
+
+/**
+ * Delete-MARKS one media row (sets deleted_at) so it drops out of every read path
+ * immediately; physical per-key deletion stays on the worker/erasure path (ADR-004,
+ * NFR-12 — see removeById). Idempotent: an already-marked row is left untouched.
+ * @returns {Promise<boolean>} true when this call marked the row.
+ */
+async function markDeleted(id, client = null) {
+  const result = await run(
+    `UPDATE media_objects SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`,
+    [id],
+    client
+  );
+  return result.rowCount === 1;
+}
+
+/**
  * Removes one media row (NFR-12: called only AFTER the object was deleted from storage by
  * key, so a crash between the two leaves a row a retried job will re-process — never an
  * orphaned object that survives erasure).
@@ -102,5 +131,7 @@ module.exports = {
   insertMediaObject,
   listByOwner,
   findByKey,
+  findOwnedById,
+  markDeleted,
   removeById,
 };

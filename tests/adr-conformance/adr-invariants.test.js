@@ -106,8 +106,16 @@ describe('ADR-001/003 — request path never touches an adapter; outbox is trans
         importers.push(path.relative(SRC, file));
       }
     }
-    // Only the outbox email handler may consume it (plus the module's own file path).
-    expect(importers.sort()).toEqual([path.join('outbox', 'handlers', 'emailVerification.js')]);
+    // ADR-001/003: ONLY outbox handlers (worker-only code) may consume the delivery
+    // transport. Wave 3 added bookingNotifications.js — an outbox handler, i.e. exactly
+    // the sanctioned location class. Anything outside src/outbox/handlers/ is a violation.
+    expect(importers.sort()).toEqual([
+      path.join('outbox', 'handlers', 'bookingNotifications.js'),
+      path.join('outbox', 'handlers', 'emailVerification.js'),
+    ]);
+    for (const importer of importers) {
+      expect(importer.startsWith(path.join('outbox', 'handlers') + path.sep)).toBe(true);
+    }
   });
 
   test('register commits USER row + outbox row together, payload is IDs only', async () => {
@@ -419,15 +427,11 @@ describe('ADR-009 — MEHKO caps in config; LA-day uniqueness backstop', () => {
 });
 
 // ------------------------------------------------------------------------------------------
-// ADR-010 — no wave-3 endpoint exists yet that could leak listing/host location
+// ADR-010 — mounted-surface audit (wave-3 scope: core marketplace mounted, wave 4 absent)
 // ------------------------------------------------------------------------------------------
-describe('ADR-010 — mounted surface audit (wave-2 scope)', () => {
-  test('only auth + users are mounted; no listing/search/host endpoint exists', async () => {
+describe('ADR-010 — mounted surface audit (wave-3 scope)', () => {
+  test('wave-4 modules are NOT mounted; /api/search stays 404 (search lives under /api/listings/search)', async () => {
     for (const p of [
-      '/api/listings',
-      '/api/search',
-      '/api/hosts',
-      '/api/bookings',
       '/api/reviews',
       '/api/messaging',
       '/api/moderation',
@@ -435,7 +439,25 @@ describe('ADR-010 — mounted surface audit (wave-2 scope)', () => {
       '/api/privacy',
     ]) {
       const res = await request(app).get(p);
-      expect(res.status).toBe(404); // nothing serves listing/host data yet
+      expect(res.status).toBe(404); // wave-4 surface must not exist yet
+    }
+    // Build-plan §6.5: the search module mounts at /api/listings/search only.
+    const search = await request(app).get('/api/search');
+    expect(search.status).toBe(404);
+  });
+
+  test('every mounted wave-3 read path refuses unauthenticated access (AB-08 — never data)', async () => {
+    const listing = await dbHelper.makeListing();
+    for (const p of [
+      `/api/listings/${listing.id}`,
+      '/api/listings/search',
+      `/api/hosts/${listing.host_id}`,
+      `/api/hosts/${listing.host_id}/reviews`,
+      '/api/bookings',
+    ]) {
+      const res = await request(app).get(p);
+      expect(res.status).toBe(401); // session required — no listing/host data unauthenticated
+      expect(JSON.stringify(res.body)).not.toMatch(/address|"lat"|"lng"|street/i);
     }
   });
 

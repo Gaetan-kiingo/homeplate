@@ -9,7 +9,7 @@
 // Escape hatch for offline pure-unit iteration ONLY (never CI): TEST_SKIP_INFRA=1.
 'use strict';
 
-require('./env');
+const { acquireSuiteLock } = require('./env');
 
 const { Client } = require('pg');
 const Redis = require('ioredis');
@@ -57,20 +57,19 @@ async function ensureDatabase(databaseUrl) {
 // Serializes whole Jest runs that share one test database (verification-report F-1): a second
 // runner blocks here until the first run's globalTeardown releases the session-scoped lock, so
 // its schema reset can never land under another run's live queries. Advisory lock space is
-// per-database, so runs isolated via TEST_DATABASE_URL never contend. The client must stay
-// connected for the whole run — it is handed to globalTeardown via globalThis.
-async function acquireSuiteLock(databaseUrl) {
-  const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 4000 });
-  await client.connect();
-  const lockQuery = "SELECT pg_try_advisory_lock(hashtext('homeplate_test_suite')) AS locked";
-  const { rows } = await client.query(lockQuery);
-  if (!rows[0].locked) {
-    console.warn(
-      'globalSetup: test database is locked by another suite run — waiting for it to finish ' +
-        '(use TEST_DATABASE_URL/TEST_REDIS_URL/OBJECT_STORAGE_BUCKET overrides to run in parallel)'
-    );
-    await client.query("SELECT pg_advisory_lock(hashtext('homeplate_test_suite'))");
-  }
+// per-database, so runs isolated via TEST_DATABASE_URL never contend. The lock itself lives in
+// tests/helpers/env.js (acquireSuiteLock) so standalone non-Jest scripts serialize on the SAME
+// key — see the CONCURRENCY RULE there. The client must stay connected for the whole run — it
+// is handed to globalTeardown via globalThis.
+async function acquireJestSuiteLock(databaseUrl) {
+  const { client } = await acquireSuiteLock({
+    databaseUrl,
+    onWait: () =>
+      console.warn(
+        'globalSetup: test database is locked by another suite run — waiting for it to finish ' +
+          '(use TEST_DATABASE_URL/TEST_REDIS_URL/OBJECT_STORAGE_BUCKET overrides to run in parallel)'
+      ),
+  });
   globalThis.__HOMEPLATE_SUITE_LOCK_CLIENT__ = client;
 }
 
@@ -135,7 +134,7 @@ module.exports = async function globalSetup() {
   }
   const databaseUrl = process.env.DATABASE_URL;
   await ensureDatabase(databaseUrl);
-  await acquireSuiteLock(databaseUrl);
+  await acquireJestSuiteLock(databaseUrl);
   if (process.env.TEST_KEEP_DB !== '1') {
     await resetSchema(databaseUrl);
   }

@@ -315,6 +315,25 @@ describe('ST-03 login lockout (NFR-05)', () => {
     await delRateLimitKeys(email);
   });
 
+  test('AB-05 scripted brute-force of 50 attempts: locked from attempt 6 on, correct password refused throughout', async () => {
+    const email = newEmail();
+    const password = 'RealPassword-050';
+    await request(app).post('/api/auth/register').send({ email, password });
+    await delRateLimitKeys(email);
+
+    const statuses = [];
+    for (let i = 1; i <= 50; i += 1) {
+      // Attackers mix guesses; make attempt 30 the CORRECT password — it must still be 429.
+      const guess = i === 30 ? password : `guess-${i}`;
+      const res = await request(app).post('/api/auth/login').send({ email, password: guess });
+      statuses.push(res.status);
+    }
+    expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
+    expect(statuses.slice(5).every((s) => s === 429)).toBe(true); // incl. the correct one
+    expect(statuses[29]).toBe(429);
+    await delRateLimitKeys(email);
+  });
+
   test('rate-limit counters are stored in Redis keyed by account and IP with a TTL', async () => {
     const email = newEmail();
     const password = 'RealPassword-000';
@@ -470,13 +489,12 @@ describe('ST-05 erasure (NFR-12) — endpoint/job are wave-4; primitives exist',
   });
 
   test('backup-expiry is a documented 30-day config policy (config review)', () => {
-    // ST-05 verifies backup expiry as configuration review (build-plan open item 8).
+    // ST-05 verifies backup expiry as configuration review (build-plan open item 8). The
+    // policy's documented home is the config template (.env.example, NFR-12) — the 2026-08-14
+    // plan revision no longer spells out the literal phrase, the configuration does.
     expect(baseConfig.privacy.erasureDays).toBe(30);
-    const planText = fs.readFileSync(
-      path.join(ROOT, 'docs', '_generated', 'build-plan.md'),
-      'utf8'
-    );
-    expect(planText).toMatch(/30-day/);
+    const envExample = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
+    expect(envExample).toMatch(/^PRIVACY_ERASURE_DAYS=30$/m);
     // A live retention sweep script is a wave-4 U4-PRIVACY deliverable — not in this run.
     const scriptExists = fs.existsSync(path.join(ROOT, 'scripts', 'retention.js'));
     expect(scriptExists).toBe(false);
@@ -575,22 +593,21 @@ describe('ST-06 data protection (NFR-13)', () => {
     expect([404, 405]).toContain(res.status);
   });
 
-  test('access_log table exists but role-restricted logged reads are wave-4 (no writer yet)', async () => {
+  test('access_log has exactly ONE writer: the ADR-010 access decision module (wave-3 landed)', async () => {
     const { rows } = await db.query(
       `SELECT count(*)::int c FROM information_schema.tables WHERE table_name = 'access_log'`
     );
     expect(rows[0].c).toBe(1); // schema is present (U1-DB)
-    // No application code writes access_log in waves 1-2 (moderation/privacy are wave-4).
-    // execFileSync throws (exit 1) when grep finds nothing; capture that as "absent".
-    let found = '';
-    try {
-      found = require('child_process')
-        .execFileSync('grep', ['-rl', 'access_log', path.join(ROOT, 'src')], { encoding: 'utf8' })
-        .trim();
-    } catch (_noMatch) {
-      found = ''; // grep exit code 1 = no match
-    }
-    expect(found).toBe('');
+    // Wave 3 landed the required NFR-13 writer: src/modules/listings/access.js logs the
+    // moderator FR-07 precise-location read. It must stay the ONLY chokepoint that writes
+    // access_log (a second writer would fragment the audit trail). Behavior is executed in
+    // tests/st-security/st-security-wave3.test.js (ST-06 moderator suite).
+    const found = require('child_process')
+      .execFileSync('grep', ['-rl', 'access_log', path.join(ROOT, 'src')], { encoding: 'utf8' })
+      .trim()
+      .split('\n')
+      .sort();
+    expect(found).toEqual([path.join(ROOT, 'src', 'modules', 'listings', 'access.js')]);
   });
 });
 
@@ -640,15 +657,14 @@ describe('Abuse cases AB-01..AB-08', () => {
     expect(true).toBe(true); // marker — see ST-04 assertions
   });
 
-  test('AB-01/02/03/04 abuse cases depend on wave-3/4 features not built in this run', () => {
-    // AB-01 fake host/listing (listings wave-3), AB-02 hoarding bookings (bookings wave-3),
-    // AB-03 spam listings (listings+moderation wave-3/4), AB-04 abusive chat/reviews
-    // (messaging+reviews+moderation wave-3/4). No listing/booking/review/message routes are
-    // mounted yet — verified by the route enumeration in ST-04.
-    const modules = fs.readdirSync(path.join(ROOT, 'src', 'modules'));
-    expect(modules).not.toContain('listings');
-    expect(modules).not.toContain('bookings');
-    expect(modules).not.toContain('reviews');
-    expect(modules).not.toContain('messaging');
+  test('AB-04 abuse cases depend on wave-4 features not built in this run', () => {
+    // AB-01 fake host/listing, AB-02 hoarding bookings and AB-03 spam listings become
+    // verifiable as wave 3 lands (build-plan §7 — this run); the wave-3 verifiers extend this
+    // lane with those cases. AB-04 abusive chat/reviews needs messaging+reviews+moderation,
+    // which stay wave 4: their route modules must not be mounted in this run.
+    for (const name of ['reviews', 'messaging', 'moderation']) {
+      const routesPath = path.join(ROOT, 'src', 'modules', name, 'routes.js');
+      expect(fs.existsSync(routesPath)).toBe(false);
+    }
   });
 });

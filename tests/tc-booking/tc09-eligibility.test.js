@@ -183,11 +183,115 @@ describe('FR-09 / TC-09 — eligibility policy is state-driven (restricted AND p
     expect(rows[0].can_publish_listing).toBe(false);
   });
 
-  test('WAVE-3 GAP (documented): POST /api/bookings and POST /api/listings are not mounted yet', async () => {
+  test('FR-09 over the REAL routes (wave 3 built): restricted 403 with reason codes, then the identical request succeeds', async () => {
+    const { makeListing } = require('../helpers/db');
+    const listing = await makeListing({ moderation_status: 'approved' });
+
+    // RESTRICTED: verified user, no name/phone → POST /api/bookings is 403 with reasons.
+    const { cookie } = await makeSessionUser({ verify: true });
+    const denied = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', cookie)
+      .send({ listingId: listing.id });
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe('NOT_ELIGIBLE');
+    expect(denied.body.error.details.reasons).toEqual(['NAME_MISSING', 'PHONE_MISSING']);
+
+    // PERMITTED: set the missing attributes; the IDENTICAL request now succeeds (201).
+    await request(app)
+      .patch('/api/users/me')
+      .set('Cookie', cookie)
+      .send({ fullName: 'Tc Nine Route Guest', phone: '+16195550110' })
+      .expect(200);
+    const allowed = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', cookie)
+      .send({ listingId: listing.id });
+    expect(allowed.status).toBe(201);
+
+    // RESTRICTED: same user cannot publish a listing without a host profile → 403.
+    const listingDenied = await request(app)
+      .post('/api/listings')
+      .set('Cookie', cookie)
+      .send({
+        title: 'FR-09 route test meal',
+        description: 'Route-level publish_listing gate test.',
+        ingredients: ['rice'],
+        scheduledStart: '2029-11-05T20:00:00.000Z',
+        durationMinutes: 60,
+        seatCapacity: 2,
+        addressLine1: '1 Gate St',
+        city: 'San Diego',
+        region: 'CA',
+      });
+    expect(listingDenied.status).toBe(403);
+    expect(listingDenied.body.error.details.reasons).toEqual([
+      'HOST_PROFILE_INCOMPLETE',
+      'HOST_AGREEMENT_MISSING',
+    ]);
+
+    // PERMITTED: complete the host profile; the identical create now succeeds.
+    await request(app)
+      .patch('/api/users/me')
+      .set('Cookie', cookie)
+      .send({ hostProfile: { bio: 'Route-level test host.', acceptHostAgreement: true } })
+      .expect(200);
+    const listingAllowed = await request(app)
+      .post('/api/listings')
+      .set('Cookie', cookie)
+      .send({
+        title: 'FR-09 route test meal',
+        description: 'Route-level publish_listing gate test.',
+        ingredients: ['rice'],
+        scheduledStart: '2029-11-05T20:00:00.000Z',
+        durationMinutes: 60,
+        seatCapacity: 2,
+        addressLine1: '1 Gate St',
+        city: 'San Diego',
+        region: 'CA',
+      });
+    expect(listingAllowed.status).toBe(201);
+  });
+
+  test('ADR-006: no module outside eligibility/ re-implements canReserveSeat/canPublishListing', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = path.join(__dirname, '..', '..', 'src');
+    const offenders = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.js')) {
+          if (full.includes(path.join('modules', 'eligibility'))) continue;
+          const text = fs.readFileSync(full, 'utf8');
+          // A re-implementation would DEFINE the predicate, not merely consume the flag.
+          if (/function\s+(canReserveSeat|canPublishListing)\s*\(/.test(text)) {
+            offenders.push(path.relative(src, full));
+          }
+        }
+      }
+    };
+    walk(src);
+    expect(offenders).toEqual([]);
+  });
+
+  test('WAVE-3 status (state-aware): POST /api/bookings and POST /api/listings mount with their units', async () => {
+    // Scaffold reconciliation for the wave-3 run: while a unit's routes.js is absent the
+    // endpoint 404s (FR-09's route-level acceptance unverifiable — the documented gap); once
+    // it lands the route must be mounted (any non-404 — the 403-for-ineligible acceptance is
+    // asserted by the unit's tests and this run's verifier extensions, build-plan §7).
+    const fs = require('fs');
+    const path = require('path');
+    const routesOnDisk = (name) =>
+      fs.existsSync(path.join(__dirname, '..', '..', 'src', 'modules', name, 'routes.js'));
+
     const bookings = await request(app).post('/api/bookings').send({});
+    if (routesOnDisk('bookings')) expect(bookings.status).not.toBe(404);
+    else expect(bookings.status).toBe(404);
+
     const listings = await request(app).post('/api/listings').send({});
-    // FR-09's route-level acceptance (403 from these endpoints) is unverifiable until wave 3.
-    expect(bookings.status).toBe(404);
-    expect(listings.status).toBe(404);
+    if (routesOnDisk('listings')) expect(listings.status).not.toBe(404);
+    else expect(listings.status).toBe(404);
   });
 });

@@ -192,9 +192,204 @@ describe('FR-13 / TC-13 — deferred notification mechanism (wave-2 substrate)',
     }
     expect(offenders).toEqual([]);
   });
+});
 
-  test('WAVE-3 GAP (documented): booking-triggered notifications unverifiable — POST /api/bookings absent', async () => {
-    const res = await request(app).post('/api/bookings').send({});
-    expect(res.status).toBe(404);
+// ----------------------------------------------------------------------------------------------
+// FR-13 over the REAL booking flow (wave 3 built — replaces the wave-2 status probe)
+// ----------------------------------------------------------------------------------------------
+
+const sessions = require('../../src/modules/auth/sessions');
+const lifecycle = require('../../src/modules/bookings/lifecycle');
+const { createRegistry } = require('../../src/outbox/dispatch');
+const notifyHandler = require('../../src/outbox/handlers/bookingNotifications');
+
+const COOKIE = config.auth.sessionCookieName;
+
+async function cookieFor(user) {
+  const { token } = await sessions.createSession(user);
+  return `${COOKIE}=${token}`;
+}
+
+async function makeGuest() {
+  return makeUser({ phone_enc: 'enc:v1:tc13-fixture' });
+}
+
+async function makeApprovedListing(overrides = {}) {
+  const { makeListing } = require('../helpers/db');
+  return makeListing({ moderation_status: 'approved', ...overrides });
+}
+
+async function notifyJobsFor(bookingId) {
+  const { rows } = await query(
+    `SELECT * FROM outbox_jobs WHERE type = 'notify.booking' AND payload->>'bookingId' = $1
+      ORDER BY id`,
+    [bookingId]
+  );
+  return rows;
+}
+
+describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    mockTransport.reset();
+  });
+
+  test('booking create writes exactly one notify.booking row per recipient (guest + host) in the SAME transaction, IDs only', async () => {
+    const listing = await makeApprovedListing({ seat_capacity: 3, seats_remaining: 3 });
+    const guest = await makeGuest();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    const jobs = await notifyJobsFor(bookingId);
+    const created = jobs.filter((j) => j.payload.event === 'created');
+    expect(created).toHaveLength(2); // exactly one per affected recipient
+    const recipients = created.map((j) => j.payload.recipientUserId).sort();
+    expect(recipients).toEqual([guest.id, listing.host_id].sort());
+    for (const job of created) {
+      // IDs only — never an email/phone/name shape (ADR-003).
+      expect(Object.keys(job.payload).sort()).toEqual(['bookingId', 'event', 'recipientUserId']);
+      expect(JSON.stringify(job.payload)).not.toMatch(
+        /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/
+      );
+    }
+
+    // The scheduled promotion job is enqueued alongside (build-plan §6.4).
+    const { rows: promote } = await query(
+      `SELECT * FROM outbox_jobs WHERE type = 'booking.promote' AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    expect(promote).toHaveLength(1);
+    expect(new Date(promote[0].available_at).getTime()).toBe(
+      new Date(listing.scheduled_start).getTime()
+    );
+  });
+
+  test('ATOMICITY: a post-insert error rolls back BOTH the booking and its outbox rows (no dual write)', async () => {
+    const listing = await makeApprovedListing({ seat_capacity: 3, seats_remaining: 3 });
+    const guest = await makeGuest();
+    // enqueuePromotion runs AFTER the booking insert and the notify enqueues, on the same
+    // transaction client — forcing it to fail must erase every row of the transaction.
+    jest
+      .spyOn(lifecycle, 'enqueuePromotion')
+      .mockRejectedValue(new Error('tc13: injected post-insert failure'));
+
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBeGreaterThanOrEqual(500);
+
+    const { rows: bookings } = await query(
+      'SELECT count(*)::int AS c FROM bookings WHERE listing_id = $1',
+      [listing.id]
+    );
+    expect(bookings[0].c).toBe(0); // no booking committed…
+    const { rows: jobs } = await query(
+      `SELECT count(*)::int AS c FROM outbox_jobs
+        WHERE type = 'notify.booking' AND payload->>'recipientUserId' = $1`,
+      [guest.id]
+    );
+    expect(jobs[0].c).toBe(0); // …and no orphaned outbox row either
+    const { rows: seats } = await query('SELECT seats_remaining FROM listings WHERE id = $1', [
+      listing.id,
+    ]);
+    expect(seats[0].seats_remaining).toBe(3); // capacity rolled back with it
+  });
+
+  test('transport forced to fail: POST /api/bookings still 201 in under 500 ms; worker retries then delivers NOTIFICATION_ATTEMPT per recipient', async () => {
+    await drainOutbox();
+    const listing = await makeApprovedListing({ seat_capacity: 3, seats_remaining: 3 });
+    const guest = await makeGuest();
+    // Enough queued failures to exhaust the transport's own bounded retries for BOTH jobs.
+    mockTransport.injectFailures(50, 'tc13: notification provider down');
+
+    const t0 = Date.now();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    const elapsed = Date.now() - t0;
+    expect(res.status).toBe(201);
+    expect(elapsed).toBeLessThan(500); // provider failure neither rolls back nor delays
+    const bookingId = res.body.booking.id;
+
+    // The booking is committed regardless of the provider.
+    const { rows: committed } = await query('SELECT status FROM bookings WHERE id = $1', [
+      bookingId,
+    ]);
+    expect(committed[0].status).toBe('pending');
+
+    // Worker pass 1: both notify jobs hit the injected failures → retrying, attempt rows.
+    const registry = createRegistry([notifyHandler]);
+    await pollOnce({ registry });
+    let jobs = await notifyJobsFor(bookingId);
+    for (const job of jobs) {
+      expect(job.status).toBe('pending'); // retried with backoff, not lost, not dead
+      expect(job.attempt_count).toBe(1);
+      expect(job.last_error).toBeTruthy();
+    }
+    const { rows: failedAttempts } = await query(
+      `SELECT * FROM notification_attempts
+        WHERE recipient_user_id IN ($1, $2) AND status IN ('failed', 'retrying')`,
+      [guest.id, listing.host_id]
+    );
+    expect(failedAttempts.length).toBeGreaterThanOrEqual(2);
+
+    // Recovery: clear failures, force due, deliver — exactly one 'sent' per recipient (RT-02).
+    mockTransport.reset();
+    await query(
+      `UPDATE outbox_jobs SET available_at = now()
+        WHERE type = 'notify.booking' AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    await pollOnce({ registry });
+    jobs = await notifyJobsFor(bookingId);
+    for (const job of jobs) expect(job.status).toBe('delivered');
+    const { rows: sent } = await query(
+      `SELECT recipient_user_id FROM notification_attempts
+        WHERE recipient_user_id IN ($1, $2) AND status = 'sent'
+          AND params->>'bookingId' = $3`,
+      [guest.id, listing.host_id, bookingId]
+    );
+    const sentTo = sent.map((r) => r.recipient_user_id).sort();
+    expect(sentTo).toEqual([guest.id, listing.host_id].sort());
+  });
+
+  test('redelivery is exactly-once: re-running the worker over delivered jobs sends nothing new (RT-02)', async () => {
+    const listing = await makeApprovedListing({ seat_capacity: 2, seats_remaining: 2 });
+    const guest = await makeGuest();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    const registry = createRegistry([notifyHandler]);
+    await pollOnce({ registry });
+    const countSent = async () => {
+      const { rows } = await query(
+        `SELECT count(*)::int AS c FROM notification_attempts
+          WHERE status = 'sent' AND params->>'bookingId' = $1`,
+        [bookingId]
+      );
+      return rows[0].c;
+    };
+    const afterFirst = await countSent();
+    expect(afterFirst).toBe(2);
+
+    // Force the delivered jobs due again as a crash-redelivery stand-in: the transport
+    // idempotency key (== dedupe key) must make a second delivery a no-op.
+    await query(
+      `UPDATE outbox_jobs SET status = 'pending', available_at = now()
+        WHERE type = 'notify.booking' AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    await pollOnce({ registry });
+    expect(await countSent()).toBe(afterFirst); // no double-send
   });
 });

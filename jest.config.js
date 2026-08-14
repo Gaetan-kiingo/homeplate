@@ -18,6 +18,11 @@ module.exports = {
   globalTeardown: '<rootDir>/tests/helpers/globalTeardown.js',
   // One worker: every lane shares the single seeded test database, so parallel workers would
   // race on truncation/seed state. Determinism beats speed at this project scale (SRS §4.1).
+  // maxWorkers only serializes WITHIN a run; simultaneously-launched runs are serialized by the
+  // 'homeplate_test_suite' advisory lock that globalSetup takes before the schema reset and
+  // globalTeardown releases (COV-W3-05 / verification-report F-1) — so a second `npm test`
+  // queues instead of racing this one's outbox/worker state. To run lanes in parallel instead,
+  // give each its own TEST_DATABASE_URL/TEST_REDIS_URL/OBJECT_STORAGE_BUCKET (tests/helpers/env.js).
   maxWorkers: 1,
   testTimeout: 15000,
   collectCoverageFrom: ['src/**/*.js', 'scripts/**/*.js', '!scripts/dev.js'],

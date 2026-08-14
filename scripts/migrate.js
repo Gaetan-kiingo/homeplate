@@ -121,6 +121,10 @@ async function runMigrations({ databaseUrl = process.env.DATABASE_URL, log = con
 }
 
 if (require.main === module) {
+  // CLI failure path (message on stderr, exit 1). It runs only when this file is the main
+  // module, so it reports zero in-process coverage hits (COV-W3-06); its exercise record is
+  // the spawn test tests/coverage/migrate-cli.test.js, per the coverage lane's convention
+  // for child-process-only paths (NFR-08).
   runMigrations().catch((err) => {
     console.error(err.message);
     process.exit(1);
