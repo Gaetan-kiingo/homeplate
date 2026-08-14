@@ -70,7 +70,12 @@ describe('U0-BOOTSTRAP seeded test database (SRS §4.1)', () => {
 
 describe('U0-BOOTSTRAP Redis (sessions/cache only — SRS §2.4)', () => {
   test('test Redis is reachable on an isolated DB index and round-trips a value', async () => {
-    expect(process.env.REDIS_URL).toMatch(/\/1$/);
+    // Isolation is what matters, not the literal default index: any non-zero DB index keeps
+    // the suite's flushdb off dev sessions (DB 0), including under a TEST_REDIS_URL override
+    // (verification-report F-2).
+    const redisDbIndex = Number(new URL(process.env.REDIS_URL).pathname.replace(/^\//, '') || '0');
+    expect(Number.isInteger(redisDbIndex)).toBe(true);
+    expect(redisDbIndex).toBeGreaterThan(0);
     const redis = new Redis(process.env.REDIS_URL, {
       lazyConnect: true,
       connectTimeout: 4000,
