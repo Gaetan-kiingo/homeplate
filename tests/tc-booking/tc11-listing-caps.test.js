@@ -79,10 +79,15 @@ describe('FR-11 / TC-11 — MEHKO caps and one-listing-per-host-per-day', () => 
       await c2.query('BEGIN');
       await c1.query(insertSql, [host.id, 'race-a', start, day]);
       // The second insert must block on the index entry, then fail once c1 commits.
-      const second = c2.query(insertSql, [host.id, 'race-b', start, day]);
+      // The handler is attached at creation: c1 and c2 answer on separate sockets, so the
+      // rejection can land while COMMIT is still awaited and must never go unhandled.
+      const second = c2.query(insertSql, [host.id, 'race-b', start, day]).then(
+        () => null,
+        (err) => err
+      );
       await new Promise((r) => setTimeout(r, 100));
       await c1.query('COMMIT');
-      await expect(second).rejects.toMatchObject({ code: '23505' });
+      expect(await second).toMatchObject({ code: '23505' });
       await c2.query('ROLLBACK');
     } finally {
       c1.release();

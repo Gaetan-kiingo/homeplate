@@ -30,6 +30,10 @@ jobs:
       - name: Install
         run: npm ci
 
+      - name: Generate dev TLS certificates
+        # certs/ is git-ignored (NFR-03 material never committed); ST-01 needs a live TLS listener.
+        run: ./scripts/gen-dev-certs.sh
+
       - name: Migrate
         run: npm run migrate
 
