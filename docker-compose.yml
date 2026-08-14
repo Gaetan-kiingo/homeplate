@@ -1,0 +1,59 @@
+# Homeplate local/CI infrastructure (U0-BOOTSTRAP; SPMP §5.1.3 — free tier only).
+# Toolchain substrate for NFR-02 (the volume-seeded scale/load runs execute against this
+# PostgreSQL), NFR-08 (CI surfaces structured logs from these services) and NFR-11 (the
+# ST-04 injection lane fires at an app backed by this stack).
+#   PostgreSQL 16  — sole source of truth (SRS §2.4, ADR-001)
+#   Redis 7        — sessions and read cache ONLY; deliberately not persisted, because
+#                    losing it must never change a booking/listing/moderation outcome (ADR-001/006)
+#   MinIO          — S3-compatible object storage for listing/review media (ADR-004)
+#
+# Start:  docker compose up -d --wait
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: homeplate
+      POSTGRES_PASSWORD: homeplate
+      POSTGRES_DB: homeplate
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U homeplate -d homeplate']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    # Floating tag is acceptable for the academic free-tier setup; pin a RELEASE tag if a
+    # breaking image change ever bites (ADR-004).
+    image: minio/minio:latest
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:9000/minio/health/live || exit 1']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  miniodata:

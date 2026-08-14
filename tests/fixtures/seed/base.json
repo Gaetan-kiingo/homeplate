@@ -1,0 +1,285 @@
+{
+  "users": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "email": "host.one@seed.homeplate.invalid",
+      "email_verified": true,
+      "password_hash": "seed-fixture-hash-not-a-real-password",
+      "full_name": "Seed Host One",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-08-01T12:00:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "email": "guest.one@seed.homeplate.invalid",
+      "email_verified": true,
+      "password_hash": "seed-fixture-hash-not-a-real-password",
+      "full_name": "Seed Guest One",
+      "can_reserve_seat": true,
+      "can_publish_listing": false,
+      "roles": ["user"],
+      "created_at": "2026-08-01T12:05:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "email": "moderator.one@seed.homeplate.invalid",
+      "email_verified": true,
+      "password_hash": "seed-fixture-hash-not-a-real-password",
+      "full_name": "Seed Moderator One",
+      "can_reserve_seat": false,
+      "can_publish_listing": false,
+      "roles": ["user", "moderator"],
+      "created_at": "2026-08-01T12:10:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "email": "unverified.one@seed.homeplate.invalid",
+      "email_verified": false,
+      "password_hash": "seed-fixture-hash-not-a-real-password",
+      "full_name": "Seed Unverified One",
+      "can_reserve_seat": false,
+      "can_publish_listing": false,
+      "roles": ["user"],
+      "created_at": "2026-08-01T12:15:00Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000005",
+      "email": "host.two@seed.homeplate.invalid",
+      "email_verified": true,
+      "password_hash": "seed-fixture-hash-not-a-real-password",
+      "full_name": "Seed Host Two",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-08-01T12:20:00Z"
+    }
+  ],
+  "host_profiles": [
+    {
+      "user_id": "00000000-0000-4000-8000-000000000001",
+      "bio": "Seed host one — home kitchen in North Park, San Diego.",
+      "host_agreement_accepted_at": "2026-08-01T13:00:00Z"
+    },
+    {
+      "user_id": "00000000-0000-4000-8000-000000000005",
+      "bio": "Seed host two — home kitchen in Hillcrest, San Diego.",
+      "host_agreement_accepted_at": "2026-08-01T13:30:00Z"
+    }
+  ],
+  "email_verification_tokens": [
+    {
+      "token_hash": "seed-token-hash-unverified-one",
+      "user_id": "00000000-0000-4000-8000-000000000004",
+      "expires_at": "2027-01-01T00:00:00Z"
+    }
+  ],
+  "listings": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "host_id": "00000000-0000-4000-8000-000000000001",
+      "title": "Seed Carnitas Night",
+      "description": "Slow-braised carnitas with fresh tortillas and salsa verde.",
+      "ingredients": ["pork", "corn tortillas", "tomatillo", "onion", "cilantro"],
+      "allergens": ["none"],
+      "cuisine": "mexican",
+      "scheduled_start": "2026-09-01T18:00:00-07:00",
+      "duration_minutes": 120,
+      "local_date": "2026-09-01",
+      "address_line1": "3800 Seed Fixture St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92104",
+      "country": "US",
+      "lat": 32.7471,
+      "lng": -117.1296,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.13,
+      "area_label": "North Park, San Diego",
+      "seat_capacity": 4,
+      "seats_remaining": 3,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000002",
+      "host_id": "00000000-0000-4000-8000-000000000005",
+      "title": "Seed Pho Evening",
+      "description": "Beef pho with house broth, herbs and lime.",
+      "ingredients": ["beef", "rice noodles", "star anise", "basil", "lime"],
+      "allergens": ["gluten"],
+      "cuisine": "vietnamese",
+      "scheduled_start": "2026-09-01T19:00:00-07:00",
+      "duration_minutes": 90,
+      "local_date": "2026-09-01",
+      "address_line1": "1200 Seed Fixture Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92103",
+      "country": "US",
+      "lat": 32.7484,
+      "lng": -117.1637,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.16,
+      "area_label": "Hillcrest, San Diego",
+      "seat_capacity": 6,
+      "seats_remaining": 6,
+      "moderation_status": "pending",
+      "status": "active"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000003",
+      "host_id": "00000000-0000-4000-8000-000000000001",
+      "title": "Seed Cancelled Tamales",
+      "description": "Cancelled fixture listing — same host and day as the active one (FR-11: cancelled listings do not block the daily slot).",
+      "ingredients": ["corn masa", "chicken"],
+      "allergens": ["none"],
+      "cuisine": "mexican",
+      "scheduled_start": "2026-09-01T12:00:00-07:00",
+      "duration_minutes": 60,
+      "local_date": "2026-09-01",
+      "city": "San Diego",
+      "region": "CA",
+      "country": "US",
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.13,
+      "area_label": "North Park, San Diego",
+      "seat_capacity": 4,
+      "seats_remaining": 4,
+      "moderation_status": "approved",
+      "status": "cancelled"
+    },
+    {
+      "id": "10000000-0000-4000-8000-000000000004",
+      "host_id": "00000000-0000-4000-8000-000000000005",
+      "title": "Seed Completed Bun Cha",
+      "description": "Past fixture listing backing the completed booking and its review.",
+      "ingredients": ["pork", "rice noodles", "fish sauce"],
+      "allergens": ["fish"],
+      "cuisine": "vietnamese",
+      "scheduled_start": "2026-08-01T18:00:00-07:00",
+      "duration_minutes": 120,
+      "local_date": "2026-08-01",
+      "city": "San Diego",
+      "region": "CA",
+      "country": "US",
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.16,
+      "area_label": "Hillcrest, San Diego",
+      "seat_capacity": 2,
+      "seats_remaining": 1,
+      "moderation_status": "approved",
+      "status": "active"
+    }
+  ],
+  "bookings": [
+    {
+      "id": "20000000-0000-4000-8000-000000000001",
+      "listing_id": "10000000-0000-4000-8000-000000000001",
+      "guest_id": "00000000-0000-4000-8000-000000000002",
+      "status": "pending"
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000002",
+      "listing_id": "10000000-0000-4000-8000-000000000004",
+      "guest_id": "00000000-0000-4000-8000-000000000002",
+      "status": "completed",
+      "host_confirmed_completion": true,
+      "guest_confirmed_completion": true,
+      "created_at": "2026-08-01T10:00:00Z"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "booking_id": "20000000-0000-4000-8000-000000000002",
+      "author_id": "00000000-0000-4000-8000-000000000002",
+      "target_user_id": "00000000-0000-4000-8000-000000000005",
+      "rating": 5,
+      "body": "Wonderful dinner and a very welcoming host.",
+      "moderation_status": "approved"
+    }
+  ],
+  "messages": [
+    {
+      "id": "40000000-0000-4000-8000-000000000001",
+      "booking_id": "20000000-0000-4000-8000-000000000001",
+      "sender_id": "00000000-0000-4000-8000-000000000002",
+      "body": "Looking forward to dinner! Are any dishes peanut-free?",
+      "moderation_status": "approved"
+    }
+  ],
+  "safety_alerts": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "booking_id": "20000000-0000-4000-8000-000000000002",
+      "raised_by": "00000000-0000-4000-8000-000000000002",
+      "delivery_status": "delivered",
+      "delivered_at": "2026-08-01T20:15:00Z"
+    }
+  ],
+  "moderation_decisions": [
+    {
+      "id": "60000000-0000-4000-8000-000000000001",
+      "content_type": "review",
+      "content_id": "30000000-0000-4000-8000-000000000001",
+      "category": "benign",
+      "confidence": 0.99,
+      "outcome": "approved",
+      "decided_by": "llm",
+      "model_id": "seed-mock-model"
+    },
+    {
+      "id": "60000000-0000-4000-8000-000000000002",
+      "content_type": "listing",
+      "content_id": "10000000-0000-4000-8000-000000000001",
+      "category": "benign",
+      "outcome": "approved",
+      "decided_by": "human",
+      "decided_by_user_id": "00000000-0000-4000-8000-000000000003"
+    }
+  ],
+  "moderation_queue": [
+    {
+      "id": "70000000-0000-4000-8000-000000000001",
+      "content_type": "listing",
+      "content_id": "10000000-0000-4000-8000-000000000002",
+      "reason": "low_confidence",
+      "status": "open"
+    }
+  ],
+  "notification_attempts": [
+    {
+      "id": "80000000-0000-4000-8000-000000000001",
+      "recipient_user_id": "00000000-0000-4000-8000-000000000001",
+      "channel": "email",
+      "template": "booking_created",
+      "params": { "bookingId": "20000000-0000-4000-8000-000000000001" },
+      "status": "sent",
+      "attempt_count": 1,
+      "idempotency_key": "seed-booking-created-b1-host",
+      "sent_at": "2026-08-02T09:00:00Z"
+    }
+  ],
+  "media_objects": [
+    {
+      "id": "90000000-0000-4000-8000-000000000001",
+      "owner_user_id": "00000000-0000-4000-8000-000000000001",
+      "entity_type": "listing",
+      "entity_id": "10000000-0000-4000-8000-000000000001",
+      "storage_key": "seed/listings/10000000-0000-4000-8000-000000000001/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 12345
+    }
+  ],
+  "data_requests": [
+    {
+      "id": "a0000000-0000-4000-8000-000000000001",
+      "user_id": "00000000-0000-4000-8000-000000000002",
+      "kind": "export",
+      "status": "pending",
+      "due_at": "2026-09-10T00:00:00Z"
+    }
+  ]
+}

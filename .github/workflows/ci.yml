@@ -1,0 +1,51 @@
+# CI — install → infra → migrate → lint → build-check → test (U0-BOOTSTRAP; SPMP §5.1.3, free
+# tier only). Toolchain substrate for NFR-02, NFR-08, NFR-11: every push replays the full suite
+# (including the scale, logging and injection lanes as they land) against real services.
+# The suite runs entirely against Docker Compose services (PostgreSQL/Redis/MinIO) with mock
+# adapters (ADR-007/ADR-011) — no third-party call, no secret required. Real secrets never
+# enter CI; the test environment is fully defined by tests/helpers/env.js.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      # Dev-database URL for the migrate step; tests use their own guarded *_test database.
+      DATABASE_URL: postgres://homeplate:homeplate@localhost:5432/homeplate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Start infrastructure (PostgreSQL, Redis, MinIO)
+        run: docker compose up -d --wait
+
+      - name: Install
+        run: npm ci
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build check
+        run: npm run build
+
+      - name: Test (Jest + Supertest, seeded test DB, coverage)
+        run: npm test -- --coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore

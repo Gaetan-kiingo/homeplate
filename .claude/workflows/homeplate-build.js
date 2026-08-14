@@ -1,7 +1,7 @@
 export const meta = {
   name: 'homeplate-build',
   description: 'Coordinator plans from the SRS + SPMP + ADRs, implementers build in dependency waves, verifiers test every requirement/module/function and drive repair rounds',
-  whenToUse: 'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and the ADR set. args: {mode:"full"|"plan"|"implement"|"verify", repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
+  whenToUse: 'Building or extending Homeplate v1.0 from the frozen SRS v3.2 baseline and the ADR set. args: {mode:"full"|"plan"|"implement"|"verify", model ("fable" default; "sonnet"|"opus"|"haiku"|"inherit"), repo, srs, spmp, adrs, focus, maxRepairRounds, lanes, waveLimit}. mode:"plan" is a cheap dry run that produces the work breakdown without writing code.',
   phases: [
     { title: 'Plan', detail: 'coordinator normalizes SRS/SPMP/ADRs into a requirement inventory + work waves' },
     { title: 'Scaffold', detail: 'one agent lays down the repo skeleton, deps, DB migrations, test harness' },
@@ -36,6 +36,10 @@ const FOCUS = cfg.focus || ''                  // optional: "only FR-10..FR-14",
 const MAX_REPAIR = Number.isFinite(cfg.maxRepairRounds) ? cfg.maxRepairRounds : 2
 const WAVE_LIMIT = cfg.waveLimit || 6          // max concurrent implementers inside one wave batch
 const SKIP_SCAFFOLD = cfg.skipScaffold === true
+// Model for every agent in this workflow. Team decision 2026-08-12: Fable by default.
+// Pass {model:"inherit"} to fall back to the session model, or any other model name to override.
+const MODEL = cfg.model === 'inherit' ? null : (cfg.model || 'fable')
+const MOPT = MODEL ? { model: MODEL } : {}
 
 // Every prompt gets this. It is the single source of truth about *where things are*
 // and which document wins when two documents disagree.
@@ -508,7 +512,7 @@ Do this, in order:
 Flag genuine conflicts or ambiguities in openQuestions rather than resolving them silently — but do not block on
 them: choose the reading most faithful to the SRS, state it, and keep planning. Set "blocked" only if the source
 documents are unreadable.`,
-  { label: 'coordinator', phase: 'Plan', schema: PLAN_SCHEMA, effort: 'high' },
+  { label: 'coordinator', phase: 'Plan', schema: PLAN_SCHEMA, effort: 'high', ...MOPT },
 )
 
 if (!plan) return { error: 'Coordinator returned nothing — cannot proceed.' }
@@ -573,7 +577,7 @@ report the exact commands and their output. Do not hand a broken foundation to t
 fails, fix it and re-run rather than reporting success.
 
 Do not implement business logic — that belongs to the wave units.`,
-    { label: 'scaffold', phase: 'Scaffold', schema: IMPL_SCHEMA },
+    { label: 'scaffold', phase: 'Scaffold', schema: IMPL_SCHEMA, ...MOPT },
   )
   if (scaffold) log(`Scaffold: ${scaffold.status} · ${(scaffold.filesWritten || []).length} files`)
 }
@@ -631,7 +635,7 @@ DEFINITION OF DONE — all four, verified by you, not assumed:
 
 If you cannot honestly reach "complete", return status "partial" or "blocked" with a precise account of what is
 missing. An honest partial is useful; a stub that reports success is not.`,
-            { label: `impl:${u.id}`, phase: 'Implement', schema: IMPL_SCHEMA },
+            { label: `impl:${u.id}`, phase: 'Implement', schema: IMPL_SCHEMA, ...MOPT },
           ),
         ),
       )
@@ -715,7 +719,7 @@ const record = (results) => { for (const r of results) if (r) latestByLane.set(r
 record(await parallel(
   LANES.map((lane) => () =>
     agent(verifyPrompt(lane, 1, ''), {
-      label: `verify:${lane.key}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high',
+      label: `verify:${lane.key}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high', ...MOPT,
     }).then((r) => (r ? { ...r, lane: lane.key } : null)),
   ),
 ))
@@ -770,7 +774,7 @@ RULES
   and confirm the specific failure scenario no longer reproduces. Report the commands and their output.
 - Preserve every ADR invariant while fixing. A fix that satisfies a test by calling an adapter inline from a request
   handler, or by publishing unmoderated content, is not a fix.`,
-          { label: `fix:${g.owner.split('/').pop() || g.owner}`, phase: 'Repair', schema: FIX_SCHEMA },
+          { label: `fix:${g.owner.split('/').pop() || g.owner}`, phase: 'Repair', schema: FIX_SCHEMA, ...MOPT },
         ),
       ),
     )
@@ -804,7 +808,7 @@ RULES
   record(await parallel(
     reLanes.map((lane) => () =>
       agent(verifyPrompt(lane, round + 1, priorByLane.get(lane.key) || ''), {
-        label: `reverify:${lane.key}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high',
+        label: `reverify:${lane.key}`, phase: 'Verify', schema: VERIFY_SCHEMA, effort: 'high', ...MOPT,
       }).then((r) => (r ? { ...r, lane: lane.key } : null)),
     ),
   ))
@@ -848,7 +852,7 @@ Do this:
    this document is the team's evidence at CDR, and an overstated one is worse than none.
 
 Return a concise summary: what is done, what is not, and the top things the team should do next.`,
-  { label: 'report', phase: 'Report', effort: 'high' },
+  { label: 'report', phase: 'Report', effort: 'high', ...MOPT },
 )
 
 return {

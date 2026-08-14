@@ -1,0 +1,12 @@
+node_modules/
+coverage/
+client/dist/
+docs/
+ADRs/
+Weekly Report/
+.claude/
+certs/
+package-lock.json
+*.md
+*.yml
+*.yaml
