@@ -1,0 +1,394 @@
+[
+  {
+    "id": "off-001",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["profanity", "targets-host"],
+    "text": "This so-called chef is a disgusting f***ing slob and the kitchen smelled like a sewer. Do not let this idiot near food."
+  },
+  {
+    "id": "off-002",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "I know where you live now, and I will be parked outside your house every night until you refund me."
+  },
+  {
+    "id": "off-003",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["hate", "no-profanity"],
+    "text": "People from your country have no business cooking for Americans. Go back where you came from."
+  },
+  {
+    "id": "off-004",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "The host is a fat, lazy waste of space who clearly eats more than she ever serves."
+  },
+  {
+    "id": "off-005",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["sexual-harassment"],
+    "text": "You looked good bending over that stove. Send me a photo of you alone in the kitchen tonight."
+  },
+  {
+    "id": "off-006",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["masked-profanity", "harassment"],
+    "text": "You are a stupid b1tch and everyone in the group chat agrees with me about you."
+  },
+  {
+    "id": "off-007",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "no-profanity"],
+    "text": "The host is clearly braindead. She could not even count six plates. Pathetic from start to finish."
+  },
+  {
+    "id": "off-008",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "Cancel my booking or I will show up with my friends and make sure your little kitchen never opens again."
+  },
+  {
+    "id": "off-009",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["hate", "no-profanity"],
+    "text": "Their food smells like a garbage dump. That is what happens when you let those people cook for you."
+  },
+  {
+    "id": "off-010",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["harassment"],
+    "text": "I am going to message you every hour until you answer me, and I will do the same to every one of your guests."
+  },
+  {
+    "id": "off-011",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "Absolutely worthless human being. She should be ashamed to charge anyone for that slop."
+  },
+  {
+    "id": "off-012",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["obfuscated", "masked-profanity"],
+    "text": "y0u are a w0rthless p1g and your f00d is g@rbage, everyone here thinks so"
+  },
+  {
+    "id": "off-013",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["demeaning", "discriminatory"],
+    "text": "No fat people at my table. If you cannot fit in a normal chair, book somewhere else."
+  },
+  {
+    "id": "off-014",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "Say that to me again and I will knock your teeth out when I come to pick up the food."
+  },
+  {
+    "id": "off-015",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-family"],
+    "text": "The host's kid is ugly and loud and should have been left in another room. Terrible genes, terrible cooking."
+  },
+  {
+    "id": "off-016",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["hate", "religion"],
+    "text": "I did not realise your kind was allowed to serve food here. Genuinely disgusting."
+  },
+  {
+    "id": "off-017",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["profanity", "masked-profanity"],
+    "text": "F*** this host and f*** this app. Complete sh1tshow from the first message to the last plate."
+  },
+  {
+    "id": "off-018",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat", "doxxing"],
+    "text": "I have your full address and your workplace. Everyone is going to know exactly what you did."
+  },
+  {
+    "id": "off-019",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["hate", "discriminatory"],
+    "text": "Guests who do not speak proper English will be turned away at the door. I am sick of you people."
+  },
+  {
+    "id": "off-020",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["sexual-harassment"],
+    "text": "Are you single? I only booked because I wanted to get you alone. Do not bring your roommate."
+  },
+  {
+    "id": "off-021",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "This woman is a pathetic excuse for a cook and an even worse human being."
+  },
+  {
+    "id": "off-022",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["self-harm-encouragement", "severe"],
+    "text": "Kill yourself. Nobody wants your food and nobody wants you."
+  },
+  {
+    "id": "off-023",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning"],
+    "text": "Nothing but a scummy little hovel run by a woman who clearly gave up on life years ago."
+  },
+  {
+    "id": "off-024",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["demeaning", "hate"],
+    "text": "You are a joke. Learn to cook or crawl back to whatever hole you came out of."
+  },
+  {
+    "id": "off-025",
+    "label": "offensive",
+    "surface": "profile",
+    "traits": ["discriminatory", "demeaning"],
+    "text": "I do not host anyone over forty, and definitely not men who look like creeps. Do not waste my time."
+  },
+  {
+    "id": "off-026",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "If my seat is gone when I get there, somebody is going to the hospital tonight."
+  },
+  {
+    "id": "off-027",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "no-profanity"],
+    "text": "The dumbest host on this entire platform. I genuinely cannot believe she is allowed around knives."
+  },
+  {
+    "id": "off-028",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["hate", "no-profanity"],
+    "text": "Your accent made the whole meal unbearable. Learn to speak properly before you invite people over."
+  },
+  {
+    "id": "off-029",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "hate"],
+    "text": "Rancid food from a rancid person. She is the kind of trash this city needs a lot less of."
+  },
+  {
+    "id": "off-030",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["harassment", "stalking"],
+    "text": "I looked up your Instagram. I am going to comment on every single photo until you reply to me."
+  },
+  {
+    "id": "off-031",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["discriminatory", "demeaning"],
+    "text": "Women only. Men are pigs and I flatly refuse to feed them."
+  },
+  {
+    "id": "off-032",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "Shut your mouth before I shut it for you."
+  },
+  {
+    "id": "off-033",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "Do not eat here unless you enjoy being served by a filthy, mannerless animal."
+  },
+  {
+    "id": "off-034",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["masked-profanity"],
+    "text": "you f@cking moron, you gave my seat away and did not even message me about it"
+  },
+  {
+    "id": "off-035",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "ageist"],
+    "text": "Old hag could not even season the rice. She should retire and stop embarrassing herself in public."
+  },
+  {
+    "id": "off-036",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["demeaning", "targets-family"],
+    "text": "Your husband must be miserable. I would leave too if I had to eat that every night."
+  },
+  {
+    "id": "off-037",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["discriminatory", "ableist"],
+    "text": "No wheelchairs, no crutches, no excuses. I do not have time for people who slow everything down."
+  },
+  {
+    "id": "off-038",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat", "veiled"],
+    "text": "I am bringing my brother next time and he does not ask questions. Think about that carefully."
+  },
+  {
+    "id": "off-039",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning"],
+    "text": "Complete waste of oxygen. The soup was cold and so is she."
+  },
+  {
+    "id": "off-040",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["hate", "no-profanity"],
+    "text": "This app should ban people like you. You do not belong in this neighbourhood and you know it."
+  },
+  {
+    "id": "off-041",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "Filthy pig of a host, filthy kitchen, filthy food. Every single part of it was revolting."
+  },
+  {
+    "id": "off-042",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["sexual-harassment", "coercive"],
+    "text": "Wear something tighter next time and I will leave you five stars."
+  },
+  {
+    "id": "off-043",
+    "label": "offensive",
+    "surface": "profile",
+    "traits": ["hate", "hostile"],
+    "text": "If you are the type who cries about pronouns, do not book. I will make your evening miserable."
+  },
+  {
+    "id": "off-044",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["demeaning", "ableist"],
+    "text": "You are mentally ill if you think that was worth fifteen dollars. Get help."
+  },
+  {
+    "id": "off-045",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-family"],
+    "text": "The host screamed at her own mother in front of us. Trash raising trash, and the food matched."
+  },
+  {
+    "id": "off-046",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat", "doxxing"],
+    "text": "Refund me tonight or I am posting your address publicly and letting people decide what to do with it."
+  },
+  {
+    "id": "off-047",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["obfuscated", "masked-profanity"],
+    "text": "sh!t food, sh!t host, sh!t evening. avoid this cl0wn at all costs."
+  },
+  {
+    "id": "off-048",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["demeaning"],
+    "text": "Nobody likes you. Your guests only come because it is cheap, you sad little woman."
+  },
+  {
+    "id": "off-049",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["threat", "doxxing"],
+    "text": "Any guest who complains gets their name and photo posted in my next listing. Try me."
+  },
+  {
+    "id": "off-050",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "mixed-signal"],
+    "text": "She looks nothing like her profile photo. Catfish, and an ugly one at that."
+  },
+  {
+    "id": "off-051",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["demeaning"],
+    "text": "Do not ever contact me again you worthless piece of garbage."
+  },
+  {
+    "id": "off-052",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "Two hours of listening to a bitter old woman moan about her divorce. Awful person, awful food."
+  },
+  {
+    "id": "off-053",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["threat"],
+    "text": "I hope your kitchen burns down with you inside it."
+  },
+  {
+    "id": "off-054",
+    "label": "offensive",
+    "surface": "listing",
+    "traits": ["threat", "hostile"],
+    "text": "Serious guests only. Timewasters will be publicly named and shamed, and I am not joking about that."
+  },
+  {
+    "id": "off-055",
+    "label": "offensive",
+    "surface": "review",
+    "traits": ["demeaning", "targets-host"],
+    "text": "Grotesque, unwashed and rude. If you have any self-respect at all you will eat somewhere else."
+  },
+  {
+    "id": "off-056",
+    "label": "offensive",
+    "surface": "message",
+    "traits": ["hate", "veiled"],
+    "text": "We do not need more of your kind opening kitchens around here. Take the hint and close it."
+  }
+]

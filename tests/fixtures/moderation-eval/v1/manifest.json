@@ -1,0 +1,72 @@
+{
+  "setVersion": "v1",
+  "authoredOn": "2026-08-14",
+  "requirements": ["NFR-10", "FR-08", "AB-01", "AB-03", "AB-04", "NFR-13"],
+  "testId": "IT-03",
+  "adrs": ["ADR-002", "ADR-007", "ADR-008"],
+  "minimumItems": 200,
+  "itemFiles": [
+    "items/offensive.json",
+    "items/spam.json",
+    "items/fraudulent.json",
+    "items/benign.json"
+  ],
+  "categories": ["offensive", "spam", "fraudulent", "benign"],
+  "violatingCategories": ["offensive", "spam", "fraudulent"],
+  "declaredCounts": {
+    "offensive": 56,
+    "spam": 56,
+    "fraudulent": 56,
+    "benign": 56,
+    "total": 224
+  },
+  "severityOrder": ["offensive", "fraudulent", "spam"],
+  "surfaces": ["listing", "review", "message", "profile"],
+  "provenance": {
+    "synthetic": true,
+    "scraped": false,
+    "sources": [],
+    "containsRealUserContent": false,
+    "containsPersonalData": false,
+    "authoredBy": "Homeplate Group 6, drafted with AI assistance (Claude Code) under team direction",
+    "method": "Items written for this repository against the FR-08 taxonomy and the Homeplate v1.0 surfaces (listing text, review text, private message, host profile bio). No item is copied or adapted from a real user, a real platform, or a third-party dataset. Names, handles, domains and phone numbers are fictional and use reserved example ranges.",
+    "authoredBeforePipeline": true,
+    "authoringNote": "ADR-008 rejects deferring the set until after the pipeline exists, so this set was authored before the U4-MODERATION pre-filter and classifier prompt were written. Later versions must be new directories (v2, v3), never edits to a measured set."
+  },
+  "metricDefinitions": {
+    "falsePositive": "An item labelled 'benign' that the pipeline classifies as any violating category.",
+    "falsePositiveRate": "falsePositives / (number of benign items)",
+    "falseNegative": "An item labelled offensive, spam or fraudulent that the pipeline classifies as 'benign'.",
+    "falseNegativeRate": "falseNegatives / (number of violating items)",
+    "misrouted": "A violating item classified as a different violating category. Not counted as a false positive or a false negative under NFR-10's binary bound, but reported because FR-08 routing depends on the category.",
+    "bound": "NFR-10 requires falsePositiveRate < 0.05 AND falseNegativeRate < 0.05.",
+    "resolution": "With 56 benign items one benign misclassification moves the false-positive rate by 1.79 points, so the bound is decided by at most 2 (pass) versus 3 or more (fail) misclassified benign items. With 168 violating items one miss moves the false-negative rate by 0.60 points."
+  },
+  "labelPolicy": {
+    "dominantViolation": "An item that violates more than one category is labelled by the most severe violation, using severityOrder (offensive > fraudulent > spam).",
+    "spamVersusFraudulent": "Untargeted promotion, link farming, keyword stuffing and bulk outreach are 'spam'. Content that tries to obtain money, credentials, identity documents or personal data from a specific person by deception is 'fraudulent'.",
+    "paymentsAreOutOfScope": "Homeplate v1.0 moves no money (SRS 1.2), so arranging ordinary cash payment on the night is benign. A demand for an upfront transfer, gift card, crypto or card details is fraudulent because no such platform flow exists to justify it.",
+    "criticismIsBenign": "Negative reviews, food-safety complaints, allergen complaints and reports of abuse are benign, including when they quote the abusive words. Moderating these away is the false positive NFR-10 is meant to bound.",
+    "abuseTargetsPeople": "'offensive' requires abuse, hate, threats, sexual harassment or demeaning language directed at a person or group. Strong language about food is not offensive."
+  },
+  "labelReview": {
+    "status": "unreviewed",
+    "reviewer": null,
+    "date": null,
+    "setVersion": "v1",
+    "note": "ADR-008: no NFR-10 result may be reported as a pass until a human team member has reviewed and signed off these labels. Until 'status' reads 'signed-off' with a reviewer name and date, any IT-03 run over this set reports provisional numbers only and does not close NFR-10."
+  },
+  "resultsFile": "RESULTS.md",
+  "resultsFileRequiredFields": [
+    "setVersion",
+    "modelId",
+    "promptVersion",
+    "runDate",
+    "itemCount",
+    "perClassCounts",
+    "falsePositiveRate",
+    "falseNegativeRate",
+    "labelReview.reviewer",
+    "labelReview.date"
+  ]
+}

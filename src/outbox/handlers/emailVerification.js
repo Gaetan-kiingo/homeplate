@@ -14,7 +14,11 @@
 //                   only in rows and logs (SRS §3.4 PII register). The payload/params carry
 //                   the token's SHA-256 DIGEST — the raw single-use token is never
 //                   persisted anywhere (users/tokens.js), so neither an outbox row nor a
-//                   notification row can leak a usable verification link.
+//                   notification row can leak a usable verification link. The MAILABLE link
+//                   is therefore minted here at delivery time (authService
+//                   .createVerificationLink) and passed as non-persisted render context;
+//                   a digest is not a credential, and mailing one made FR-10 unmeetable
+//                   (finding TCB-W3-01).
 //   NFR-08 (MT-01) — ctx.log is the worker's job-scoped child logger carrying the
 //                   originating request's correlationId into these lines.
 //
@@ -25,6 +29,10 @@
 const { logger } = require('../../lib/logger');
 // Worker-only import (ADR-001/003): the transport reaches src/adapters/*.
 const transport = require('../../modules/notifications/transport');
+// The auth service owns verification tokens (ADR-006 — one auth service); this handler is
+// the delivery path that needs a mailable one. It touches no adapter, so importing it here
+// keeps ADR-001/003 intact (handlers may call module services — cf. safetyAlert.js).
+const authService = require('../../modules/auth/service');
 
 const TYPE = 'email.verification';
 
@@ -68,7 +76,20 @@ module.exports = {
         params: { userId, tokenHash }, // IDs/digests only (§3.4 PII register, ADR-003)
         idempotencyKey,
       },
-      { log }
+      {
+        log,
+        // FR-10: the ONE value that closes the loop for a real recipient. The raw token
+        // minted during registration is unrecoverable here on purpose (PostgreSQL keeps the
+        // digest only, and the payload above carries IDs only), so the deliverable link is
+        // minted HERE, worker-side, and handed to the adapter as non-persisted render
+        // context. transport.send() calls this at most once per send — never for a deduped
+        // redelivery, and never on the ADR-011 mock path — so no credential is minted that
+        // is not about to be mailed.
+        resolveRenderContext: async () => {
+          const link = await authService.createVerificationLink(userId, { log });
+          return { verificationUrl: link.url, expiresAt: link.expiresAt.toISOString() };
+        },
+      }
     );
 
     if (result.status !== 'sent') {

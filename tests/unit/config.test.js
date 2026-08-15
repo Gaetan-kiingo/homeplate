@@ -16,7 +16,13 @@ const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
 
-const { validateEnv, envKeys } = require('../../src/config/schema');
+const {
+  validateEnv,
+  envKeys,
+  KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY,
+  DEFAULT_OBJECT_STORAGE_CREDENTIALS,
+  isPlaceholderHexKey,
+} = require('../../src/config/schema');
 
 const ROOT = path.join(__dirname, '..', '..');
 const ENV_EXAMPLE_PATH = path.join(ROOT, '.env.example');
@@ -216,10 +222,17 @@ describe('U1-CONFIG moderation/auth knobs (FR-08, FR-10, ADR-007)', () => {
 // ---- production adapter modes: mocks are dev/test-only (ADR-005/007/011) -----------------------
 
 describe('U1-CONFIG production rejects mock adapters (FR-01, FR-08, NFR-10, ADR-005/007/011)', () => {
-  // A production-shaped environment: live modes with all the secrets they demand.
+  // A production-shaped environment: live modes with all the secrets they demand — including
+  // REAL (non-placeholder) values for the two credentials .env.example ships as samples.
+  // STS-W3-02: the sample FIELD_ENCRYPTION_KEY and the minioadmin storage credentials are
+  // committed to this repository, so production refuses them; a fixture that kept them would
+  // no longer be production-shaped. Their rejection is asserted below.
   const productionEnv = {
     ...exampleEnv,
     NODE_ENV: 'production',
+    FIELD_ENCRYPTION_KEY: require('crypto').randomBytes(32).toString('hex'),
+    OBJECT_STORAGE_ACCESS_KEY: 'not-a-real-access-key',
+    OBJECT_STORAGE_SECRET_KEY: 'not-a-real-secret-key',
     NOTIFICATIONS_TRANSPORT: 'sendgrid',
     SENDGRID_API_KEY: 'test-key-not-real',
     SENDGRID_FROM_EMAIL: 'no-reply@homeplate.example',
@@ -272,6 +285,97 @@ describe('U1-CONFIG production rejects mock adapters (FR-01, FR-08, NFR-10, ADR-
     expect(cfg.maps.mode).toBe('mock');
     expect(cfg.moderation.mode).toBe('mock');
     expect(cfg.notifications.transport).toBe('mock');
+  });
+
+  // ---- STS-W3-02: committed placeholder credentials fail closed in production ----------------
+  // (NFR-13 encryption at rest, ST-06, AB-08 — a secret published in this repository is not a
+  // secret. The dev/test defaults must keep working, so the guard is production-only.)
+
+  test('the committed sample FIELD_ENCRYPTION_KEY is refused in production (NFR-13, ST-06)', () => {
+    expect(exampleEnv.FIELD_ENCRYPTION_KEY).toBe(KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY);
+    expect(() =>
+      validateEnv({ ...productionEnv, FIELD_ENCRYPTION_KEY: KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY })
+    ).toThrow(/FIELD_ENCRYPTION_KEY[\s\S]*openssl rand -hex 32/);
+  });
+
+  test('any repeated-block key is refused in production; a generated key is accepted', () => {
+    for (const placeholder of ['0'.repeat(64), 'ab'.repeat(32), 'cafebabe'.repeat(8)]) {
+      expect(isPlaceholderHexKey(placeholder)).toBe(true);
+      expect(() => validateEnv({ ...productionEnv, FIELD_ENCRYPTION_KEY: placeholder })).toThrow(
+        /FIELD_ENCRYPTION_KEY/
+      );
+    }
+    const fresh = require('crypto').randomBytes(32).toString('hex');
+    expect(isPlaceholderHexKey(fresh)).toBe(false);
+    expect(() => validateEnv({ ...productionEnv, FIELD_ENCRYPTION_KEY: fresh })).not.toThrow();
+  });
+
+  test('the default MinIO object-storage credentials are refused in production (AB-08)', () => {
+    for (const key of ['OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY']) {
+      expect(exampleEnv[key]).toBe(DEFAULT_OBJECT_STORAGE_CREDENTIALS[0]);
+      expect(() =>
+        validateEnv({ ...productionEnv, [key]: DEFAULT_OBJECT_STORAGE_CREDENTIALS[0] })
+      ).toThrow(new RegExp(key));
+    }
+  });
+
+  test('the same placeholders stay usable in development and test (guard is production-only)', () => {
+    for (const env of ['development', 'test']) {
+      const cfg = validateEnv({ ...exampleEnv, NODE_ENV: env });
+      expect(cfg.crypto.fieldEncryptionKeyHex).toBe(KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY);
+      expect(cfg.objectStorage.accessKey).toBe(DEFAULT_OBJECT_STORAGE_CREDENTIALS[0]);
+    }
+  });
+});
+
+// ---- W3-ADR-02: NODE_ENV=test is pinned to the mock adapters (ADR-005/007/011) -----------------
+
+describe('U1-CONFIG test environment refuses live adapters (ADR-007, ADR-005, ADR-011)', () => {
+  const testEnv = { ...exampleEnv, NODE_ENV: 'test' };
+  const live = {
+    LLM_MODERATION_MODE: 'live',
+    LLM_MODERATION_BASE_URL: 'https://provider.example/v1',
+    LLM_MODERATION_API_KEY: 'test-key-not-real',
+    MODERATION_MODEL: 'some-model-id',
+    MAPS_MODE: 'live',
+    MAPS_API_KEY: 'test-key-not-real',
+  };
+
+  test('LLM_MODERATION_MODE=live is refused under NODE_ENV=test (ADR-007)', () => {
+    expect(() => validateEnv({ ...testEnv, ...live, MAPS_MODE: 'mock' })).toThrow(
+      /LLM_MODERATION_MODE must be mock when NODE_ENV=test/
+    );
+  });
+
+  test('MAPS_MODE=live is refused under NODE_ENV=test (ADR-005 — free-tier quota, no CI calls)', () => {
+    expect(() =>
+      validateEnv({ ...testEnv, MAPS_MODE: 'live', MAPS_API_KEY: 'test-key-not-real' })
+    ).toThrow(/MAPS_MODE must be mock when NODE_ENV=test/);
+  });
+
+  test('ALLOW_LIVE_ADAPTERS_IN_TESTS=true is the documented IT-03 opt-in, and nothing more', () => {
+    const cfg = validateEnv({ ...testEnv, ...live, ALLOW_LIVE_ADAPTERS_IN_TESTS: 'true' });
+    expect(cfg.moderation.mode).toBe('live');
+    expect(cfg.moderation.model).toBe('some-model-id'); // recorded with any IT-03 result
+    expect(cfg.maps.mode).toBe('live');
+    // It never relaxes ADR-011: the suite always asserts on persisted NOTIFICATION_ATTEMPT rows.
+    expect(() =>
+      validateEnv({
+        ...testEnv,
+        ALLOW_LIVE_ADAPTERS_IN_TESTS: 'true',
+        NOTIFICATIONS_TRANSPORT: 'sendgrid',
+        SENDGRID_API_KEY: 'test-key-not-real',
+        SENDGRID_FROM_EMAIL: 'no-reply@homeplate.example',
+      })
+    ).toThrow(/NOTIFICATIONS_TRANSPORT must be mock when NODE_ENV=test/);
+  });
+
+  test('the opt-in defaults to false and grants nothing in development or production', () => {
+    expect(validateEnv({ ...exampleEnv, ...live, NODE_ENV: 'development' }).moderation.mode).toBe(
+      'live'
+    ); // dev was never restricted
+    expect(exampleEnv.ALLOW_LIVE_ADAPTERS_IN_TESTS).toBeUndefined(); // commented placeholder only
+    expect(() => validateEnv({ ...testEnv, ...live })).toThrow(/NODE_ENV=test/);
   });
 });
 

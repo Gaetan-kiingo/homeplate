@@ -18,6 +18,9 @@
 //   canViewPreciseLocation(viewer, listingId, client?) → Promise<boolean>
 //     viewer: { userId, roles } (req.auth shape) or null/undefined for anonymous.
 //     The moderator path writes the access_log row as a side effect of a true answer.
+//   PURPOSE_SAFETY_ALERT → the access_log.purpose literal written by case (c). Exported so the
+//     wave-4 moderation views and any NFR-13 audit query filter on the constant rather than
+//     re-typing the string; its value is pinned by tests/st-security/st-security-wave3.test.js.
 'use strict';
 
 const pool = require('../../db/pool');

@@ -1,0 +1,394 @@
+[
+  {
+    "id": "ben-001",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "negative-review"],
+    "text": "The rice was undercooked and we started forty minutes late. Nice host, but I would not book again."
+  },
+  {
+    "id": "ben-002",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "safety-report", "allergen"],
+    "text": "I told the host twice about my peanut allergy and there were peanuts in the sauce. Please be careful."
+  },
+  {
+    "id": "ben-003",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "This dish is absolutely killer. My partner is still talking about it two days later."
+  },
+  {
+    "id": "ben-004",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "legitimate-cash"],
+    "text": "Please bring $15 cash per seat, I cannot take anything else. The app does not handle payments."
+  },
+  {
+    "id": "ben-005",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "Gluten free menu: free bread refills, free parking on the street, and free seconds if there is any left."
+  },
+  {
+    "id": "ben-006",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "quotes-abuse", "safety-report"],
+    "text": "A guest at my table called me an idiot and I asked him to leave. Reporting it here so it is on record."
+  },
+  {
+    "id": "ben-007",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "I buy my saffron from the Tuesday market on India Street if you ever want to use the same one."
+  },
+  {
+    "id": "ben-008",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "legitimate-scarcity"],
+    "text": "Limited seats, six only, and they go fast. Book early if Saturday actually matters to you."
+  },
+  {
+    "id": "ben-009",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "non-english"],
+    "text": "Hola! Muchas gracias por la cena de anoche, el mole estaba increible. Nos vemos el sabado."
+  },
+  {
+    "id": "ben-010",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "non-english"],
+    "text": "Cam on chi nhieu, bua an rat ngon. Tuan sau em se dat lai hai cho nhe."
+  },
+  {
+    "id": "ben-011",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "negative-review"],
+    "text": "Honestly the worst value I have had on here. Small portions, cold soup, and a cluttered kitchen."
+  },
+  {
+    "id": "ben-012",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["dietary"],
+    "text": "I am diabetic. Is the tamarind sauce sweetened, and roughly how much sugar goes into a serving?"
+  },
+  {
+    "id": "ben-013",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["ordinary"],
+    "text": "Six seats, Saturday 6pm. Slow cooked birria, handmade tortillas, pickled onions. Vegetarian option on request."
+  },
+  {
+    "id": "ben-014",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "Running about ten minutes late, traffic on the freeway. Please do not hold the food for me."
+  },
+  {
+    "id": "ben-015",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["positive-review"],
+    "text": "Great evening. The host's dog was very well behaved and the flan was the best thing I have eaten all year."
+  },
+  {
+    "id": "ben-016",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "Could I bring my own wine? Happy to bring enough to share with the whole table if that is allowed."
+  },
+  {
+    "id": "ben-017",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "Wire rack cooling, cast iron, no microwave. Everything is made from scratch the morning of the meal."
+  },
+  {
+    "id": "ben-018",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "safety-report", "quotes-abuse"],
+    "text": "I reported a message earlier that said something disgusting about my accent. Can a moderator look at it?"
+  },
+  {
+    "id": "ben-019",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["negative-review"],
+    "text": "The lamb was overcooked and I said so at the table. The host took it well and offered to redo it."
+  },
+  {
+    "id": "ben-020",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "legitimate-cash"],
+    "text": "I will pay you back for the extra saffron you bought for our table. Just tell me what it came to."
+  },
+  {
+    "id": "ben-021",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "legitimate-cash"],
+    "text": "Bring cash if you can, $18 a seat covers ingredients. I am not making a profit, this is a hobby."
+  },
+  {
+    "id": "ben-022",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["negative-review"],
+    "text": "Solid three stars. Good food, awkward seating, and the timing slipped, but I would try the host again."
+  },
+  {
+    "id": "ben-023",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["allergen", "dietary"],
+    "text": "My daughter has a shellfish allergy. If there is any cross contact risk I would rather cancel than gamble."
+  },
+  {
+    "id": "ben-024",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "Free of dairy, free of eggs, free of nuts. Everything here is vegan and I keep a separate prep board."
+  },
+  {
+    "id": "ben-025",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["ordinary"],
+    "text": "The photos in your listing are gorgeous. Did you shoot them yourself or does someone help you?"
+  },
+  {
+    "id": "ben-026",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["negative-review"],
+    "text": "Not for me. Too spicy, too loud, and I left hungry. Others at the table seemed to love it though."
+  },
+  {
+    "id": "ben-027",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["accessibility"],
+    "text": "Do you have step free access? I use a walker and stairs are difficult for me these days."
+  },
+  {
+    "id": "ben-028",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["ordinary"],
+    "text": "Sunday roast, eight seats, dogs welcome in the yard. Please tell me about allergies when you book."
+  },
+  {
+    "id": "ben-029",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["ordinary"],
+    "text": "Thanks for hosting. I left an honest review, three stars, mostly about the timing. Nothing personal."
+  },
+  {
+    "id": "ben-030",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "lexical-lookalike", "positive-review"],
+    "text": "This meal was to die for. The short rib fell apart and the sauce was insane. Ten out of ten."
+  },
+  {
+    "id": "ben-031",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "Can I move my booking to next Saturday? Something came up at work and I do not want to waste the seat."
+  },
+  {
+    "id": "ben-032",
+    "label": "benign",
+    "surface": "profile",
+    "traits": ["ordinary"],
+    "text": "Retired nurse, cooking Filipino food for the neighbourhood since 2019. Cottage food permit on file with the county."
+  },
+  {
+    "id": "ben-033",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "That was a bomb dinner. My friends want to know whether you ever host on weeknights."
+  },
+  {
+    "id": "ben-034",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "negative-review"],
+    "text": "The host was clearly having a rough night and it showed in the food. I hope things get easier for her."
+  },
+  {
+    "id": "ben-035",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["ordinary"],
+    "text": "Weeknight ramen, four seats, 7pm. Tonkotsu broth simmered fourteen hours. Vegetarian broth if you ask ahead."
+  },
+  {
+    "id": "ben-036",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike", "logistics"],
+    "text": "Is parking free on your street after six, or should I plan for the garage around the corner?"
+  },
+  {
+    "id": "ben-037",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "safety-report"],
+    "text": "The kitchen was spotless but the chicken was pink in the middle. I have reported it rather than ignore it."
+  },
+  {
+    "id": "ben-038",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "My partner is coming instead of me, same booking, same seat. Her name is Priya, is that alright?"
+  },
+  {
+    "id": "ben-039",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "legitimate-cash"],
+    "text": "Six seats. Cash on the night, $20, exact change appreciated. No deposits, no holds, no prepayment."
+  },
+  {
+    "id": "ben-040",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["ordinary"],
+    "text": "Sorry for the double message, my phone glitched. Please ignore the first one."
+  },
+  {
+    "id": "ben-041",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["positive-review"],
+    "text": "Honestly one of the better meals I have had this year, and I am a hard grader. The bread alone was worth it."
+  },
+  {
+    "id": "ben-042",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "Would you be open to hosting a birthday dinner for eight? Totally understand if that is too many."
+  },
+  {
+    "id": "ben-043",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "allergen"],
+    "text": "Nut free kitchen, no nuts enter this house. I am anaphylactic myself, so I take it very seriously."
+  },
+  {
+    "id": "ben-044",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "legitimate-self-promo"],
+    "text": "You mentioned you are doing a Diwali menu next month. Please let me know when that listing goes up."
+  },
+  {
+    "id": "ben-045",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["negative-review"],
+    "text": "Two stars. The food was fine but the host cancelled on me once before, so I would book cautiously."
+  },
+  {
+    "id": "ben-046",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "I have a gift card for the Asian market on Convoy if you want it. I am never going to use it."
+  },
+  {
+    "id": "ben-047",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["hard-negative", "lexical-lookalike", "legitimate-scarcity"],
+    "text": "Limited time only: I cook this menu for three weeks while the tomatoes are good, then it is gone."
+  },
+  {
+    "id": "ben-048",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "logistics"],
+    "text": "Could you share the exact address? I have a booking on Saturday and I am planning my route."
+  },
+  {
+    "id": "ben-049",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["positive-review"],
+    "text": "Warm, generous, unhurried. We stayed an hour past the end and nobody minded at all. Book it."
+  },
+  {
+    "id": "ben-050",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "moderation-context"],
+    "text": "I am a moderator following up on the report you filed. Could you tell me what the message said?"
+  },
+  {
+    "id": "ben-051",
+    "label": "benign",
+    "surface": "profile",
+    "traits": ["ordinary"],
+    "text": "I cook Oaxacan food. Ask me anything about mole, I will talk your ear off and I am not sorry."
+  },
+  {
+    "id": "ben-052",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "victim-report", "safety-report"],
+    "text": "Do not book. I sent a deposit by wire and the address was an empty lot. Reporting so nobody else does."
+  },
+  {
+    "id": "ben-053",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["hard-negative", "lexical-lookalike"],
+    "text": "Free seconds tonight if anyone is still hungry. There is a lot of rice left over."
+  },
+  {
+    "id": "ben-054",
+    "label": "benign",
+    "surface": "listing",
+    "traits": ["ordinary"],
+    "text": "Eight seats, Friday. I am new here so please be patient, first time hosting and slightly terrified."
+  },
+  {
+    "id": "ben-055",
+    "label": "benign",
+    "surface": "review",
+    "traits": ["hard-negative", "quotes-abuse"],
+    "text": "The host's dog was better company than the guest beside me, who spent the meal insulting my weight. The host handled it well."
+  },
+  {
+    "id": "ben-056",
+    "label": "benign",
+    "surface": "message",
+    "traits": ["logistics"],
+    "text": "What time do you want us there? I do not want to arrive early and get in the way of the cooking."
+  }
+]

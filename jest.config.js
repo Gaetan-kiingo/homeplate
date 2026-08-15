@@ -21,8 +21,13 @@ module.exports = {
   // maxWorkers only serializes WITHIN a run; simultaneously-launched runs are serialized by the
   // 'homeplate_test_suite' advisory lock that globalSetup takes before the schema reset and
   // globalTeardown releases (COV-W3-05 / verification-report F-1) — so a second `npm test`
-  // queues instead of racing this one's outbox/worker state. To run lanes in parallel instead,
-  // give each its own TEST_DATABASE_URL/TEST_REDIS_URL/OBJECT_STORAGE_BUCKET (tests/helpers/env.js).
+  // queues instead of racing this one's outbox/worker state.
+  // To run lanes in parallel instead, give each its own TEST_DATABASE_URL: the Redis DB index and
+  // the media bucket are DERIVED from that database name (tests/helpers/env.js), because the
+  // advisory lock is per-database and covers neither — two lanes on one Redis index flush each
+  // other's live sessions (verification-report RTLT-01 / TCB-W3-07). TEST_REDIS_URL and
+  // OBJECT_STORAGE_BUCKET may still be set explicitly; either way globalSetup claims both and
+  // refuses to start when another lane already holds them.
   maxWorkers: 1,
   testTimeout: 15000,
   collectCoverageFrom: ['src/**/*.js', 'scripts/**/*.js', '!scripts/dev.js'],

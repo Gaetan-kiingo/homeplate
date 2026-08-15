@@ -10,14 +10,27 @@
 //            result-page cache (cache.wrap; TTL config.search.cacheTtlSeconds). A repeat of
 //            an identical query performs ZERO Maps adapter calls — the page cache answers
 //            before the adapter is even required.
-//   NFR-09 (RT-01) — DEGRADED MODE: the adapter call is resilience-wrapped internally
-//            (timeout, bounded retries, backoff — src/lib/resilience via the adapter). When
-//            the provider is down the adapter serves its stale Redis copy and flags it; this
-//            service passes that through as `degraded: true` on a still-working response and
-//            NEVER caches the degraded page (so recovery is visible within one request).
-//            When there is no cached area at all, a location query fails as a typed
-//            503 SEARCH_DEGRADED with a user-facing message — never an unhandled 500 — while
-//            non-location queries are entirely unaffected (they never touch the adapter).
+//   NFR-09 (RT-01) — DEGRADED MODE has exactly THREE cases here (this is the FR-01 acceptance
+//            as corrected on 2026-08-14 for finding TCC-03 — see the `acceptanceCorrection`
+//            block on FR-01 in docs/_generated/requirements-inventory.json; SRS §2.1.6 asks
+//            degraded mode to serve "cached or previously stored data where available" and to
+//            show an appropriate error message, which is what these three do):
+//            (i)  THE RESULT PAGE IS STILL CACHED → 200 from the page cache, ZERO adapter
+//                 calls, and NO `degraded` flag. This is an ordinary fresh cache hit, not
+//                 degraded data: the page was built from PostgreSQL under a healthy geocode
+//                 and lives at most config.search.cacheTtlSeconds. The request never consults
+//                 the provider, so provider health is neither known nor knowable on this path
+//                 — flagging it would mean calling the adapter on every cache hit, which
+//                 deletes the NFR-01 zero-adapter-calls guarantee documented above.
+//            (ii) THE ADAPTER IS REACHED AND SERVES ITS OWN STALE REDIS COPY (the adapter call
+//                 is resilience-wrapped internally: timeout, bounded retries, backoff —
+//                 src/lib/resilience via the adapter) → this service passes that flag through
+//                 as `degraded: true` on a still-working response and NEVER caches the
+//                 degraded page, so recovery is visible within one request.
+//            (iii) PROVIDER DOWN WITH NO CACHED AREA AT ALL → the location query fails as a
+//                 typed 503 SEARCH_DEGRADED with a user-facing message, never an unhandled
+//                 500. Non-location queries are entirely unaffected (they never touch the
+//                 adapter) in all three cases.
 //   NFR-11 — input is validated/stripped at the boundary (src/schemas/search.js); everything
 //            that reaches SQL is parameterized (./repo).
 //   AB-08 / ADR-010 — every result is shaped EXCLUSIVELY by the U3-LISTINGS publicListing
@@ -162,6 +175,11 @@ async function loadPage(normalized) {
  * (resolving the location through the Maps adapter when present) and cached UNLESS it was
  * served degraded — degraded pages are returned but never stored, so the cache only ever
  * holds healthy public-precision pages (ADR-010, NFR-09).
+ *
+ * `degraded: true` marks case (ii) of the module header only — an answer the Maps adapter
+ * built from its STALE copy. A page-cache hit during a provider outage is case (i): a normal
+ * 200 with no flag, because this path makes no adapter call and therefore has no knowledge of
+ * the outage to report (finding TCC-03; requirements-inventory FR-01 acceptanceCorrection).
  * @param {object} query  validated query (src/schemas/search.js)
  * @returns {Promise<{results: object[], page: number, pageSize: number, total: number,
  *                    degraded?: true}>}

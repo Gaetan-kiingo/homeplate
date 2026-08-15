@@ -13,6 +13,10 @@
 //                   ciphertext (src/db/fieldCrypto.js *_enc columns); serializeUser builds
 //                   API output from an explicit field ALLOWLIST — password_hash and raw
 //                   ciphertext can never leak through it (AB-08 data minimization).
+//   NFR-08        — an *_enc column that will not decrypt (FIELD_ENCRYPTION_KEY rotation, a
+//                   partially migrated row) is rendered as null and logged once as a WARN with
+//                   IDs only (see decryptForOwner) instead of failing the whole profile read;
+//                   fieldCrypto.decrypt itself still throws, so corruption is never silent.
 //   AB-07         — duplicate email registration surfaces PostgreSQL 23505 on
 //                   users_email_key; the service maps it to 409.
 //   NFR-12        — touchLastActive maintains last_active_at for the inactivity sweep.
@@ -20,6 +24,7 @@
 
 const { query } = require('../../db/pool');
 const { encrypt, decrypt } = require('../../db/fieldCrypto');
+const { logger } = require('../../lib/logger');
 
 /** Runs on the caller's transaction client when given one, else on the pool (NFR-11). */
 function runner(client) {
@@ -155,10 +160,42 @@ async function getHostProfile(userId, client = null) {
 }
 
 /**
+ * Read one *_enc column for the OWNER serializer, degrading to null when the stored value
+ * cannot be decrypted (NFR-08, NFR-13).
+ *
+ * fieldCrypto.decrypt() deliberately throws on a tampered, truncated, foreign or
+ * wrong-key value — that contract is NOT relaxed here, because silently returning garbage
+ * plaintext for PII is never acceptable. But a single undecryptable column (a
+ * FIELD_ENCRYPTION_KEY rotation, a partially migrated legacy row) must not make the
+ * owner's own profile permanently unreadable: GET/PATCH /api/users/me would 500 forever
+ * and the account could never re-enter the value — and after a key rotation that would
+ * lock out every user at once. The field is rendered null (so the owner can simply set it
+ * again) and one WARN carrying IDs only — module, user id, column, error — records the
+ * corruption for operators. No ciphertext and no plaintext is ever logged (§3.4 PII
+ * register: "logs: user IDs only, never PII").
+ *
+ * @param {object} row     users row
+ * @param {string} column  the *_enc column name
+ * @returns {string|null}  the plaintext, or null when the column is empty or undecryptable
+ */
+function decryptForOwner(row, column) {
+  try {
+    return decrypt(row[column]);
+  } catch (err) {
+    logger.warn(
+      { module: 'usersRepo', userId: row.id, column, err },
+      'undecryptable PII column — rendering null'
+    );
+    return null;
+  }
+}
+
+/**
  * The explicit ALLOWLIST serializer for a user's OWN profile (NFR-13 / AB-08: responses
  * are built from allowlists, never by spreading a row). Decrypts the owner's phone and
  * emergency contact — this shape is only ever returned to the authenticated owner
- * (GET/PATCH /api/users/me). password_hash and raw *_enc ciphertext have no path out.
+ * (GET/PATCH /api/users/me). password_hash and raw *_enc ciphertext have no path out:
+ * an undecryptable column becomes null (decryptForOwner), never the stored ciphertext.
  * @param {object} row  users row
  * @param {object|null} [hostProfile]  host_profiles row
  * @returns {object}
@@ -169,9 +206,9 @@ function serializeUser(row, hostProfile = null) {
     row.emergency_contact_phone_enc ||
     row.emergency_contact_email_enc
       ? {
-          name: decrypt(row.emergency_contact_name_enc),
-          phone: decrypt(row.emergency_contact_phone_enc),
-          email: decrypt(row.emergency_contact_email_enc),
+          name: decryptForOwner(row, 'emergency_contact_name_enc'),
+          phone: decryptForOwner(row, 'emergency_contact_phone_enc'),
+          email: decryptForOwner(row, 'emergency_contact_email_enc'),
         }
       : null;
   return {
@@ -179,7 +216,7 @@ function serializeUser(row, hostProfile = null) {
     email: row.email,
     emailVerified: row.email_verified,
     fullName: row.full_name,
-    phone: decrypt(row.phone_enc),
+    phone: decryptForOwner(row, 'phone_enc'),
     emergencyContact,
     canReserveSeat: row.can_reserve_seat,
     canPublishListing: row.can_publish_listing,

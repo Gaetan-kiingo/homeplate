@@ -21,6 +21,7 @@
 //   urlForKey(key[, { expiresSeconds }])       → presigned GET URL string
 //   createUploadTarget(userId, kind, contentType[, { sizeBytes }])
 //       → { storageKey, uploadUrl, headers, expiresAt }
+//   assertValidKey(key)                         → key, or a 422 INVALID_STORAGE_KEY AppError
 //   MEDIA_KINDS, KEY_PATTERN                    (mirrors of the 0001 schema / adapter rule)
 'use strict';
 
@@ -47,6 +48,18 @@ const EXTENSIONS = Object.freeze({
   'image/gif': 'gif',
 });
 
+/**
+ * The storage-key rule, enforceable WITHOUT touching src/adapters (ADR-001/003). Identical in
+ * pattern and in thrown error to src/adapters/objectStorage.assertValidKey — the adapter keeps
+ * its own copy for its worker-side calls, and tests/unit/listings.test.js pins the two patterns
+ * character-for-character so they cannot drift. Request-reachable code (src/schemas/media.js,
+ * src/modules/media/service.attach) validates through THIS one, so a request never loads the
+ * adapter module (and never constructs its S3 client) just to check a string.
+ *
+ * @param {string} key  candidate media_objects.storage_key
+ * @returns {string} the same key
+ * @throws {AppError} 422 INVALID_STORAGE_KEY
+ */
 function assertValidKey(key) {
   if (typeof key !== 'string' || !KEY_PATTERN.test(key) || key.includes('..')) {
     throw new AppError('Invalid object-storage key', {
@@ -230,4 +243,4 @@ function createUploadTarget(userId, kind, contentType, { sizeBytes } = {}) {
   };
 }
 
-module.exports = { urlForKey, createUploadTarget, MEDIA_KINDS, KEY_PATTERN };
+module.exports = { urlForKey, createUploadTarget, assertValidKey, MEDIA_KINDS, KEY_PATTERN };

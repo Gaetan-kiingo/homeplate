@@ -18,6 +18,11 @@
 // subscribe to their own topic when push ships. Secrets come from config
 // (FCM_SERVICE_ACCOUNT_JSON via src/config/schema.js); nothing is hardcoded.
 // Worker-only (ADR-001/003): request handlers must never import this module.
+//
+// ADR-011 test guard (finding IT-F4): under NODE_ENV=test this adapter REFUSES the real
+// firebase-admin SDK (code LIVE_PROVIDER_REFUSED_IN_TEST) even with the gate opened and a
+// service account configured — the suite must never reach a third party. Tests exercise the
+// live body with a `__fake: true` double (tests/it-adapters/it01c-adapter-depth.test.js).
 'use strict';
 
 const config = require('../config');
@@ -27,6 +32,31 @@ function pushDisabledError() {
   return new AppError(
     'Push notifications are disabled (notifications.push.enabled=false — ADR-011 gates FCM off in v1.0)',
     { status: 403, code: 'PUSH_DISABLED', retryable: false }
+  );
+}
+
+/**
+ * True only for a provider SDK the TEST HARNESS has explicitly substituted — the `__fake: true`
+ * marker tests/it-adapters/it01c-adapter-depth.test.js stamps on its jest module mocks before it
+ * opens the push gate inside an isolated registry. The real firebase-admin never carries it.
+ */
+function isSubstitutedSdk(sdk) {
+  return Boolean(sdk && sdk.__fake === true);
+}
+
+/**
+ * ADR-011 reciprocal guard (finding IT-F4), the same one src/adapters/sendgrid.js applies: the
+ * push gate alone is a per-environment convention, so a suite that set NOTIFICATIONS_PUSH_ENABLED
+ * plus FCM_SERVICE_ACCOUNT_JSON could reach a live provider. Under NODE_ENV=test the only
+ * acceptable SDK is a substituted double.
+ * @returns {InternalError} permanent (retrying cannot help — NFR-09)
+ */
+function liveProviderRefusedInTest() {
+  return new InternalError(
+    'FCM adapter: refusing to reach the live provider while NODE_ENV=test — ADR-011 puts dev and ' +
+      'the entire automated suite on the mock transport. Substitute firebase-admin with a test ' +
+      'double exposing __fake === true to exercise this path.',
+    { code: 'LIVE_PROVIDER_REFUSED_IN_TEST', retryable: false }
   );
 }
 
@@ -53,7 +83,10 @@ function messaging() {
       { code: 'FCM_NOT_CONFIGURED', retryable: false }
     );
   }
+  // Requiring the module is inert (no network happens until send()); the guard runs before any
+  // credential is handed to it, so a real SDK under NODE_ENV=test never gets initialised.
   const admin = require('firebase-admin');
+  if (config.isTest && !isSubstitutedSdk(admin)) throw liveProviderRefusedInTest();
   if (!fcmApp) {
     let serviceAccount;
     try {

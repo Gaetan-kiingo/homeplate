@@ -5,9 +5,12 @@
 //   FR-10 (TC-10) — register() creates the USER row (email_verified=false, Argon2id hash),
 //                   the single-use verification token and the 'email.verification' outbox
 //                   row in ONE PostgreSQL transaction (ADR-001/003 — no dual writes; zero
-//                   adapter calls on the request path). verifyEmail() flips the flag only
-//                   for a correct, unconsumed, unexpired token; anything else is 400 with
-//                   the flag unchanged.
+//                   adapter calls on the request path). createVerificationLink() mints the
+//                   DELIVERABLE single-use link worker-side (the raw token is unrecoverable
+//                   afterwards by design, so it can neither ride in the outbox payload nor
+//                   be reconstructed from the stored digest). verifyEmail() flips the flag
+//                   only for a correct, unconsumed, unexpired token; anything else is 400
+//                   with the flag unchanged.
 //   NFR-04 (ST-02) — passwords enter only ./passwords.hashPassword; the plaintext is never
 //                   stored, logged or echoed anywhere.
 //   NFR-05 (ST-03) — login() consults ./rateLimit BEFORE verifying credentials: the 6th
@@ -26,6 +29,7 @@
 // Public interface (build-plan §3): authService.register/login/logout/verifyEmail.
 'use strict';
 
+const config = require('../../config');
 const { withTransaction } = require('../../db/tx');
 const {
   AppError,
@@ -47,6 +51,9 @@ const rateLimit = require('./rateLimit');
 /** Outbox job type consumed by src/outbox/handlers/emailVerification.js (FR-10). */
 const EMAIL_VERIFICATION_JOB_TYPE = 'email.verification';
 
+/** Route that consumes the emailed token (src/modules/auth/routes.js — GET/POST). */
+const VERIFY_EMAIL_PATH = '/api/auth/verify-email';
+
 /**
  * Register a new account (FR-10). One transaction commits the USER row, the verification
  * token (digest only) and the 'email.verification' outbox row carrying IDs only; the
@@ -57,8 +64,10 @@ const EMAIL_VERIFICATION_JOB_TYPE = 'email.verification';
  *   validated body (src/schemas/auth.js register)
  * @param {{log?: object}} [ctx]  request-scoped logger (correlation ID — NFR-08)
  * @returns {Promise<{user: object, verification: {rawToken: string, expiresAt: Date}}>}
- *   `verification.rawToken` is for the emailed link ONLY — routes must never return it to
- *   the client (the whole point of FR-10 is proving inbox ownership).
+ *   `verification.rawToken` NEVER leaves the process: routes must not return it to the
+ *   client (the whole point of FR-10 is proving inbox ownership), and it is deliberately
+ *   absent from the outbox payload (ADR-003 — IDs only), which is why the emailed link is
+ *   minted worker-side by createVerificationLink() instead of being carried across.
  */
 async function register({ email, password, fullName, phone }, { log = logger } = {}) {
   // Hash OUTSIDE the transaction: ~50-100 ms of intentional Argon2id work must not hold
@@ -116,6 +125,52 @@ async function register({ email, password, fullName, phone }, { log = logger } =
     entityId: user.id,
   });
   return { user, verification };
+}
+
+/**
+ * Mint the DELIVERABLE verification link for a user (FR-10) — the one value that lets a real
+ * recipient finish registration.
+ *
+ * Why this exists (finding TCB-W3-01): PostgreSQL stores only the SHA-256 DIGEST of a
+ * verification token (users/tokens.js) and the outbox payload carries IDs only (ADR-003), so
+ * the raw token minted during register() is unrecoverable by the time the worker mails it.
+ * A digest is not a credential — submitting one is (correctly) a 400 — so the email had
+ * nothing usable in it and email_verified could never become true.
+ *
+ * The fix keeps every invariant instead of relaxing one: the WORKER mints a fresh single-use
+ * token here, at delivery time, in its own transaction. The raw value exists only in worker
+ * memory and in the outgoing email — never in the outbox payload, never in a
+ * NOTIFICATION_ATTEMPT row, never in a log line, never in Redis (ADR-003, §3.4 PII register).
+ * Each token is independently single-use and expires with EMAIL_TOKEN_TTL_HOURS, so a retried
+ * or resent delivery simply carries its own link.
+ *
+ * CALLER CONTRACT (ADR-001/003): this is worker-side work. It is called from
+ * src/outbox/handlers/emailVerification.js, never from a request handler — nothing here
+ * touches an adapter, but minting a credential belongs to the delivery path that mails it.
+ *
+ * @param {string} userId  owner of the account being verified
+ * @param {{log?: object}} [ctx]
+ * @returns {Promise<{url: string, expiresAt: Date}>} `url` carries the raw single-use token
+ *   and must be treated as a secret: hand it to the mail transport, never log or persist it.
+ */
+async function createVerificationLink(userId, { log = logger } = {}) {
+  const token = await withTransaction((client) =>
+    tokens.createEmailVerificationToken(client, userId)
+  );
+  // The base origin is configuration (src/config/schema.js PUBLIC_BASE_URL): a guessed host
+  // would mail dead links, so production refuses to start without it.
+  const url = `${config.server.publicBaseUrl}${VERIFY_EMAIL_PATH}?token=${token.raw}`;
+
+  // NFR-08: IDs and timestamps only — the URL embeds the raw token, so it is never logged.
+  log.info(
+    {
+      event: 'email_verification_link_minted',
+      userId,
+      expiresAt: token.expiresAt.toISOString(),
+    },
+    'email_verification_link_minted'
+  );
+  return { url, expiresAt: token.expiresAt };
 }
 
 /**
@@ -240,5 +295,7 @@ module.exports = {
   login,
   logout,
   verifyEmail,
+  createVerificationLink,
   EMAIL_VERIFICATION_JOB_TYPE,
+  VERIFY_EMAIL_PATH,
 };

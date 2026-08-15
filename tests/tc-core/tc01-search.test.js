@@ -14,13 +14,21 @@
 //   - ADR-010/AB-08: results are EXACTLY the publicListing key allowlist; the Redis page
 //     cache holds public precision only (raw value audited for the seeded street address and
 //     precise coordinates); unauthenticated → 401.
+//
+// Cache assertions here read the EXACT page key (see readCachedPage) rather than sampling the
+// keyspace with one SCAN pass, which under-reports on a busy index. Parallel lanes must still
+// get their own TEST_DATABASE_URL / TEST_REDIS_URL / OBJECT_STORAGE_BUCKET: sharing an index
+// means another run's flush can delete this lane's cache cell mid-test.
 'use strict';
 
 const request = require('supertest');
 
 const { createApp } = require('../../src/app');
+const config = require('../../src/config');
 const { createLogger } = require('../../src/lib/logger');
 const serializers = require('../../src/modules/listings/serializers');
+const searchSchemas = require('../../src/schemas/search');
+const searchService = require('../../src/modules/search/service');
 const maps = require('../../src/adapters/maps');
 const dbh = require('../helpers/db');
 const { redis, closeTestRedis, flushNamespace } = require('../helpers/redis');
@@ -64,6 +72,47 @@ function ids(res) {
 
 function search(query, cookie = viewerCookie) {
   return request(app).get('/api/listings/search').set('Cookie', cookie).query(query);
+}
+
+/**
+ * The EXACT Redis page key the service derives for a query, produced by running the
+ * PRODUCTION path (boundary schema parse → normalizeQuery → cacheKeyFor) instead of
+ * re-deriving a key shape here — so this stays a check of the real cache cell.
+ */
+function pageCacheKey(query) {
+  return searchService.cacheKeyFor(searchService.normalizeQuery(searchSchemas.query.parse(query)));
+}
+
+/**
+ * Read one query's cached result page back by exact key.
+ *
+ * A single `SCAN 0 MATCH hp:cache:search:page:* COUNT n` is a SAMPLE of the keyspace, not an
+ * existence check: Redis only guarantees a complete iteration once the cursor returns to '0',
+ * so as soon as the shared test index holds more than ~512 keys (session keys accumulate for
+ * the whole run and flushNamespace('cache') does not clear them) one pass returns a non-zero
+ * cursor and reports ZERO matches for a key that provably exists. That false negative — not a
+ * product defect — is what made this cell fail under load (finding TCC-05). Reading the exact
+ * key is deterministic AND a stronger assertion: it proves THIS query's page is the cached
+ * one, not merely that some page key exists.
+ *
+ * The bounded re-issue covers the other half: src/lib/cache.set deliberately swallows a failed
+ * Redis write (NFR-09 — a lost cache write costs latency, never correctness), so on a
+ * genuinely contended box the first attempt may not have landed. Re-running the IDENTICAL
+ * query re-attempts the write; the assertions at the call site are unchanged and still fail if
+ * no page is ever cached.
+ * @param {object} query
+ * @returns {Promise<{cacheKey: string, raw: string|null, ttl: number}>}
+ */
+async function readCachedPage(query, { timeoutMs = 2000 } = {}) {
+  const cacheKey = pageCacheKey(query);
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const raw = await redis.get(cacheKey);
+    const ttl = await redis.ttl(cacheKey);
+    if (raw !== null && ttl > 0) return { cacheKey, raw, ttl };
+    if (Date.now() >= deadline) return { cacheKey, raw, ttl };
+    await search(query); // rebuild the page and re-attempt the swallowed-on-failure write
+  }
 }
 
 beforeAll(async () => {
@@ -206,18 +255,24 @@ describe('TC-01 / FR-01 — filters, alone and combined', () => {
 describe('TC-01 / FR-01 — Redis result cache + zero adapter calls on repeat (NFR-01)', () => {
   test('the result page is cached with a TTL and an identical repeat performs zero Maps adapter calls', async () => {
     await flushNamespace('cache'); // clean cell: this test owns the cache namespace state
-    const first = await search({ location: LOC_MAIN, radiusKm: RADIUS_KM, cuisine: CUISINE });
+    const query = { location: LOC_MAIN, radiusKm: RADIUS_KM, cuisine: CUISINE };
+    const first = await search(query);
     expect(first.status).toBe(200);
     expect(ids(first)).toEqual([inWindowA.id]);
 
-    // Result page in Redis with a TTL (FR-01 acceptance).
-    const [, pageKeys] = await redis.scan('0', 'MATCH', 'hp:cache:search:page:*', 'COUNT', 500);
-    expect(pageKeys.length).toBeGreaterThan(0);
-    const ttl = await redis.ttl(pageKeys[0]);
-    expect(ttl).toBeGreaterThan(0);
+    // Result page in Redis, under the documented digest-keyed namespace, with a live TTL
+    // bounded by the configured search TTL (FR-01 acceptance). Read by exact key, never by a
+    // single-pass SCAN — see readCachedPage.
+    const cached = await readCachedPage(query);
+    expect(cached.cacheKey).toMatch(/^hp:cache:search:page:[0-9a-f]{32}$/);
+    expect(cached.raw).not.toBeNull();
+    expect(cached.ttl).toBeGreaterThan(0);
+    expect(cached.ttl).toBeLessThanOrEqual(config.search.cacheTtlSeconds);
+    // …and it is THIS query's page, not merely some page.
+    expect(JSON.parse(cached.raw).results.map((r) => r.id)).toEqual([inWindowA.id]);
 
     const spy = jest.spyOn(maps, 'searchArea');
-    const second = await search({ location: LOC_MAIN, radiusKm: RADIUS_KM, cuisine: CUISINE });
+    const second = await search(query);
     expect(second.status).toBe(200);
     expect(ids(second)).toEqual([inWindowA.id]);
     expect(spy).not.toHaveBeenCalled(); // zero adapter calls (page cache answered)
@@ -225,12 +280,18 @@ describe('TC-01 / FR-01 — Redis result cache + zero adapter calls on repeat (N
 
   test('ADR-010: the cached page value holds PUBLIC precision only — never the street address or precise coordinates', async () => {
     await flushNamespace('cache');
-    const res = await search({ location: LOC_MAIN, radiusKm: RADIUS_KM, cuisine: CUISINE });
+    const query = { location: LOC_MAIN, radiusKm: RADIUS_KM, cuisine: CUISINE };
+    const res = await search(query);
     expect(res.status).toBe(200);
     expect(ids(res)).toEqual([inWindowA.id]);
 
+    // The page under audit, read by exact key: the sweep below must audit at least this value,
+    // and a single SCAN pass cannot be trusted to surface it (see readCachedPage).
+    const cached = await readCachedPage(query);
+    expect(cached.raw).not.toBeNull();
+
     let cursor = '0';
-    const values = [];
+    const values = [cached.raw];
     do {
       const [next, keys] = await redis.scan(cursor, 'MATCH', 'hp:cache:*', 'COUNT', 500);
       cursor = next;

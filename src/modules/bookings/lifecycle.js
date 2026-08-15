@@ -8,6 +8,11 @@
 //                   enforced by outbox.assertIdOnlyPayload at enqueue. The dedupe key is the
 //                   idempotency key the worker hands the handler, so redelivery after a
 //                   crash cannot double-send.
+//                   Every §3.4 transition this module owns notifies: promoteDueBooking's
+//                   pending → in_progress enqueues EVENTS.STARTED for the guest AND the host
+//                   on its own transaction client (TCB-W3-03) — FR-13 covers "created,
+//                   cancelled, or CHANGES STATUS", and that transition is the moment FR-04
+//                   completion confirmation becomes possible for both parties.
 //   FR-12 / FR-04  — promotion pending → in_progress is a PER-BOOKING SCHEDULED outbox job
 //                   ('booking.promote', availableAt = the listing's scheduled_start;
 //                   build-plan §6.4): transactional with the booking insert, idempotent
@@ -22,7 +27,10 @@
 //                   delivered (which silently lost the promotion under DB/app clock skew
 //                   or an operator requeue).
 //   NFR-08 (MT-01) — promoteDueBooking() audit-logs the transition with the job's
-//                   correlation ID (the worker scopes handlers via requestContext).
+//                   correlation ID (the worker scopes handlers via requestContext) and an
+//                   EXPLICIT actor: a scheduler-driven transition has no user actor, so it
+//                   records { actorUserId: null, actor: 'system:outbox' } instead of omitting
+//                   the field (MT-01 requires an actor on every record).
 //   NFR-09         — a promote job that finds nothing to do finishes cleanly; failures throw
 //                   so the worker's retry/backoff/dead-letter budget applies.
 //
@@ -49,9 +57,15 @@ const NOTIFY_JOB_TYPE = 'notify.booking';
 /** Outbox job type: promote one booking pending → in_progress at its scheduled start. */
 const PROMOTE_JOB_TYPE = 'booking.promote';
 
-/** The notification events the 'notify.booking' contract carries (build-plan §3). */
+/** The notification events the 'notify.booking' contract carries (build-plan §3).
+ *  One member per §3.4 lifecycle transition that FR-13 calls out ("created, cancelled, or
+ *  CHANGES STATUS"): created → started (pending → in_progress) → completed, plus the three
+ *  cancellation flavours. STARTED closes TCB-W3-03 — the scheduled promotion used to move the
+ *  booking to 'in_progress' silently, so neither party learned the meal window (and with it
+ *  FR-04 completion confirmation) had opened. */
 const EVENTS = Object.freeze({
   CREATED: 'created',
+  STARTED: 'started', // pending → in_progress (promoteDueBooking); FR-13 status transition
   CANCELLED_BY_GUEST: 'cancelled_by_guest',
   CANCELLED_BY_HOST: 'cancelled_by_host',
   LISTING_CANCELLED: 'listing_cancelled', // enqueued by U3-LISTINGS' cancel path
@@ -178,7 +192,8 @@ async function securePromotionSchedule(client, { bookingId, scheduledStart, deli
  *     be secured, THROW so the worker's retry/backoff keeps the delivered row pending
  *     (NFR-09) instead of silently losing the promotion;
  *   - otherwise → pending → in_progress (conditional UPDATE; idempotent under RT-02
- *     redelivery because a second delivery finds the booking no longer pending).
+ *     redelivery because a second delivery finds the booking no longer pending) PLUS one
+ *     EVENTS.STARTED notify.booking row per participant on the same transaction (FR-13).
  *
  * @param {string} bookingId
  * @param {{log?: object, jobId?: string|null}} [ctx]  worker job context: correlationId-
@@ -251,9 +266,30 @@ async function promoteDueBooking(bookingId, { log = logger, jobId = null } = {})
       );
       return 'noop';
     }
+    // FR-13 (TCB-W3-03): pending → in_progress IS a status transition, so both affected
+    // parties get one notify.booking row — enqueued on THIS transaction client, so the
+    // transition and its notifications commit together or not at all (ADR-001/003, no dual
+    // write). The dedupe key (booking × event × recipient) makes an RT-02 redelivery that
+    // re-runs this block collapse onto the existing rows, so the guest and the host are told
+    // exactly once that the meal window — and with it FR-04 completion — has opened.
+    await enqueueBookingNotifications(client, {
+      bookingId,
+      event: EVENTS.STARTED,
+      recipientUserIds: [booking.guest_id, listing.host_id],
+    });
+    // NFR-08 (MT-01): every audit record names an ACTOR. This transition has no human
+    // actor — the scheduler fired it — so the system is recorded EXPLICITLY rather than the
+    // field being omitted: `actorUserId: null` keeps the key present (pino emits nulls; it
+    // drops undefined), so a reviewer filtering by actor still sees the record and can tell
+    // "promoted by the scheduler" apart from "field dropped by a bug", and `actor` names
+    // which system did it. Convention for every worker-emitted audit record: the pair
+    // { actorUserId: null, actor: 'system:<subsystem>' }. `actor` is not a §3.4 PII-register
+    // key and carries no suffix the logger redacts, so it survives the redaction pipeline.
     audit(log, {
       event: 'booking.promoted',
       outcome: 'success',
+      actorUserId: null,
+      actor: 'system:outbox',
       entityType: 'booking',
       entityId: bookingId,
     });

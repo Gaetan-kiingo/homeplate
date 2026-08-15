@@ -1,9 +1,10 @@
 // tests/st-security/st-security-wave3.test.js — VERIFIER lane "st-security", wave-3 extension
 // (build-plan §7: this run's verifiers extend the lane over the newly mounted marketplace
 // surface). ST-04 injection over the wave-3 input boundaries (search, listing text, hosts,
-// media), ST-06 role-restricted + LOGGED precise-location access (NFR-13 / ADR-010), and the
-// abuse cases that became executable this wave: AB-01, AB-02, AB-03, AB-07 (publish gate),
-// AB-08 (401 walls + serializer allowlists).
+// media), ST-06 role-restricted + LOGGED precise-location access (NFR-13 / ADR-010) — both
+// end-to-end over the routes AND directly against listings/access.js, whose deny-by-default
+// guards no session-gated route can reach — and the abuse cases that became executable this
+// wave: AB-01, AB-02, AB-03, AB-07 (publish gate), AB-08 (401 walls + serializer allowlists).
 //
 // Shared-database discipline (NFR-08 determinism): one seeded homeplate_test database is
 // shared by every lane — this file NEVER truncates or deletes rows it did not create; all
@@ -19,6 +20,7 @@ const config = require('../../src/config');
 const { createApp } = require('../../src/app');
 const sessions = require('../../src/modules/auth/sessions');
 const listingSerializers = require('../../src/modules/listings/serializers');
+const listingAccess = require('../../src/modules/listings/access');
 const hostSerializers = require('../../src/modules/hosts/serializers');
 const db = require('../helpers/db');
 const { closeRedis } = require('../../src/db/redis');
@@ -90,6 +92,33 @@ function listingBody(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * Walk a response body and collect every LEAF value with its dotted path.
+ *
+ * The AB-08 / NFR-13 canary assertions below target these values instead of
+ * `JSON.stringify(body)`. A whole-blob substring check is not a leak detector: the payload
+ * also carries randomly generated UUIDs and millisecond timestamps, so a bare digit canary
+ * such as the canary STREET NUMBER ('742') matches by chance — measured at 1.04% of runs
+ * from the two UUIDs a single result row embeds (listing id + hostId), e.g. an id of
+ * "24a03a9a-d1d2-4739-9264-6758616742d8". A security gate that reddens ~1 CI run in 100
+ * with no leak behind it is worse than no gate: it teaches reviewers to re-run the leak
+ * detector. Scoping to leaf values (and, for coordinates, comparing numbers numerically)
+ * keeps the assertion deterministic AND strictly sharper — it also catches a coordinate
+ * re-serialized at a different precision, which a string `toContain` would miss.
+ */
+function leaves(value, path = 'body', out = []) {
+  if (Array.isArray(value)) {
+    value.forEach((v, i) => leaves(v, `${path}[${i}]`, out));
+  } else if (value && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) leaves(v, `${path}.${k}`, out);
+  } else {
+    out.push({ path, value });
+  }
+  return out;
+}
+const stringLeaves = (body) => leaves(body).filter((l) => typeof l.value === 'string');
+const numberLeaves = (body) => leaves(body).filter((l) => typeof l.value === 'number');
 
 const SQLI = ["' OR 1=1 --", "'; DROP TABLE listings; --", "admin'--", '1; DELETE FROM users'];
 const XSS = [
@@ -526,10 +555,27 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
     expect(found).toBeTruthy();
     // Key-exact allowlist check against the frozen serializer contract.
     expect(Object.keys(found).sort()).toEqual([...listingSerializers.PUBLIC_KEYS].sort());
+    // …and the allowlist stays closed on EVERY row of the page, not only the canary row.
+    for (const r of res.body.results) {
+      expect(Object.keys(r).sort()).toEqual([...listingSerializers.PUBLIC_KEYS].sort());
+    }
     const flat = JSON.stringify(res.body);
     expect(flat).not.toContain(CANARY_STREET);
-    expect(flat).not.toContain('742');
-    expect(flat).not.toContain(String(listing.lat)); // precise coordinate never serialized
+    // The street NUMBER on its own, asserted against string leaf VALUES in address position.
+    // `\b742\s` is address-shaped ('742 Evergreen…') and cannot match inside a hex UUID or an
+    // ISO timestamp — neither contains whitespace — so this fires only on a real address leak
+    // (see the `leaves` helper for the measured false-positive rate of the blob check).
+    const streetNumber = CANARY_STREET.split(' ')[0];
+    const addressShaped = new RegExp(`\\b${streetNumber}\\s`);
+    expect(
+      stringLeaves(res.body).filter(
+        ({ value }) => value.includes(CANARY_STREET) || addressShaped.test(value)
+      )
+    ).toEqual([]);
+    // Precise coordinates never serialized: compared NUMERICALLY, so a short decimal embedded
+    // in a longer number cannot false-fire and a re-rounded coordinate cannot slip through.
+    const precise = [Number(listing.lat), Number(listing.lng)];
+    expect(numberLeaves(res.body).filter(({ value }) => precise.includes(value))).toEqual([]);
     expect(flat).not.toMatch(/addressLine1|postal_code|postalCode/);
     expect(flat).not.toMatch(/@dbunit\.homeplate\.invalid/); // host email never leaks
   });
@@ -686,5 +732,132 @@ describe('ST-06 moderator precise-location access is role-restricted AND logged'
       [plainUser.id]
     );
     expect(rows[0].c).toBe(0);
+  });
+});
+
+// =============================================================================================
+// ST-06 (cont.) — the ADR-010 gate itself, called DIRECTLY (AB-08, NFR-13, FR-07)
+//
+// Every other ADR-010 assertion in this repository drives listings/access.js through an HTTP
+// route, and every wave-3 route is session-gated — so the route surface can only ever hand the
+// gate a well-formed, authenticated viewer. That leaves the function's two deny-by-default
+// guards (anonymous/non-UUID viewer, malformed listingId) unreachable from the suite: a future
+// edit that reorders them, drops the null check, or lets a non-UUID viewer fall through to the
+// `viewer.userId === hostId` comparison would keep the whole suite green while opening the
+// exact-address gate. access.js is the SINGLE decision point ADR-010 mandates (listing service,
+// host profile, booking payloads, wave-4 moderation views), so its fail-closed default is a
+// safety property and is pinned here directly rather than only end-to-end.
+// =============================================================================================
+describe('ADR-010 gate: canViewPreciseLocation is deny-by-default when called directly', () => {
+  /**
+   * A stand-in for the optional transaction client access.js accepts. It records and then
+   * REFUSES any SQL, so a guard that stops short-circuiting fails twice over: the recorded-call
+   * assertion reddens, and the promise rejects instead of resolving false. This is what makes
+   * the table below a real gate rather than a restatement of the function's return type.
+   */
+  function tripwireClient() {
+    const calls = [];
+    return {
+      calls,
+      query(text) {
+        calls.push(text);
+        throw new Error('ADR-010 guard fell through to SQL for a malformed caller');
+      },
+    };
+  }
+
+  let host;
+  let listing;
+  beforeAll(async () => {
+    host = await makeEligibleHost();
+    listing = await makeApprovedListing({ host_id: host.id });
+  });
+
+  test.each([
+    ['null viewer (anonymous)', null],
+    ['undefined viewer (anonymous)', undefined],
+    ['viewer object carrying no userId', {}],
+    ['viewer.userId is not a UUID', { userId: 'not-a-uuid' }],
+    ['viewer.userId is a non-string', { userId: 12345 }],
+    ['viewer.userId is SQL', { userId: "' OR '1'='1" }],
+    // A claimed moderator role must not buy a way past the identity guard (FR-07 case c).
+    ['moderator role with a malformed userId', { userId: 'moderator', roles: ['moderator'] }],
+  ])('%s is refused BEFORE any database work (AB-08)', async (_label, viewer) => {
+    const client = tripwireClient();
+    await expect(listingAccess.canViewPreciseLocation(viewer, listing.id, client)).resolves.toBe(
+      false
+    );
+    expect(client.calls).toEqual([]); // never reached the listings/bookings/access_log queries
+  });
+
+  test.each([
+    ['not-a-uuid'],
+    [''],
+    ["'; DROP TABLE listings; --"],
+    [null],
+    [undefined],
+    [42],
+    [{}],
+  ])(
+    'a malformed listingId (%p) is refused BEFORE any database work, even for the real host',
+    async (badId) => {
+      const client = tripwireClient();
+      await expect(
+        listingAccess.canViewPreciseLocation({ userId: host.id }, badId, client)
+      ).resolves.toBe(false);
+      expect(client.calls).toEqual([]);
+    }
+  );
+
+  test('positive control: the same call shape with well-formed ids still DECIDES (the guards are not a blanket false)', async () => {
+    // Without this, `return false` pasted at the top of canViewPreciseLocation would satisfy
+    // every assertion above. Host sees their own address; an unrelated user does not.
+    await expect(
+      listingAccess.canViewPreciseLocation({ userId: host.id }, listing.id)
+    ).resolves.toBe(true);
+
+    const stranger = await makeEligibleGuest();
+    await expect(
+      listingAccess.canViewPreciseLocation({ userId: stranger.id }, listing.id)
+    ).resolves.toBe(false);
+
+    // A well-formed viewer against a well-formed but NON-EXISTENT listing is still false.
+    await expect(
+      listingAccess.canViewPreciseLocation({ userId: host.id }, crypto.randomUUID())
+    ).resolves.toBe(false);
+  });
+
+  test('PURPOSE_SAFETY_ALERT is the exported literal the FR-07 access_log row is written with (NFR-13)', async () => {
+    // The constant is this module's published contract with the wave-4 moderation views and with
+    // any NFR-13 audit query that filters access_log by purpose. Pin the literal AND bind it to
+    // the row the moderator branch actually writes, so a rename cannot pass silently.
+    expect(listingAccess.PURPOSE_SAFETY_ALERT).toBe('fr07_safety_alert');
+
+    const alertHost = await makeEligibleHost();
+    const alertListing = await makeApprovedListing({ host_id: alertHost.id });
+    const guest = await makeEligibleGuest();
+    const booking = await db.makeBooking({
+      listing_id: alertListing.id,
+      guest_id: guest.id,
+      status: 'pending',
+    });
+    await db.insertRow('safety_alerts', { booking_id: booking.id, raised_by: guest.id });
+
+    const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
+    await expect(
+      listingAccess.canViewPreciseLocation(
+        { userId: moderator.id, roles: ['user', 'moderator'] },
+        alertListing.id
+      )
+    ).resolves.toBe(true);
+
+    const { rows } = await db.query(
+      `SELECT subject_user_id, purpose, resource FROM access_log WHERE actor_user_id = $1`,
+      [moderator.id]
+    );
+    expect(rows.length).toBe(1);
+    expect(rows[0].purpose).toBe(listingAccess.PURPOSE_SAFETY_ALERT);
+    expect(rows[0].subject_user_id).toBe(alertHost.id); // IDs only — no personal data logged
+    expect(rows[0].resource).toBe(`listing:${alertListing.id}`);
   });
 });

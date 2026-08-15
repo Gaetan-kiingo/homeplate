@@ -17,11 +17,15 @@
 // ADR-001/ADR-003 boundary: attach() and list() touch PostgreSQL only and are safe anywhere.
 // deleteForUser() drives the object-storage ADAPTER and is therefore WORKER-ONLY — it is
 // called by the NFR-12 erasure job (wave-4 outbox handler), never from a request handler.
-// The adapter is resolved lazily inside that one function so the request-reachable surface
-// of this module keeps no adapter binding (adr-conformance lane, build-plan §5.1).
+// The adapter is resolved lazily inside that one function, and NOTHING request-reachable in
+// this module reaches for it — not even to validate a key — so serving a request never loads
+// src/adapters/objectStorage.js and never constructs its module-scope S3 client. Key
+// validation goes through the dependency-free src/lib/mediaUrls.assertValidKey instead
+// (adr-conformance lane's per-route adapter-delta assertion, build-plan §5.1/§6.3).
 'use strict';
 
 const repo = require('./repo');
+const { assertValidKey } = require('../../lib/mediaUrls');
 const {
   ValidationError,
   ConflictError,
@@ -39,8 +43,10 @@ function assertUuid(value, field) {
   return value;
 }
 
-// WORKER-ONLY adapter access (ADR-001/003): resolved at call time by deleteForUser, and the
-// canonical storage-key rule (assertValidKey) lives with the adapter so there is one rule.
+// WORKER-ONLY adapter access (ADR-001/003). Resolved at call time and called from EXACTLY ONE
+// place — deleteForUser(), the NFR-12 erasure hook that runs on the worker. Do not call this
+// from attach()/list()/listKeys(): those are reachable from POST/GET /api/media, and merely
+// require()-ing the adapter there executes its module scope (a new S3Client) inside a request.
 function getStorage() {
   return require('../../adapters/objectStorage');
 }
@@ -57,7 +63,9 @@ function getStorage() {
  */
 async function attach(userId, key, kind, opts = {}) {
   assertUuid(userId, 'userId');
-  getStorage().assertValidKey(key);
+  // Pure, adapter-free key check (ADR-001/003): same pattern and same 422 INVALID_STORAGE_KEY
+  // error the adapter raises worker-side; tests/unit/listings.test.js pins them identical.
+  assertValidKey(key);
   if (!repo.MEDIA_KINDS.includes(kind)) {
     throw new ValidationError(`kind must be one of: ${repo.MEDIA_KINDS.join(', ')}`, {
       details: { field: 'kind' },

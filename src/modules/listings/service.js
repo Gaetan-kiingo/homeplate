@@ -8,14 +8,28 @@
 //            concurrent duplicates lose deterministically. Owner-only mutation (403).
 //            Cancel cascades to active bookings and enqueues one notify.booking job per
 //            affected guest IN THE SAME TRANSACTION (FR-13, ADR-001/003).
+//            A RESCHEDULE (scheduled_start actually moved) additionally re-enqueues the
+//            FR-12 'booking.promote' job of EVERY still-pending booking at the NEW instant,
+//            on the same transaction client (TCB-W3-02 — see updateListing): the promotion
+//            scheduled when the guest booked points at the OLD instant, and the worker-side
+//            repair in bookings/lifecycle only covers starts that moved LATER, so without
+//            this a start moved EARLIER leaves the booking 'pending' right through the meal
+//            and FR-04 dual confirmation 409s BOOKING_NOT_IN_PROGRESS for both parties.
 //   FR-02 (TC-02) — getListing: full detail with image URLs from media_objects keys, PLUS —
 //            in the SAME response — the host summary (display name, bio, average rating,
 //            review count) and the approved reviews about the host, loaded through the
 //            U3-HOSTS-MEDIA repo/serializer pair (../hosts) so this page and the FR-03 host
 //            page can never disagree on what is public (NFR-13: those queries never select
-//            email/phone/address columns). Pending/rejected listings are 404 to everyone but
-//            the owning host; the exact address/precise coordinates ride ONLY the privileged
-//            serializer behind ./access.canViewPreciseLocation (ADR-010).
+//            email/phone/address columns). The host summary is ALWAYS present on a visible
+//            listing — a host row that no longer satisfies findHost (soft-deleted account,
+//            or a listing whose host_profiles row is gone) degrades to the anonymized
+//            display identity, never to `host: null` (TCC-01; NFR-12-safe — see
+//            hostContextFor). `reviews` is a bounded PREVIEW of the newest approved reviews
+//            (PROFILE_REVIEWS_LIMIT); host.reviewCount is the authoritative total and
+//            GET /api/hosts/:id/reviews?page=N serves the remainder (TCC-04).
+//            Pending/rejected listings are 404 to everyone but the owning host; the exact
+//            address/precise coordinates ride ONLY the privileged serializer behind
+//            ./access.canViewPreciseLocation (ADR-010).
 //   FR-08  — listings are born moderation_status='pending' and a moderation.scan job is
 //            enqueued in the creating transaction; a MATERIAL edit (title/description/
 //            ingredients/allergens/cuisine) resets to 'pending' and re-enqueues. The scan
@@ -25,7 +39,11 @@
 //            service never re-implements eligibility (ADR-006 single-interface rule).
 //   NFR-08 (MT-01) — every mutation writes one structured audit record (event, actor, entity,
 //            outcome, host id + local date per AB-07) through a request-scoped logger, so the
-//            correlation ID rides every line and into the outbox rows.
+//            correlation ID rides every line and into the outbox rows. The audited localDate
+//            is rendered by the SAME serializer the wire uses (auditLocalDate → serializers
+//            .publicListing().localDate), so the AB-03 trail and the API can never disagree
+//            and the record is a plain YYYY-MM-DD MEHKO calendar day rather than a
+//            host-timezone-decorated JS Date string (TCB-W3-06).
 //   NFR-11 — all SQL parameterized (repo/mehko); input shapes validated at the boundary
 //            (src/schemas/listings.js).
 //   NFR-13 / AB-08 — responses are serializer allowlists only; logs carry IDs, field NAMES
@@ -38,6 +56,7 @@
 'use strict';
 
 const { withTransaction } = require('../../db/tx');
+const { query } = require('../../db/pool');
 const outbox = require('../../outbox/outbox');
 const requestContext = require('../../middleware/requestContext');
 const { audit } = require('../../lib/logger');
@@ -51,6 +70,15 @@ const serializers = require('./serializers');
 const hostsRepo = require('../hosts/repo');
 const hostSerializers = require('../hosts/serializers');
 const { PROFILE_REVIEWS_LIMIT } = require('../hosts/service');
+// U3-BOOKINGS' PUBLIC lifecycle contract, used for ONE thing: re-scheduling the FR-12
+// promotion of a listing whose start moved (TCB-W3-02). Only enqueuePromotion — the
+// documented "'booking.promote' {bookingId} enqueued with availableAt = scheduled_start"
+// entry point (build-plan §3) — is called; no lifecycle internal (dedupe-key builder,
+// securePromotionSchedule) is touched, so the promote contract keeps exactly ONE definition
+// instead of the second, drift-prone copy that IT3-F1 punished. It is a plain outbox INSERT
+// on the CALLER'S transaction client: no adapter reaches the request path (ADR-001/003) and
+// there is no require cycle (the bookings module imports nothing from listings).
+const bookingLifecycle = require('../bookings/lifecycle');
 
 // Outbox job types this unit publishes (build-plan wave-3A contract).
 const JOB_LISTING_GEOCODE = 'listing.geocode';
@@ -105,6 +133,45 @@ function dailyLimitConflict(cause) {
 /** Deep-equal for the patch comparison (arrays of strings, nullable scalars). */
 function sameValue(a, b) {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/**
+ * The AB-03 / NFR-08 audit value for listings.local_date: the MEHKO calendar day as a plain
+ * 'YYYY-MM-DD' string, produced by the SAME function that renders it on the wire
+ * (serializers.publicListing → isoCalendarDate). node-postgres parses a SQL DATE into a JS
+ * Date at process-local midnight, so `String(row.local_date)` yields e.g. 'Tue Sep 01 2026
+ * 00:00:00 GMT-0700 (Pacific Daylight Time)' — an unparseable, host-timezone-decorated string
+ * that AB-03 traceability cannot read as a calendar day (TCB-W3-06). Deliberately NOT
+ * mehko.localDateFor(row.local_date): re-projecting a local-midnight instant into LA time
+ * re-introduces an off-by-one on non-LA servers, which is exactly why isoCalendarDate reads
+ * the Date's LOCAL components.
+ *
+ * @param {object} row  a listings row (raw snake_case or repo.toListing camelCase)
+ * @returns {string|null} 'YYYY-MM-DD'
+ */
+function auditLocalDate(row) {
+  return serializers.publicListing(row).localDate;
+}
+
+/**
+ * The ids of every still-PENDING booking on a listing, read on the caller's transaction
+ * client (TCB-W3-02 reschedule fan-out). Parameterized and id-only: no guest PII enters the
+ * process here (NFR-11, NFR-13). Already-promoted ('in_progress') and terminal bookings need
+ * no promotion.
+ *
+ * Concurrency: updateListing holds the listing row lock (repo.findByIdForUpdate) for the
+ * whole transaction, and the booking path's capacity decrement (bookings/repo.decrementSeat)
+ * UPDATEs that same row — so a booking created concurrently either committed before this read
+ * (and is returned here) or blocks until we commit and then enqueues its own promotion from
+ * the UPDATE's RETURNING scheduled_start, i.e. the NEW instant. No booking can end up holding
+ * a promotion at only the stale instant.
+ */
+async function pendingBookingIds(client, listingId) {
+  const { rows } = await client.query(
+    `SELECT id FROM bookings WHERE listing_id = $1 AND status = 'pending' ORDER BY created_at, id`,
+    [listingId]
+  );
+  return rows.map((row) => row.id);
 }
 
 // ---- create ----------------------------------------------------------------------------------
@@ -166,7 +233,7 @@ async function createListing(auth, input, opts = {}) {
     entityType: 'listing',
     entityId: row.id,
     hostId,
-    localDate: String(row.local_date),
+    localDate: auditLocalDate(row), // AB-03: a MEHKO calendar day, not a JS Date string
     seatCapacity: row.seat_capacity,
     moderationStatus: row.moderation_status,
   });
@@ -177,16 +244,49 @@ async function createListing(auth, input, opts = {}) {
 // ---- read ------------------------------------------------------------------------------------
 
 /**
+ * TCC-01 fallback display identity for a host whose row no longer satisfies hostsRepo
+ * .findHost (which requires BOTH a host_profiles join AND users.deleted_at IS NULL).
+ *
+ * Selects the display-identity column ONLY — no email, phone ciphertext, password hash or
+ * address ever enters the process on this read path (NFR-13 "PII minimization at the query",
+ * the same discipline the hosts repo documents). A soft-deleted or absent account returns no
+ * row and renders as the anonymized display name the review serializer already uses for an
+ * erased author, so this fallback can never undo an NFR-12 erasure by resurfacing the
+ * deleted host's real name.
+ *
+ * @param {string} hostId
+ * @returns {Promise<string>} a non-empty display name
+ */
+async function hostDisplayNameFallback(hostId) {
+  const { rows } = await query(`SELECT full_name FROM users WHERE id = $1 AND deleted_at IS NULL`, [
+    hostId,
+  ]);
+  return rows[0]?.full_name ?? hostSerializers.ANONYMIZED_AUTHOR;
+}
+
+/**
  * FR-02 host context: the host summary + the approved reviews about the host, riding the
  * SAME detail response (the FR-02/TC-02 acceptance — a client never needs a second call).
  * Composed exclusively from the U3-HOSTS-MEDIA repo (non-PII columns only — NFR-13) and its
  * publicReview allowlist serializer, and capped at the FR-03 page size so this view and
  * GET /api/hosts/:id can never disagree. Only approved reviews are ever read (FR-05/FR-08).
  *
+ * The summary is NEVER null for a listing the caller can see (TCC-01): hostsRepo.findHost
+ * returns null for a soft-deleted account and for a host with no host_profiles row, and the
+ * FR-02 acceptance ("host summary … in the same response") does not hold with `host: null`.
+ * Both cases degrade to a display identity + the review aggregates instead — a live host who
+ * lost their profile row keeps their name, an erased account becomes anonymous. Reachable
+ * from the wave-4 U4-PRIVACY erasure path, so it is handled here rather than deferred.
+ *
+ * `reviews` is a bounded PREVIEW — the newest PROFILE_REVIEWS_LIMIT approved reviews, the
+ * same page size the FR-03 host page opens with. reviewCount below is the AUTHORITATIVE
+ * total (a client compares it with reviews.length to detect truncation) and
+ * GET /api/hosts/:id/reviews?page=N serves the remainder, so no review is unreachable
+ * (TCC-04).
+ *
  * @param {string} hostId
- * @returns {Promise<{host: {displayName, bio, averageRating, reviewCount}|null,
- *                    reviews: object[]}>} host is null when the account was deleted or never
- *          had a host profile (NFR-12-safe: the listing still renders, nothing leaks).
+ * @returns {Promise<{host: {displayName, bio, averageRating, reviewCount},
+ *                    reviews: object[]}>}
  */
 async function hostContextFor(hostId) {
   const [host, stats, reviewRows] = await Promise.all([
@@ -194,16 +294,19 @@ async function hostContextFor(hostId) {
     hostsRepo.getReviewStats(hostId),
     hostsRepo.listApprovedReviews(hostId, { limit: PROFILE_REVIEWS_LIMIT }),
   ]);
+  // One extra non-PII round trip ONLY on the degraded path (deleted account / missing
+  // host profile) — the normal read stays at exactly the three queries above.
+  const displayName = host
+    ? (host.fullName ?? hostSerializers.ANONYMIZED_AUTHOR)
+    : await hostDisplayNameFallback(hostId);
   return {
-    host: host
-      ? {
-          // serializers.HOST_SUMMARY_KEYS allowlist — display identity + aggregates only.
-          displayName: host.fullName ?? hostSerializers.ANONYMIZED_AUTHOR,
-          bio: host.bio ?? null,
-          averageRating: hostSerializers.roundedAverage(stats.averageRating),
-          reviewCount: stats.reviewCount,
-        }
-      : null,
+    host: {
+      // serializers.HOST_SUMMARY_KEYS allowlist — display identity + aggregates only.
+      displayName,
+      bio: host ? (host.bio ?? null) : null,
+      averageRating: hostSerializers.roundedAverage(stats.averageRating),
+      reviewCount: stats.reviewCount,
+    },
     reviews: reviewRows.map(hostSerializers.publicReview),
   };
 }
@@ -366,6 +469,31 @@ async function updateListing(auth, listingId, patch, opts = {}) {
           payload: { listingId },
         });
       }
+
+      // FR-11 reschedule → FR-12/FR-04 (TCB-W3-02). Every already-pending booking on this
+      // listing holds a 'booking.promote' outbox row scheduled at the OLD scheduled_start.
+      // bookings/lifecycle.promoteDueBooking repairs only starts that moved LATER (the old
+      // row comes due, still sees a future start and re-secures itself); a start moved
+      // EARLIER has no repair path at all — the stale row is not due until after the meal,
+      // so the booking sits at 'pending' while the meal happens and FR-04 dual confirmation
+      // answers 409 BOOKING_NOT_IN_PROGRESS to guest AND host, which also strands the FR-13
+      // completion notification. Enqueue a fresh promotion at the NEW instant, on THIS
+      // transaction's client, so the listing row and the promotions commit together
+      // (ADR-001/003 — no dual write, no adapter on the request path). The dedupe key that
+      // lifecycle builds includes the target instant, so this is a genuinely new row rather
+      // than a no-op collapse onto the stale one; the stale row stays harmless (when it
+      // finally comes due the booking is no longer 'pending', or the start is in the past
+      // and promoting is a conditional-UPDATE no-op). Re-enqueueing on a LATER move too is
+      // deliberate: it makes the schedule correct immediately instead of waiting for the
+      // old row's self-repair, and that repair still dedupes cleanly onto the row made here.
+      if (columnPatch.scheduledStart !== undefined) {
+        for (const bookingId of await pendingBookingIds(client, listingId)) {
+          await bookingLifecycle.enqueuePromotion(client, {
+            bookingId,
+            scheduledStart: updated.scheduled_start, // the persisted value, never the input
+          });
+        }
+      }
       return updated;
     });
   } catch (err) {
@@ -381,7 +509,7 @@ async function updateListing(auth, listingId, patch, opts = {}) {
     entityType: 'listing',
     entityId: listingId,
     hostId: row.host_id,
-    localDate: String(row.local_date),
+    localDate: auditLocalDate(row), // AB-03: a MEHKO calendar day, not a JS Date string
     changedFields,
     moderationStatus: row.moderation_status,
   });
@@ -438,7 +566,8 @@ async function cancelListing(auth, listingId, opts = {}) {
       entityType: 'listing',
       entityId: listingId,
       hostId: result.row.host_id,
-      localDate: String(result.row.local_date),
+      // AB-03: a MEHKO calendar day, not a JS Date string
+      localDate: auditLocalDate(result.row),
       cancelledBookings: result.affected.length,
     });
   }

@@ -184,7 +184,22 @@ describe('RT-02 wave-3 — booking.promote scheduling, idempotency and self-repa
     ]);
     expect(promoted[0].status).toBe('in_progress');
 
-    // Duplicate delivery after a lost commit: clean no-op, state unchanged.
+    // FR-13 (TCB-W3-03): the transition itself notified both participants, transactionally.
+    const { rows: startedRows } = await dbh.query(
+      `SELECT payload->>'recipientUserId' AS recipient FROM outbox_jobs
+        WHERE type = 'notify.booking' AND payload->>'bookingId' = $1
+          AND payload->>'event' = 'started'`,
+      [bookingId]
+    );
+    expect(startedRows).toHaveLength(2);
+
+    // Duplicate delivery after a lost commit: clean no-op, state unchanged. Silence the
+    // promotion's own 'started' notify rows first (same reason as above) so the stats
+    // describe the redelivered promote row alone.
+    await dbh.query(
+      `UPDATE outbox_jobs SET status = 'delivered', delivered_at = now()
+        WHERE status = 'pending' AND type <> 'booking.promote'`
+    );
     await reopenJob(job.id);
     const dupStats = await pollOnce({ registry, log: quiet });
     expect(dupStats.delivered).toBe(1);

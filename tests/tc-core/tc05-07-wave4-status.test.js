@@ -5,13 +5,15 @@
 // land in wave 4 (build-plan §7: FR-05/06/07 remain `not_implemented`, never skipped/failed).
 // This suite therefore:
 //
-//   1. PROVES BY EXECUTION that the FR-05..FR-07 endpoints are still absent — each probe
+//   1. PROVES BY EXECUTION which of the FR-05..FR-07 endpoints are still absent — each probe
 //      asserts src/modules/<name>/routes.js is not on disk, then that the live app answers
 //      with the structured JSON 404 envelope (NFR-08). The paths nest under /api/bookings,
 //      which IS mounted since wave 3 — multi-segment suffixes like /:id/reviews match none of
 //      the bookings router's routes and must still fall through to the registry 404.
 //      When a wave-4 module lands, the routes.js-absence assertion fails LOUDLY, telling this
-//      lane to replace the probes with the real TC-05..TC-07 acceptance tests.
+//      lane to replace the probes with the real TC-05..TC-07 acceptance tests. FR-07 has
+//      already made that transition: U4-SAFETY shipped, so its probe now asserts the mounted,
+//      session-gated surface and the acceptance test lives in tc07-safety.test.js.
 //
 //   2. PROVES the §3.4 schema substrate for FR-05..FR-07 holds its invariants against the
 //      real database (SRS §4.1):
@@ -97,13 +99,17 @@ describe('FR-05..FR-07 endpoint surface (wave 4 pending)', () => {
     expectStructuredNotFound(get);
   });
 
-  test('TC-07 / FR-07 — safety-alert endpoints are not implemented yet', async () => {
-    assertModuleStillAbsent('safety');
-    assertModuleStillAbsent('moderation');
+  test('TC-07 / FR-07 — the safety-alert endpoints HAVE landed (U4-SAFETY); probes replaced', async () => {
+    // This probe used to assert the FR-07 surface was absent. U4-SAFETY landed it, so per this
+    // file's header the real acceptance test now lives in tests/tc-core/tc07-safety.test.js and
+    // the worker legs in tests/it-adapters/it04-safety-delivery.test.js. What remains here is
+    // the boundary fact that both paths are mounted and session-gated (401, not 404), which is
+    // what distinguishes "implemented" from "still missing" for the wave-4 status sweep.
+    expect(fs.existsSync(path.join(MODULES_DIR, 'safety', 'routes.js'))).toBe(true);
     const post = await request(app).post(`/api/bookings/${SOME_UUID}/safety-alerts`).send({});
-    expectStructuredNotFound(post);
+    expect(post.status).toBe(401);
     const alerts = await request(app).get('/api/moderation/alerts');
-    expectStructuredNotFound(alerts);
+    expect(alerts.status).toBe(401);
   });
 });
 

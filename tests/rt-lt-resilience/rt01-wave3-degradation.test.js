@@ -334,7 +334,9 @@ describe('RT-01 wave-3 drill 4 — object storage outage against GET /api/listin
     const cookie = await w3.cookieFor(guest);
 
     // Total storage outage: every adapter operation throws.
+    let adapterCalls = 0;
     const boom = async () => {
+      adapterCalls += 1;
       throw new ServiceUnavailableError('storage outage drill', {
         code: 'OBJECT_STORAGE_UNAVAILABLE',
       });
@@ -343,6 +345,13 @@ describe('RT-01 wave-3 drill 4 — object storage outage against GET /api/listin
     try {
       const res = await request(app).get(`/api/listings/${listing.id}`).set('Cookie', cookie);
       expect(res.status).toBe(200); // never a 500 (NFR-09 acceptance)
+      // WHY it cannot 500: the read path derives URLs by pure local SigV4 arithmetic
+      // (src/lib/mediaUrls) and never touches src/adapters/objectStorage at all — the
+      // ADR-001/003 request-path rule makes the storage outage structurally invisible here.
+      // Asserting zero adapter calls turns an otherwise unfalsifiable drill into a real
+      // regression guard: if anyone later puts a storage call on this read path, the outage
+      // becomes user-visible and this count catches it.
+      expect(adapterCalls).toBe(0);
       expect(Array.isArray(res.body.listing.images)).toBe(true);
       expect(res.body.listing.images).toHaveLength(1);
       // The URL is derived locally from the storage key (ADR-004/lib/mediaUrls) — the client

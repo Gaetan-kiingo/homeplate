@@ -1,0 +1,394 @@
+[
+  {
+    "id": "fraud-001",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["advance-fee", "crypto"],
+    "text": "Send $300 in crypto to reserve the whole table and I will refund the difference in cash when you arrive."
+  },
+  {
+    "id": "fraud-002",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "credential-request", "link"],
+    "text": "Your Homeplate account will be deleted in 24 hours. Confirm your password at homeplate-verify.example."
+  },
+  {
+    "id": "fraud-003",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["impersonation", "otp-theft"],
+    "text": "This is Homeplate Support. Read me the six digit code we just sent you so I can restore your booking."
+  },
+  {
+    "id": "fraud-004",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["overpayment-refund", "gift-card"],
+    "text": "I accidentally sent you $400 instead of $40. Please send the extra $360 back by gift card today."
+  },
+  {
+    "id": "fraud-005",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["bait-listing", "misrepresentation"],
+    "text": "Photos are from a restaurant downtown, nobody checks. Book and I will sort something out on the night."
+  },
+  {
+    "id": "fraud-006",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["off-platform-payment", "deception"],
+    "text": "Do not book through the app, it takes 30%. Send me the deposit privately and I will mark you as attended."
+  },
+  {
+    "id": "fraud-007",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["credential-request"],
+    "text": "Just send me your login and I will book the seats for you, it is faster than explaining it."
+  },
+  {
+    "id": "fraud-008",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["id-document-request", "pii-harvest"],
+    "text": "Before I confirm, send a photo of your driver's licence and a selfie holding it. Standard procedure."
+  },
+  {
+    "id": "fraud-009",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["lure-offsite", "safety-risk"],
+    "text": "The address on the listing is wrong on purpose. Come alone to the warehouse on the corner at 11pm."
+  },
+  {
+    "id": "fraud-010",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["prize-scam", "link", "urgency"],
+    "text": "Congratulations! You have won a free cruise. Claim it at freecruise-winner.example within one hour."
+  },
+  {
+    "id": "fraud-011",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["impersonation", "fee-scam"],
+    "text": "I am a verified Homeplate inspector. Pay the $75 kitchen certification fee to my account or you get delisted."
+  },
+  {
+    "id": "fraud-012",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["advance-fee", "gift-card"],
+    "text": "Deposit required: send $50 by gift card before I release the address. No refunds, no questions."
+  },
+  {
+    "id": "fraud-013",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["gift-card", "advance-fee"],
+    "text": "My card reader is broken. Buy two $100 gift cards, send me the codes, I will deduct the meal and refund the rest."
+  },
+  {
+    "id": "fraud-014",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["moderation-bribery", "impersonation"],
+    "text": "New hosts: I can get your listing approved instantly for $40. I know someone on the moderation team."
+  },
+  {
+    "id": "fraud-015",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["pii-harvest", "social-engineering"],
+    "text": "Send me your emergency contact's phone number and I will add them to the booking myself."
+  },
+  {
+    "id": "fraud-016",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["advance-fee", "crypto", "bait-listing"],
+    "text": "Free meal for the first 20 guests, you just pay the $25 ingredient bond upfront in crypto."
+  },
+  {
+    "id": "fraud-017",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["advance-fee", "no-show-scam"],
+    "text": "I am travelling and cannot be there. My assistant will collect $200 cash at the door and I will cook next week."
+  },
+  {
+    "id": "fraud-018",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "link"],
+    "text": "Suspicious login detected on your account. Reset your password here: homeplate-secure-login.example/reset"
+  },
+  {
+    "id": "fraud-019",
+    "label": "fraudulent",
+    "surface": "profile",
+    "traits": ["misrepresentation", "stolen-credentials"],
+    "text": "Certified Michelin chef, twenty years in three star kitchens. Photos and credentials borrowed, do not ask."
+  },
+  {
+    "id": "fraud-020",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["off-platform-payment", "no-receipt"],
+    "text": "Pay me for five bookings now at a discount and I will leave them open forever. Cash transfer only, no receipts."
+  },
+  {
+    "id": "fraud-021",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["fake-reviews", "platform-manipulation"],
+    "text": "I will write you 30 five star reviews from my own accounts for $100. Nobody has ever caught me."
+  },
+  {
+    "id": "fraud-022",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "card-details", "link"],
+    "text": "Your booking failed. Re-enter your card details at homeplate-payments.example to keep your seat."
+  },
+  {
+    "id": "fraud-023",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["misrepresentation", "fake-reviews"],
+    "text": "Kitchen is not permitted and the photos are stock images, but the reviews you see are all from friends."
+  },
+  {
+    "id": "fraud-024",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["advance-fee", "escalating-fees"],
+    "text": "Send $20 to hold the seat, then $20 more to confirm it, then the seat is yours. Standard on this app."
+  },
+  {
+    "id": "fraud-025",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["bank-details", "social-engineering"],
+    "text": "I need your bank account number so the platform can pay me out through you. It is just a formality."
+  },
+  {
+    "id": "fraud-026",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["impersonation", "payment-redirect"],
+    "text": "This is the host's brother. She lost her account. Send the meal payment to my number instead of hers."
+  },
+  {
+    "id": "fraud-027",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "link", "urgency"],
+    "text": "Click this to verify you are human or your seats will be released: verify-guest.example/check"
+  },
+  {
+    "id": "fraud-028",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["misrepresentation", "safety-risk"],
+    "text": "Guaranteed allergy safe, I have a medical certificate. I do not, but it makes people book faster."
+  },
+  {
+    "id": "fraud-029",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["fake-charity", "no-receipt"],
+    "text": "I am collecting for a kitchen fire fund. Any amount helps. Send it to my private account, no receipts needed."
+  },
+  {
+    "id": "fraud-030",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["account-sale", "platform-manipulation"],
+    "text": "Buy my host account: 40 reviews, verified email, ready to go. $300 and we transfer it tonight."
+  },
+  {
+    "id": "fraud-031",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["credential-request", "session-theft"],
+    "text": "Give me the session token from your app so I can fix your booking from my side."
+  },
+  {
+    "id": "fraud-032",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["advance-fee", "urgency"],
+    "text": "Address will be shared after a $60 non-refundable deposit to my account. Many guests waiting, act fast."
+  },
+  {
+    "id": "fraud-033",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "card-details"],
+    "text": "The refund system is broken. Send me the refund form with your card number and security code and I will process it."
+  },
+  {
+    "id": "fraud-034",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["moderation-bribery", "platform-manipulation"],
+    "text": "I will bump you to the front of the moderation queue for $25. I do this for a lot of hosts already."
+  },
+  {
+    "id": "fraud-035",
+    "label": "fraudulent",
+    "surface": "review",
+    "traits": ["fake-reviews", "paid-review"],
+    "text": "Five stars, incredible host!!! I have never actually eaten here, he paid me ten dollars to write this."
+  },
+  {
+    "id": "fraud-036",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["social-engineering", "credential-request"],
+    "text": "Your emergency contact called me and needs your account password to reach you. Send it quickly please."
+  },
+  {
+    "id": "fraud-037",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["cap-evasion", "duplicate-accounts"],
+    "text": "Meals for 30 people daily under one banner. I run four accounts so the daily cap never actually applies."
+  },
+  {
+    "id": "fraud-038",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["wire-transfer", "advance-fee"],
+    "text": "Wire the deposit to this account number and I will text you the real address an hour before we start."
+  },
+  {
+    "id": "fraud-039",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["malware", "link"],
+    "text": "Download this file to see the menu: menu-viewer.example/setup — it just needs your admin password."
+  },
+  {
+    "id": "fraud-040",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["impersonation", "fee-scam"],
+    "text": "I am from the health department. Pay the $150 inspection fee today or your listing gets removed."
+  },
+  {
+    "id": "fraud-041",
+    "label": "fraudulent",
+    "surface": "profile",
+    "traits": ["misrepresentation", "stolen-photos"],
+    "text": "These kitchen photos are from a hotel I stayed in. Nobody has ever asked, and nobody ever will."
+  },
+  {
+    "id": "fraud-042",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["off-platform-payment", "link", "check-evasion"],
+    "text": "Cancel here and rebook through my private link so we both avoid the platform checks: rebook-fast.example"
+  },
+  {
+    "id": "fraud-043",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["off-platform-payment", "no-recourse"],
+    "text": "Send the money as friends and family so neither of us has any protection or record of it. Trust me."
+  },
+  {
+    "id": "fraud-044",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["advance-fee", "bait-listing"],
+    "text": "Deposit now for a New Year feast. The date, menu and address will be announced later. No refunds."
+  },
+  {
+    "id": "fraud-045",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["advance-fee", "money-doubling"],
+    "text": "Send me $50 and I will send back $500 tomorrow. I do this every week with guests I trust."
+  },
+  {
+    "id": "fraud-046",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["otp-theft", "phishing"],
+    "text": "Your seat is on hold. To release it, forward the verification code we just sent to this number."
+  },
+  {
+    "id": "fraud-047",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["misrepresentation", "safety-risk", "allergen"],
+    "text": "Nut free kitchen guaranteed. There are nuts, but nobody has reacted yet, so it is fine to say."
+  },
+  {
+    "id": "fraud-048",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["impersonation", "platform-manipulation"],
+    "text": "I can remove your negative review from the system for $30. I have access to the moderator tools."
+  },
+  {
+    "id": "fraud-049",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["fake-fee", "impersonation"],
+    "text": "Please pay the seat insurance of $18 to my private account. It is required by the platform for new guests."
+  },
+  {
+    "id": "fraud-050",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["payment-redirect", "off-platform-payment"],
+    "text": "My account is limited. Send the payment to my friend's account and I will confirm your booking manually."
+  },
+  {
+    "id": "fraud-051",
+    "label": "fraudulent",
+    "surface": "profile",
+    "traits": ["identity-fraud", "duplicate-accounts"],
+    "text": "I use my sister's verified email and my cousin's photos. Works fine, never had a problem with it."
+  },
+  {
+    "id": "fraud-052",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["advance-fee", "crypto"],
+    "text": "Send a $200 refundable bond in crypto for the private chef experience. Address follows once it clears."
+  },
+  {
+    "id": "fraud-053",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["phishing", "card-details"],
+    "text": "Reply with the last four digits of your card and your billing postcode to confirm you are the real guest."
+  },
+  {
+    "id": "fraud-054",
+    "label": "fraudulent",
+    "surface": "listing",
+    "traits": ["fake-fee", "advance-fee"],
+    "text": "Book two seats, get four free. Pay the $80 catering licence fee first, it comes straight back on the night."
+  },
+  {
+    "id": "fraud-055",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["ban-evasion", "duplicate-accounts"],
+    "text": "I set up a second account after my first one was banned. Book with me there, same food, no history."
+  },
+  {
+    "id": "fraud-056",
+    "label": "fraudulent",
+    "surface": "message",
+    "traits": ["off-platform-payment", "structuring"],
+    "text": "Transfer the payment and mark it as a gift so the bank does not flag it. Then I will confirm the seat."
+  }
+]

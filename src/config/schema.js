@@ -7,7 +7,10 @@
 //   NFR-04, NFR-05 — login rate-limit knobs (5 attempts / 10 minutes)
 //   NFR-09         — external-adapter timeout/retry knobs, outbox retry/backoff (ADR-003)
 //   NFR-12         — erasure and inactivity retention windows
-//   NFR-13         — field-level AES-256-GCM key (32 bytes hex) for §3.4 PII columns
+//   NFR-13, ST-06  — field-level AES-256-GCM key (32 bytes hex) for §3.4 PII columns; the
+//                    placeholder key shipped in .env.example is REFUSED in production
+//   AB-08          — the default MinIO object-storage credentials are refused in production
+//                    (a media bucket reachable with published credentials is harvestable)
 //   FR-08          — MODERATION_CONFIDENCE_THRESHOLD: below it, content routes to the human
 //                    moderator queue (ADR-002 confidence-based routing)
 //   FR-10          — EMAIL_TOKEN_TTL_HOURS: email-verification token expiry
@@ -23,6 +26,30 @@
 const { z } = require('zod');
 
 const NODE_ENVS = ['development', 'test', 'production'];
+
+// ---- committed placeholder credentials (NFR-13, ST-06, AB-08) --------------------------------
+// These values ship IN THE REPOSITORY so that `cp .env.example .env`, `npm run build` and the
+// docker-compose dev loop work with no setup. That convenience is exactly why production must
+// refuse them: a key published in a git repository gives "encrypted at rest" no confidentiality
+// against anyone who can read the repo, and a media bucket reachable with the documented MinIO
+// defaults is open to harvesting (AB-08). Exported so tests can assert on the same constants
+// instead of re-typing the literals.
+const KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY = 'deadbeef'.repeat(8);
+const DEFAULT_OBJECT_STORAGE_CREDENTIALS = Object.freeze(['minioadmin']);
+
+/**
+ * True when a 64-hex key is really one short block repeated (deadbeef×8, 00×32, abab…) — a
+ * placeholder rather than 32 bytes of entropy. Catches the committed sample key and every
+ * near-miss variant of it; a `openssl rand -hex 32` key has no such period.
+ */
+function isPlaceholderHexKey(hex) {
+  const n = hex.length;
+  for (let block = 1; block <= n / 2; block += 1) {
+    if (n % block !== 0) continue;
+    if (hex.slice(0, block).repeat(n / block) === hex) return true;
+  }
+  return false;
+}
 
 // ---- primitive coercions ---------------------------------------------------------------------
 
@@ -59,11 +86,24 @@ const optionalString = z
 const rawSchema = z.object({
   NODE_ENV: z.enum(NODE_ENVS).optional().default('development'),
 
+  // ADR-007/ADR-005 escape hatch — the ONLY way to point a NODE_ENV=test process at a live
+  // moderation/Maps provider ("only the IT-03 measurement run may call the live API").
+  // Default false, so `npm test` and CI can never be flipped to a third party by a stray
+  // exported variable. The IT-03 runner opts in explicitly and records the model id with the
+  // result (ADR-007 follow-ups). It grants NOTHING in production, where live is already the
+  // required mode, and it does not relax the ADR-011 mock-transport rule.
+  ALLOW_LIVE_ADAPTERS_IN_TESTS: boolWithDefault(false),
+
   // server / transport (NFR-03, AB-05)
   PORT: intWithDefault(3000),
   TLS_CERT_PATH: z.string().optional().default('certs/dev-cert.pem'),
   TLS_KEY_PATH: z.string().optional().default('certs/dev-key.pem'),
   ENFORCE_HTTPS: boolWithDefault(true),
+  // FR-10 — the externally reachable origin of THIS deployment. The worker builds the
+  // single-use email-verification link from it, so a wrong value mails dead links: it is
+  // required in production (and must be https there — NFR-03) and defaults to the local
+  // dev origin otherwise. No secret, but no silent guess in production either.
+  PUBLIC_BASE_URL: optionalString,
 
   // stores (SRS §2.4)
   DATABASE_URL: optionalString,
@@ -187,9 +227,66 @@ function validateEnv(rawEnv) {
   if (!e.OBJECT_STORAGE_SECRET_KEY)
     problems.push('OBJECT_STORAGE_SECRET_KEY is required (ADR-004)');
 
+  // Committed placeholder credentials fail CLOSED in production, exactly like ENFORCE_HTTPS
+  // and the mock adapters below. An operator following the documented path (`cp .env.example
+  // .env`, fill in the provider keys) must not end up encrypting the §3.4 PII columns under a
+  // key that is published in this repository, nor exposing the media bucket on the default
+  // MinIO credentials (NFR-13, ST-06, AB-08). Dev and test keep using the samples.
+  if (isProduction && e.FIELD_ENCRYPTION_KEY && isPlaceholderHexKey(e.FIELD_ENCRYPTION_KEY)) {
+    problems.push(
+      'FIELD_ENCRYPTION_KEY is a placeholder (the sample key committed in .env.example, or ' +
+        'another repeated-block value) and must not be used when NODE_ENV=production — NFR-13 ' +
+        'encryption at rest is worthless under a published key; generate with: openssl rand -hex 32'
+    );
+  }
+  if (isProduction) {
+    for (const name of ['OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY']) {
+      if (DEFAULT_OBJECT_STORAGE_CREDENTIALS.includes(e[name])) {
+        problems.push(
+          `${name} is the default MinIO credential documented in .env.example/docker-compose.yml ` +
+            'and must not be used when NODE_ENV=production (ADR-004, AB-08 — the media bucket ' +
+            'would be readable by anyone who can read this repository)'
+        );
+      }
+    }
+  }
+
   // Transport enforcement fails CLOSED in production (NFR-03, AB-05, build-plan §2).
   if (isProduction && !e.ENFORCE_HTTPS) {
     problems.push('ENFORCE_HTTPS must not be disabled when NODE_ENV=production (NFR-03)');
+  }
+
+  // FR-10 — public origin used to build the emailed verification link. Outside production a
+  // local default keeps dev/test frictionless; in production an explicit https origin is
+  // mandatory, because a guessed origin would mail links nobody can follow (and FR-10 would
+  // be unmeetable — email_verified could never become true).
+  let publicBaseUrl = e.PUBLIC_BASE_URL;
+  if (publicBaseUrl === undefined) {
+    if (isProduction) {
+      problems.push(
+        'PUBLIC_BASE_URL is required when NODE_ENV=production (FR-10 — the emailed ' +
+          'verification link must point at this deployment)'
+      );
+    } else {
+      publicBaseUrl = `https://localhost:${e.PORT}`;
+    }
+  }
+  if (publicBaseUrl !== undefined) {
+    let parsedBase = null;
+    try {
+      parsedBase = new URL(publicBaseUrl);
+    } catch {
+      parsedBase = null;
+    }
+    if (!parsedBase || (parsedBase.protocol !== 'https:' && parsedBase.protocol !== 'http:')) {
+      problems.push(
+        'PUBLIC_BASE_URL must be an absolute http(s) origin, e.g. https://homeplate.example'
+      );
+    } else if (isProduction && parsedBase.protocol !== 'https:') {
+      problems.push('PUBLIC_BASE_URL must use https when NODE_ENV=production (NFR-03)');
+    } else {
+      publicBaseUrl = publicBaseUrl.replace(/\/+$/, ''); // one canonical form, no trailing slash
+    }
   }
 
   // Adapter modes: mocks are the dev/test default; production must run live (ADR-007/005/011).
@@ -212,8 +309,28 @@ function validateEnv(rawEnv) {
   }
   if (isTest && notificationsTransport !== 'mock') {
     // The whole automated suite asserts on persisted NOTIFICATION_ATTEMPT rows, never on a
-    // third party's behaviour (ADR-011).
+    // third party's behaviour (ADR-011). No measurement run needs a live transport, so this
+    // guard has no escape hatch.
     problems.push('NOTIFICATIONS_TRANSPORT must be mock when NODE_ENV=test (ADR-011)');
+  }
+  // The same rule for the other two adapters, which previously relied on a soft default in
+  // tests/helpers/env.js that any exported variable could override — e.g. a shell left over
+  // from a wave-7 IT-03 run would have sent the entire suite (and CI) at the live providers.
+  // ADR-007: "CI and the automated suite use a deterministic MOCK adapter; only the IT-03
+  // measurement run may call the live API"; ADR-005 adds the free-tier quota reason.
+  if (isTest && !e.ALLOW_LIVE_ADAPTERS_IN_TESTS) {
+    if (moderationMode !== 'mock') {
+      problems.push(
+        'LLM_MODERATION_MODE must be mock when NODE_ENV=test (ADR-007) — set ' +
+          'ALLOW_LIVE_ADAPTERS_IN_TESTS=true for the IT-03 measurement run only'
+      );
+    }
+    if (mapsMode !== 'mock') {
+      problems.push(
+        'MAPS_MODE must be mock when NODE_ENV=test (ADR-005) — set ' +
+          'ALLOW_LIVE_ADAPTERS_IN_TESTS=true for the IT-03 measurement run only'
+      );
+    }
   }
   if (notificationsTransport === 'sendgrid') {
     if (!e.SENDGRID_API_KEY)
@@ -263,6 +380,8 @@ function validateEnv(rawEnv) {
     server: {
       port: e.PORT,
       enforceHttps: e.ENFORCE_HTTPS,
+      // FR-10 — origin the worker prefixes onto the verification link (no trailing slash).
+      publicBaseUrl,
       tls: { certPath: e.TLS_CERT_PATH, keyPath: e.TLS_KEY_PATH },
     },
     db: { url: e.DATABASE_URL },
@@ -345,4 +464,13 @@ function configError(problems) {
 // tests/unit/config.test.js to prove .env.example documents each one (build-plan §5.11).
 const envKeys = Object.freeze(Object.keys(rawSchema.shape));
 
-module.exports = { validateEnv, deepFreeze, envKeys };
+module.exports = {
+  validateEnv,
+  deepFreeze,
+  envKeys,
+  // NFR-13 / ST-06 / AB-08 — the committed placeholders production refuses, exported so tests
+  // and tooling assert against one definition instead of re-typing the literals.
+  KNOWN_SAMPLE_FIELD_ENCRYPTION_KEY,
+  DEFAULT_OBJECT_STORAGE_CREDENTIALS,
+  isPlaceholderHexKey,
+};

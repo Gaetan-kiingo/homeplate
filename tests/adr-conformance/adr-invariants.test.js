@@ -107,11 +107,13 @@ describe('ADR-001/003 — request path never touches an adapter; outbox is trans
       }
     }
     // ADR-001/003: ONLY outbox handlers (worker-only code) may consume the delivery
-    // transport. Wave 3 added bookingNotifications.js — an outbox handler, i.e. exactly
-    // the sanctioned location class. Anything outside src/outbox/handlers/ is a violation.
+    // transport. Wave 3 added bookingNotifications.js and wave 4 safetyAlert.js — outbox
+    // handlers, i.e. exactly the sanctioned location class. Anything outside
+    // src/outbox/handlers/ is a violation.
     expect(importers.sort()).toEqual([
       path.join('outbox', 'handlers', 'bookingNotifications.js'),
       path.join('outbox', 'handlers', 'emailVerification.js'),
+      path.join('outbox', 'handlers', 'safetyAlert.js'),
     ]);
     for (const importer of importers) {
       expect(importer.startsWith(path.join('outbox', 'handlers') + path.sep)).toBe(true);
@@ -267,9 +269,27 @@ describe('ADR-005/010 — Redis maps cache holds ONLY coarse public precision', 
       expect(key).not.toMatch(/adr|conformance|st,|street|92103/i);
       const raw = await redis.get(key);
       const value = JSON.parse(raw);
-      const items = Array.isArray(value) ? value : [value];
+      // The maps namespace holds TWO cached shapes (src/adapters/maps.js, cachedLookup writes
+      // `publicValue` verbatim under hp:cache:maps:<kind>:<digest>[:stale]): a geocode entry
+      // { lat, lng, areaLabel } and a searchArea envelope { areas: [ …geocode entries ] }.
+      // Flatten both so this audit stays valid whichever lookups ran earlier in the suite —
+      // asserting only the geocode shape made the test order-dependent (it went red as soon as
+      // any earlier test performed a location search) AND left the searchArea coordinates —
+      // exactly where location SEARCH results live — never audited at all (COV-02).
+      const items = [];
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        if (entry === null || typeof entry !== 'object') continue; // negative cache entries
+        if (Array.isArray(entry.areas)) {
+          // An envelope carries `areas` and NOTHING else: any sibling field would ride into
+          // Redis unaudited, which is precisely how an exact coordinate would leak (ADR-010).
+          expect(Object.keys(entry).sort()).toEqual(['areas']);
+          items.push(...entry.areas);
+        } else {
+          items.push(entry);
+        }
+      }
       for (const item of items) {
-        if (item === null || typeof item !== 'object') continue; // negative cache entries
+        if (item === null || typeof item !== 'object') continue;
         expect(Object.keys(item).sort()).toEqual(['areaLabel', 'lat', 'lng']);
         const again = coarsen(item.lat, item.lng);
         expect(again.lat).toBe(item.lat); // already grid-snapped ⇒ public precision

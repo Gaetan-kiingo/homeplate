@@ -1,7 +1,17 @@
 // src/modules/notifications/transport.js — U2-ADAPTERS-COMMS: the ONE notification send
 // path (ADR-011). Public contract other units build on (build-plan §3):
 //
-//   await transport.send({ userId, channel, template, params, idempotencyKey }) → { status }
+//   await transport.send({ userId, channel, template, params, idempotencyKey,
+//                          recipientEmail? }) → { status }
+//
+// `recipientEmail` is the optional FR-07 third-party delivery address (the raising user's
+// approved emergency contact, who has no account here): when given it is what the adapter
+// delivers to, while the attempt row still records the RAISING USER's ID as the recipient.
+//
+// The second argument carries the caller's job-scoped logger and, for flows that need it, a
+// `resolveRenderContext()` callback: per-send SECRET material the adapter needs to compose
+// the message (FR-10's single-use verification link) which — exactly like `recipientEmail` —
+// goes straight to the adapter and never into a row, a payload or a log line.
 //
 // Behaviour:
 //   * resolves the adapter by config: the deterministic mock in dev/test (asserted by the
@@ -52,6 +62,13 @@ const sendInputSchema = z.object({
   template: z.string().min(1).max(200),
   params: z.record(z.unknown()).optional().default({}),
   idempotencyKey: z.string().min(1).max(255).optional(),
+  // FR-07 third-party channel: an explicitly supplied delivery address for a notification
+  // that is NOT addressed to the user's own account — the raising user's approved
+  // emergency contact (src/outbox/handlers/safetyAlert.js decrypts it at send time). When
+  // absent, the address is resolved from the recipient user's account as usual. It is
+  // handed straight to the adapter: it never reaches a NOTIFICATION_ATTEMPT row (which
+  // carries recipient_user_id only) or a log line (§3.4 PII register, ADR-003).
+  recipientEmail: z.string().trim().email().max(254).optional(),
 });
 
 // ---- params PII guard ------------------------------------------------------------------------
@@ -128,16 +145,23 @@ function resolveAdapter(channel, cfg = config.notifications) {
 /**
  * Send one notification. See the module header for the full contract.
  *
- * @param {object} input   { userId, channel, template, params?, idempotencyKey? }
+ * @param {object} input   { userId, channel, template, params?, idempotencyKey?, recipientEmail? }
  * @param {object} [options]
  * @param {object} [options.log]  a job-scoped child logger (outbox worker passes its own so
  *                                the correlationId propagates into these lines — NFR-08)
+ * @param {() => Promise<object>} [options.resolveRenderContext]  per-send SECRET render
+ *   material the adapter needs to compose the message but that must never be persisted —
+ *   today the FR-10 single-use verification link. It is a callback, not a value, because
+ *   producing it has a side effect (minting a credential): it runs at most once per send,
+ *   only after the dedupe and push-gate checks, and only for an adapter that declares
+ *   `requiresRenderContext` — so a deduped redelivery and the whole ADR-011 mock path mint
+ *   nothing at all.
  * @returns {Promise<{status: 'sent'|'failed', attemptId: string, deduped?: boolean, reason?: string}>}
  * @throws {ValidationError} malformed input or PII-bearing params (caller bug — the outbox
  *                           worker treats it like any handler error; provider failures
  *                           NEVER throw, they resolve to { status: 'failed' })
  */
-async function send(input, { log } = {}) {
+async function send(input, { log, resolveRenderContext } = {}) {
   const parsed = sendInputSchema.safeParse(input ?? {});
   if (!parsed.success) {
     throw new ValidationError('transport.send: invalid notification input', {
@@ -145,6 +169,7 @@ async function send(input, { log } = {}) {
     });
   }
   const { userId, channel, template, params, idempotencyKey } = parsed.data;
+  const suppliedRecipientEmail = parsed.data.recipientEmail;
   assertParamsCarryIdsOnly(params);
 
   const baseLog = log ?? logger;
@@ -203,8 +228,11 @@ async function send(input, { log } = {}) {
 
   // 4. Resolve the recipient address AT SEND TIME for adapters that need one (live email).
   //    It goes straight to the adapter — never into a row or a log line (§3.4 PII register).
-  let recipientEmail;
-  if (adapter.requiresRecipientEmail) {
+  //    A caller-supplied address wins: FR-07 delivers to the raising user's APPROVED
+  //    EMERGENCY CONTACT, a third party who has no account here, while the attempt row still
+  //    records the raising user's ID as the recipient.
+  let recipientEmail = suppliedRecipientEmail;
+  if (adapter.requiresRecipientEmail && !recipientEmail) {
     const recipient = await repo.getRecipientEmail(userId);
     if (!recipient || !recipient.email) {
       await repo.markFailed(attempt.id, 'recipient has no deliverable email address');
@@ -215,6 +243,17 @@ async function send(input, { log } = {}) {
       return { status: 'failed', attemptId: attempt.id, reason: 'no_recipient_email' };
     }
     recipientEmail = recipient.email;
+  }
+
+  // 4b. Resolve the per-send RENDER CONTEXT under exactly the same rule as the address above:
+  //     secret, single-use material (FR-10's verification link) that the adapter needs to
+  //     compose the message and that must NEVER reach a NOTIFICATION_ATTEMPT row, an outbox
+  //     payload or a log line (§3.4 PII register, ADR-003 "payloads carry IDs only").
+  //     Resolved ONCE here — outside the retry loop, after the dedupe/push-gate returns — so
+  //     minting a credential happens only when a delivery is actually about to be attempted.
+  let renderContext;
+  if (adapter.requiresRenderContext && typeof resolveRenderContext === 'function') {
+    renderContext = await resolveRenderContext();
   }
 
   // 5. Deliver under the NFR-09 resilience contract: per-attempt timeout from config,
@@ -249,6 +288,7 @@ async function send(input, { log } = {}) {
           params,
           idempotencyKey: idempotencyKey ?? null,
           recipientEmail,
+          renderContext,
           attempt: tryNumber,
           signal,
         });

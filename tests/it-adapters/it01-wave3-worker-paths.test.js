@@ -114,6 +114,17 @@ async function bookingRow(id) {
   return rows[0];
 }
 
+/** Every 'booking.promote' row for one booking, oldest first (id order). */
+async function promoteRows(bookingId) {
+  const { rows } = await dbh.query(
+    `SELECT * FROM outbox_jobs
+     WHERE type = 'booking.promote' AND payload->>'bookingId' = $1
+     ORDER BY id`,
+    [bookingId]
+  );
+  return rows;
+}
+
 async function makeDue(jobId) {
   await dbh.query(`UPDATE outbox_jobs SET available_at = now() WHERE id = $1`, [jobId]);
 }
@@ -499,6 +510,167 @@ describe('IT-01 wave 3 · booking.promote scheduled worker path (FR-04/FR-12, RT
     expect((await jobRow(jobs[0].id)).status).toBe('delivered');
     expect((await bookingRow(booking.id)).status).toBe('pending'); // still not promoted early
   });
+
+  // -------------------------------------------------------------------------------------------
+  // IT3-F1 decision table (lifecycle.securePromotionSchedule / isLivePendingJob). The test above
+  // covers only the "deduped onto the row I am delivering" leg. The three legs below cover the
+  // rest, because each one is a SILENT failure if the predicate is wrong in either direction:
+  // accepting a spent row loses the promotion (booking stuck 'pending' forever, FR-04 completion
+  // then 409s for both parties), while rejecting a live one just costs a redundant row.
+  //   deduped-onto row is …          → expected outcome
+  //   the delivering row itself      → disambiguated ':r<jobId>' row (covered above)
+  //   ANOTHER live pending row       → that row IS the surviving schedule; no new row
+  //   spent (delivered/dead) or      → not trustworthy: secure a fresh ':r<jobId>' row
+  //     claim-locked by a worker
+  //   nothing securable at all       → THROW BOOKING_PROMOTE_UNSECURED (fail closed)
+  // -------------------------------------------------------------------------------------------
+
+  test('IT3-F1 live dedupe: collapsing onto ANOTHER live promote row keeps THAT row as the schedule', async () => {
+    // Two promote rows for the same instant is a reachable state (an earlier early-delivery
+    // secured a disambiguated row; the base row was later requeued, or vice versa). When the
+    // disambiguated row is the one delivered early, the base row it dedupes onto is genuinely
+    // live — it must be ACCEPTED as the surviving schedule, and no third row created.
+    const { guest, listing } = await makeBookableWorld();
+    const booking = await bookingsService.createBooking(guest.id, listing.id, { log: quietLog });
+    await drainDue(); // deliver the create notifications; the promote row is not due yet
+
+    const [base] = await promoteRows(booking.id);
+    expect(base.status).toBe('pending'); // live, scheduled at the (future) start
+
+    const delivering = await enqueueJob({
+      type: 'booking.promote',
+      payload: { bookingId: booking.id },
+      dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
+      availableAt: new Date(), // due now: the worker delivers it before the meal starts
+    });
+    await drainDue();
+
+    expect((await jobRow(delivering.id)).status).toBe('delivered');
+    const rows = await promoteRows(booking.id);
+    expect(rows.map((r) => String(r.id))).toEqual([String(base.id), String(delivering.id)]);
+    // The live base row was accepted: it still carries the schedule, and no ':r<jobId>' row
+    // was created on top of it.
+    expect(rows.find((r) => r.status === 'pending').id).toBe(base.id);
+    expect((await bookingRow(booking.id)).status).toBe('pending'); // not promoted early
+  });
+
+  test('IT3-F1 spent dedupe: collapsing onto an already-delivered row secures a FRESH row instead', async () => {
+    const { guest, listing } = await makeBookableWorld();
+    const booking = await bookingsService.createBooking(guest.id, listing.id, { log: quietLog });
+    await drainDue();
+
+    const [base] = await promoteRows(booking.id);
+    // The base-key row is SPENT — an earlier equally-early delivery already marked it
+    // delivered. Trusting it would lose the promotion outright.
+    await dbh.query(
+      `UPDATE outbox_jobs SET status = 'delivered', delivered_at = now() WHERE id = $1`,
+      [base.id]
+    );
+
+    const delivering = await enqueueJob({
+      type: 'booking.promote',
+      payload: { bookingId: booking.id },
+      dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
+      availableAt: new Date(),
+    });
+    await drainDue();
+
+    expect((await jobRow(delivering.id)).status).toBe('delivered');
+    const rows = await promoteRows(booking.id);
+    expect(rows).toHaveLength(3);
+    const pending = rows.filter((r) => r.status === 'pending');
+    expect(pending).toHaveLength(1);
+    expect(pending[0].dedupe_key).toBe(`${base.dedupe_key}:r${delivering.id}`);
+    expect(
+      Math.abs(
+        new Date(pending[0].available_at).getTime() - new Date(listing.scheduled_start).getTime()
+      )
+    ).toBeLessThan(1000);
+    expect((await bookingRow(booking.id)).status).toBe('pending');
+  });
+
+  test('IT3-F1 claim-locked dedupe: a row another worker holds is not trusted (FOR UPDATE SKIP LOCKED)', async () => {
+    const { guest, listing } = await makeBookableWorld();
+    const booking = await bookingsService.createBooking(guest.id, listing.id, { log: quietLog });
+    await drainDue();
+
+    const [base] = await promoteRows(booking.id);
+    // A second promote row exists and is the one being delivered; keep it out of the worker's
+    // reach (future available_at) so this test drives lifecycle directly, exactly as the
+    // handler would (ctx.jobId = the delivering row).
+    const delivering = await enqueueJob({
+      type: 'booking.promote',
+      payload: { bookingId: booking.id },
+      dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
+      availableAt: new Date(Date.now() + 6 * 3600 * 1000),
+    });
+
+    // A CONCURRENT worker has claimed the base row (worker.js CLAIM_SQL holds the row lock for
+    // the whole handler run): it is still 'pending' but may be spent at any moment, so it must
+    // NOT be accepted as the surviving schedule.
+    const claimer = await dbh.getClient();
+    let outcome;
+    try {
+      await claimer.query('BEGIN');
+      await claimer.query('SELECT id FROM outbox_jobs WHERE id = $1 FOR UPDATE', [base.id]);
+      outcome = await lifecycle.promoteDueBooking(booking.id, {
+        log: quietLog,
+        jobId: String(delivering.id),
+      });
+    } finally {
+      await claimer.query('ROLLBACK');
+      claimer.release();
+    }
+
+    expect(outcome).toBe('rescheduled');
+    const rows = await promoteRows(booking.id);
+    expect(rows).toHaveLength(3); // base (locked) + delivering + the freshly secured row
+    const fresh = rows.find((r) => r.dedupe_key === `${base.dedupe_key}:r${delivering.id}`);
+    expect(fresh).toBeTruthy();
+    expect(fresh.status).toBe('pending');
+    expect((await bookingRow(booking.id)).status).toBe('pending');
+  });
+
+  test('IT3-F1 fail-closed: nothing securable → the delivery FAILS and the worker keeps it pending', async () => {
+    const { guest, listing } = await makeBookableWorld();
+    const booking = await bookingsService.createBooking(guest.id, listing.id, { log: quietLog });
+    await drainDue(); // also clears the runway so the single poll below claims our row
+
+    const [base] = await promoteRows(booking.id);
+    await dbh.query(
+      `UPDATE outbox_jobs SET status = 'delivered', delivered_at = now() WHERE id = $1`,
+      [base.id]
+    );
+
+    const delivering = await enqueueJob({
+      type: 'booking.promote',
+      payload: { bookingId: booking.id },
+      dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
+      availableAt: new Date(Date.now() + 6 * 3600 * 1000),
+    });
+    // Both keys securePromotionSchedule can try are taken by rows that are NOT live: the base
+    // key (delivered above) and the disambiguated key (dead-lettered here).
+    const blocker = await enqueueJob({
+      type: 'booking.promote',
+      payload: { bookingId: booking.id },
+      dedupeKey: `${base.dedupe_key}:r${delivering.id}`,
+      availableAt: new Date(Date.now() + 6 * 3600 * 1000),
+    });
+    await dbh.query(`UPDATE outbox_jobs SET status = 'dead' WHERE id = $1`, [blocker.id]);
+
+    await makeDue(delivering.id);
+    await drainDue();
+
+    // Fail closed (NFR-09): the delivered row stays pending with its reason recorded and the
+    // worker's retry budget still to spend — the promotion is deferred, never silently lost.
+    const row = await jobRow(delivering.id);
+    expect(row.status).toBe('pending');
+    expect(row.attempt_count).toBe(1);
+    expect(row.last_error).toMatch(/no replacement row\s+could be secured/);
+    expect(new Date(row.available_at).getTime()).toBeGreaterThan(Date.now()); // backed off
+    expect(await promoteRows(booking.id)).toHaveLength(3); // nothing half-written
+    expect((await bookingRow(booking.id)).status).toBe('pending');
+  });
 });
 
 // ==============================================================================================
@@ -592,31 +764,41 @@ describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds while the
     expect(page.results).toHaveLength(0);
   });
 
-  test('WAVE-4 GAP: the IT-03 measurement protocol is not yet buildable — no eval set, no scan handler', () => {
+  test('WAVE-4 GAP: the eval set exists, but the pipeline to score it through does not', () => {
     // NFR-10/ADR-008: a versioned ≥200-item labelled set under tests/fixtures/moderation-eval/vN/
-    // scored through the REAL pipeline, with a recorded human sign-off. Neither the set nor the
-    // pipeline exists in wave 3 — NFR-10 stays not_implemented (build-plan §7), never "passed".
-    // When U4-MODERATION lands, this probe FAILS by design: replace it with the real IT-03
-    // measurement harness (score the set, print FP/FN rates, assert < 0.05, check sign-off).
+    // scored through the REAL pipeline, with a recorded human sign-off. The SET landed (IT-F1,
+    // U4-EVALSET) — ADR-008 requires it before the classifier prompt exists, so that building the
+    // pipeline cannot tune the target to the result. The PIPELINE has not: no moderation.scan
+    // handler, so nothing can score it and NFR-10 stays not_implemented (build-plan §7), never
+    // "passed". When U4-MODERATION lands, this probe FAILS by design: replace it with the real
+    // IT-03 measurement harness (score the set, print FP/FN rates, assert < 0.05, check sign-off).
     const evalDir = path.join(__dirname, '..', 'fixtures', 'moderation-eval');
-    expect(fs.existsSync(evalDir)).toBe(false);
+    expect(fs.existsSync(evalDir)).toBe(true);
+    const set = require(evalDir).loadSet('v1');
+    expect(set.items.length).toBeGreaterThanOrEqual(200);
+    expect(set.hasResults).toBe(false); // no measurement has been recorded against it
     expect(registry.has('moderation.scan')).toBe(false);
   });
 });
 
 // ==============================================================================================
-describe('IT-04 (FR-07) — safety-alert delivery is wave 4; only the substrate exists today', () => {
-  test('WAVE-4 GAP: POST /api/bookings/:id/safety-alerts does not exist yet (404)', async () => {
-    // When U4-SAFETY lands this probe FAILS by design: replace it with the real IT-04 —
-    // alert persisted + moderator queue entry + emergency-contact email through the MOCK
-    // transport (NOTIFICATION_ATTEMPT rows, ADR-011), retry on injected failure, dead-letter
-    // visible in GET /api/moderation/alerts.
+describe('IT-04 (FR-07) — safety-alert delivery landed in wave 4 (U4-SAFETY)', () => {
+  test('the FR-07 surface is MOUNTED and session-gated (401/404, never "no such route")', async () => {
+    // The wave-3 gap probe that stood here asserted these paths 404'd. U4-SAFETY closed it:
+    // the full IT-04 (alert persisted + moderator notice + emergency-contact email through the
+    // MOCK transport as NOTIFICATION_ATTEMPT rows, retry on injected outage, dead-letter still
+    // visible in GET /api/moderation/alerts) lives in it04-safety-delivery.test.js. What this
+    // file keeps is the boundary check that the routes exist and refuse anonymous callers.
+    expect(
+      fs.existsSync(path.join(__dirname, '..', '..', 'src', 'modules', 'safety', 'routes.js'))
+    ).toBe(true);
     const res = await request(app)
       .post('/api/bookings/00000000-0000-4000-8000-000000000001/safety-alerts')
       .send({ reason: 'test' });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(401); // mounted, session required (AB-08) — no longer a 404
     const alerts = await request(app).get('/api/moderation/alerts');
-    expect(alerts.status).toBe(404);
+    expect(alerts.status).toBe(401);
+    expect(registry.has('safety.alert')).toBe(true); // and the delivery handler is registered
   });
 
   test('FR-07 substrate present: safety-alert email templates + transport row recording', async () => {

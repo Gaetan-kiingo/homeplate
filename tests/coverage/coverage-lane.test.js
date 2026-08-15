@@ -64,7 +64,9 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
   });
 
   test('wave 4-6 modules are NOT on disk yet (scope guard — SRS §1.2 / build-plan §4)', () => {
-    for (const mod of ['reviews', 'messaging', 'moderation', 'safety', 'privacy']) {
+    // `safety` left this list when U4-SAFETY landed (FR-07): its coverage is asserted by
+    // tests/unit/safety.test.js, tc07-safety.test.js and it04-safety-delivery.test.js.
+    for (const mod of ['reviews', 'messaging', 'moderation', 'privacy']) {
       expect(fs.existsSync(path.join(ROOT, 'src', 'modules', mod))).toBe(false);
     }
     expect(fs.existsSync(path.join(ROOT, 'client'))).toBe(false);
@@ -347,12 +349,18 @@ describe('coverage lane — mounted HTTP surface matches the wave-3 plan', () =>
     expect((await request(app).delete(`/api/media/${UUID}`)).status).toBe(401);
   });
 
-  test('wave 4-6 modules are NOT mounted (404)', async () => {
+  test('wave 4-6 modules are NOT mounted (404); the landed FR-07 surface is session-gated', async () => {
     for (const p of ['/api/reviews', '/api/messaging', '/api/moderation', '/api/safety',
       '/api/privacy']) {
       const res = await request(app).get(p);
       expect(res.status).toBe(404);
     }
+    // U4-SAFETY mounts exactly two FULL paths (never a bare /api/safety or /api/moderation):
+    // they answer 401 unauthenticated, which is what proves they are mounted at all.
+    expect((await request(app).get('/api/moderation/alerts')).status).toBe(401);
+    expect((await request(app).post(`/api/bookings/${UUID}/safety-alerts`).send({})).status).toBe(
+      401
+    );
   });
 });
 

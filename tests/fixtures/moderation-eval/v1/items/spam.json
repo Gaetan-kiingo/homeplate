@@ -1,0 +1,394 @@
+[
+  {
+    "id": "spam-001",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["keyword-stuffing"],
+    "text": "BEST MEALS BEST MEALS BEST MEALS san diego home food cheap dinner near me best home cooked meal san diego best cheap dinner near me"
+  },
+  {
+    "id": "spam-002",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["link", "promo"],
+    "text": "Hi! Check out cheap-meals-now.example for 90% off every listing in your city. Tell them I sent you!"
+  },
+  {
+    "id": "spam-003",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["bulk", "untargeted"],
+    "text": "Hello, I am messaging every host in San Diego about a great opportunity. Reply YES for the details."
+  },
+  {
+    "id": "spam-004",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["off-topic-ad"],
+    "text": "Homemade pasta. Also selling refurbished phones, message me. Also doing tax returns, very cheap."
+  },
+  {
+    "id": "spam-005",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["self-promo", "off-topic-ad"],
+    "text": "Great food! By the way, follow my page @dealsdealsdeals for daily discount codes on absolutely everything."
+  },
+  {
+    "id": "spam-006",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["all-caps", "off-topic-ad"],
+    "text": "WORK FROM HOME! $500 A DAY! NO EXPERIENCE NEEDED! Message me for the details, spots are going fast!!!"
+  },
+  {
+    "id": "spam-007",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["affiliate", "link"],
+    "text": "Dinner for six. Use code SAVE20 at bestknives.example, I get a commission on every single sale."
+  },
+  {
+    "id": "spam-008",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["off-topic-ad", "link"],
+    "text": "Lose 12kg in two weeks with these herbal capsules. Order at slimfast-herbs.example, ships worldwide."
+  },
+  {
+    "id": "spam-009",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["engagement-farming", "all-caps"],
+    "text": "5 stars!!! Visit my profile!!! I post 20 new listings every day!!! Follow follow follow!!!"
+  },
+  {
+    "id": "spam-010",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["promo", "link"],
+    "text": "Buy now, limited time offer, 70% off meal vouchers, click here: vouchers-4-u.example"
+  },
+  {
+    "id": "spam-011",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["all-caps", "repetition"],
+    "text": "CHEAPEST FOOD IN TOWN. CALL NOW 555-0123. CALL NOW 555-0123. CALL NOW 555-0123. DO NOT MISS OUT."
+  },
+  {
+    "id": "spam-012",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["off-topic-ad"],
+    "text": "I unlock any phone, any carrier, twenty minutes. Not food related but you seem like a nice person."
+  },
+  {
+    "id": "spam-013",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad", "crypto-promo"],
+    "text": "The tacos were fine. Also: crypto signals group, 400% monthly returns, link in my bio, first month free."
+  },
+  {
+    "id": "spam-014",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["keyword-stuffing"],
+    "text": "Vegan bowls. vegan vegan vegan cheap cheap cheap best best best san diego san diego san diego."
+  },
+  {
+    "id": "spam-015",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["bulk", "engagement-farming"],
+    "text": "Please share my listing with ten friends and I will share yours. I am doing this with 200 hosts this week."
+  },
+  {
+    "id": "spam-016",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["engagement-farming", "bulk"],
+    "text": "New listing every single day this month! Follow me so you never miss one! Also follow my sister!"
+  },
+  {
+    "id": "spam-017",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["off-topic-ad", "off-platform"],
+    "text": "Meal prep boxes delivered nationwide, not actually cooked at home, order through our own website instead."
+  },
+  {
+    "id": "spam-018",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad"],
+    "text": "Best meal ever. Also I sell handmade candles, very cheap, message me, I ship anywhere in the country."
+  },
+  {
+    "id": "spam-019",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["all-caps", "bulk"],
+    "text": "READ THIS!!! I AM PROMOTING 50 KITCHENS THIS WEEK!!! REPLY 'INFO' NOW!!! DO NOT MISS OUT!!!"
+  },
+  {
+    "id": "spam-020",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["bait-headline", "off-topic-ad"],
+    "text": "Free meal! (Not really.) But do visit my restaurant downtown, we have a lunch special every single day."
+  },
+  {
+    "id": "spam-021",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["off-topic-ad", "cold-outreach"],
+    "text": "SEO services for your kitchen page. Rank number one on search. $99 a month. Reply for a free audit."
+  },
+  {
+    "id": "spam-022",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad", "link"],
+    "text": "Nice rice. Anyway, casino-royale-wins.example gives 200 free spins with no deposit, enjoy the winnings."
+  },
+  {
+    "id": "spam-023",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["off-topic-ad", "engagement-farming"],
+    "text": "Do you want 10,000 followers? I can deliver in 48 hours, real accounts, cheap. Just say the word."
+  },
+  {
+    "id": "spam-024",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["self-promo", "link"],
+    "text": "Chicken adobo. Follow my food blog at adobo-daily.example for 300 more recipes and sponsor offers."
+  },
+  {
+    "id": "spam-025",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["repetition", "off-topic-ad"],
+    "text": "Hi hi hi hi! Big sale big sale! Everything must go! Kitchen equipment! Message me! Message me!"
+  },
+  {
+    "id": "spam-026",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["affiliate", "undisclosed-sponsorship"],
+    "text": "Four stars. Sponsored by NutriBlend, use code NUTRI15 for 15% off blenders at nutriblend.example."
+  },
+  {
+    "id": "spam-027",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["off-topic-ad"],
+    "text": "Sunday roast. Also available: driveway pressure washing, gutter cleaning, and mobile car detailing."
+  },
+  {
+    "id": "spam-028",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["cold-outreach", "off-topic-ad"],
+    "text": "I represent a marketing agency. We can post your meals to 40 platforms for a flat monthly fee."
+  },
+  {
+    "id": "spam-029",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["link", "off-topic-ad"],
+    "text": "join my group chat, 500 members, we post deals all day, invite link is dealchat.example/join"
+  },
+  {
+    "id": "spam-030",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["keyword-stuffing"],
+    "text": "Pho. PHO. P H O. pho near me. best pho. cheap pho. pho delivery. pho tonight. pho san diego."
+  },
+  {
+    "id": "spam-031",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad", "cold-outreach"],
+    "text": "Tasty! Btw are you looking to make passive income? I have a system. No pressure. Just message me."
+  },
+  {
+    "id": "spam-032",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["promo", "urgency"],
+    "text": "Last chance! Limited time offer! Only three spots left in my mentorship program! Click here now!"
+  },
+  {
+    "id": "spam-033",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["off-topic-ad"],
+    "text": "Empanadas, and do not forget to check out my cousin's landscaping business, first cut is half price."
+  },
+  {
+    "id": "spam-034",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["referral", "link"],
+    "text": "New app launch! Download SnackSwap from snackswap-app.example and get $10 with my referral code."
+  },
+  {
+    "id": "spam-035",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["all-caps", "engagement-farming"],
+    "text": "It was okay. FOLLOW ME FOLLOW ME FOLLOW ME I POST FOOD CONTENT EVERY DAY THANK YOU SO MUCH."
+  },
+  {
+    "id": "spam-036",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["bulk", "cold-outreach"],
+    "text": "Bulk saffron, turmeric, cardamom at wholesale prices, no minimum. I message every host on here."
+  },
+  {
+    "id": "spam-037",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["undisclosed-sponsorship"],
+    "text": "Ramen night. Sponsored content available: I will mention your brand in my listing text for $50."
+  },
+  {
+    "id": "spam-038",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["repetition", "bulk"],
+    "text": "hey hey hey!! did you see my other 14 messages?? big opportunity!! reply!! reply!! reply!!"
+  },
+  {
+    "id": "spam-039",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad", "link"],
+    "text": "Loved it. Also: t-shirts, mugs, stickers. My shop is merchmerch.example and it ships in three days."
+  },
+  {
+    "id": "spam-040",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["repetition", "link"],
+    "text": "Curry night. Visit bestcurry.example. Visit bestcurry.example. Visit bestcurry.example. Thanks!"
+  },
+  {
+    "id": "spam-041",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["cold-outreach", "off-topic-ad"],
+    "text": "Are you interested in solar panels for your kitchen roof? Free quote, no obligation, just reply YES."
+  },
+  {
+    "id": "spam-042",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["affiliate", "link"],
+    "text": "The bread was great!!! Get 40% off flour at flourpower.example with my affiliate link, thanks!!!"
+  },
+  {
+    "id": "spam-043",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["list-building", "bulk"],
+    "text": "I am building an email list of home cooks. Send me your email and I will add you to the newsletter."
+  },
+  {
+    "id": "spam-044",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["off-topic-ad"],
+    "text": "Sushi rolls. ALSO: essay writing service, any subject, 24 hour turnaround, message me for pricing."
+  },
+  {
+    "id": "spam-045",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["crypto-promo", "off-topic-ad"],
+    "text": "join our coin pump group, 3000 members, free entry this week only, we post entries every morning"
+  },
+  {
+    "id": "spam-046",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["self-promo", "link"],
+    "text": "Fine meal. If you like cooking videos I upload three a week at cookclips.example, please subscribe."
+  },
+  {
+    "id": "spam-047",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["keyword-stuffing", "hashtag-stuffing"],
+    "text": "Best BBQ. best bbq. BEST BBQ. #bbq #food #sandiego #foodie #yum #eat #dinner #cheap #best #now"
+  },
+  {
+    "id": "spam-048",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["paid-placement", "cold-outreach"],
+    "text": "I will pay you to put my link in your listing description. Easy money. Interested? Reply fast."
+  },
+  {
+    "id": "spam-049",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad"],
+    "text": "Delicious. Btw my cousin does discount catering for parties, way cheaper than this, message me."
+  },
+  {
+    "id": "spam-050",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["all-caps", "automation-promo"],
+    "text": "GET MORE BOOKINGS!!! Our bot auto-messages 500 guests a day for you!!! Only $29 a month!!!"
+  },
+  {
+    "id": "spam-051",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["self-promo", "link"],
+    "text": "Falafel plate. Read my 4000 word blog post about falafel at falafel-truth.example, ad supported."
+  },
+  {
+    "id": "spam-052",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["off-topic-ad", "bulk"],
+    "text": "Hello dear friend, I am promoting a new dating app. Sign up here, it is free, thank you kindly."
+  },
+  {
+    "id": "spam-053",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["off-topic-ad", "link"],
+    "text": "Nice. Anyway, cheap flights to anywhere, 60% off at flightsdeal.example, book before Friday."
+  },
+  {
+    "id": "spam-054",
+    "label": "spam",
+    "surface": "listing",
+    "traits": ["all-caps", "repetition"],
+    "text": "Dumplings!!!! CHEAP!!!! CHEAP!!!! CHEAP!!!! BOOK NOW!!!! BOOK NOW!!!! DO NOT THINK JUST BOOK!!!!"
+  },
+  {
+    "id": "spam-055",
+    "label": "spam",
+    "surface": "message",
+    "traits": ["bulk", "cold-outreach"],
+    "text": "I message every new host with the same template. Want a free listing photo shoot? Reply for my rates."
+  },
+  {
+    "id": "spam-056",
+    "label": "spam",
+    "surface": "review",
+    "traits": ["engagement-farming", "repetition"],
+    "text": "It is fine. Follow @sdfoodhunter @sdfoodhunter @sdfoodhunter for 100 more reviews just like this one."
+  }
+]

@@ -15,9 +15,24 @@
 //            config.mehko.timezone (America/Los_Angeles) via Intl.DateTimeFormat — never UTC,
 //            never the caller's timezone: half past eleven PM PT and half past midnight PT
 //            the next day are different days even when they share a UTC day. Weeks are
-//            Monday-anchored in LA time.
+//            Monday-anchored in LA time — see the OPEN SPEC QUESTION below before changing
+//            or relying on that.
 //   NFR-11 — all SQL parameterized on the caller's transaction client (ADR-001: the check and
 //            the insert commit or roll back together).
+//
+// OPEN SPEC QUESTION — shape of the weekly window (finding TCB-W3-05; ADR-009 section
+//   "Weekly window shape — OPEN, not ratified"; build-plan open question 1).
+//   ADR-009 fixes the weekly cap NUMBER and the boundary TIMEZONE, but no document fixes the
+//   WINDOW the cap is summed over, and the SRS states no weekly cap at all (its AB 626 wording
+//   is daily-only). This module implements the Monday-anchored LA calendar week; a rolling
+//   seven-day window is the stricter alternative and is still on the table. The two differ
+//   materially: the Monday anchor is evadable across a week boundary, because filling
+//   Saturday+Sunday of one week and Monday+Tuesday of the next puts twice the weekly cap into
+//   four consecutive days and hence into a single seven-day span. The team must ratify one
+//   reading at CDR. DO NOT settle it here: change ADR-009 first, then this code and the
+//   requirements-inventory FR-11 wording follow the ADR. Until then the FR-11 weekly clause in
+//   the inventory is marked provisional, and a TC-11 pass is NOT evidence of AB 626 weekly
+//   compliance.
 //
 // Public interface (build-plan wave-3A contract):
 //   assertWithinCaps(client, { hostId, scheduledStart, seatCapacity, excludeListingId? })
@@ -25,7 +40,8 @@
 //         409 ConflictError   MEHKO_DAILY_LISTING_LIMIT
 //         422 ValidationError MEHKO_DAILY_MEAL_LIMIT | MEHKO_WEEKLY_MEAL_LIMIT
 //   localDateFor(instant)     → 'YYYY-MM-DD' in the configured operating timezone
-//   weekRangeFor(instant)     → { weekStart, weekEnd } (Monday-anchored, LA time)
+//   weekRangeFor(instant)     → { weekStart, weekEnd } (Monday-anchored, LA time — window shape
+//                               provisional, see OPEN SPEC QUESTION above)
 'use strict';
 
 const config = require('../../config');
@@ -66,6 +82,11 @@ function formatCalendarUtc(date) {
   return date.toISOString().slice(0, 10);
 }
 
+// PROVISIONAL WINDOW SHAPE (TCB-W3-05) — the Monday anchor below is an implementation default,
+// not a ratified decision; see the OPEN SPEC QUESTION in this file's header. If the team ratifies
+// the rolling reading at CDR, this function becomes the inclusive range [localDate - 6, localDate]
+// and assertWithinCaps sums seat_capacity over it unchanged; if the team ratifies the Monday
+// anchor, ADR-009 gains the decision and this notice is removed.
 /**
  * Monday-anchored week containing an instant, evaluated on the LA calendar (ADR-009 —
  * "weeks start Monday, LA time", src/config/locale.js). The day-of-week of a calendar date

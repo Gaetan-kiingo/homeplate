@@ -78,6 +78,49 @@ skipped (build-plan §6).
 `.github/workflows/ci.yml`: install → infra (`docker compose up -d --wait`) → migrate → lint →
 build check → test with coverage (SPMP §5.1.3). No secrets are used; CI runs mock adapters only.
 
+## Deployment — data at rest (NFR-12, NFR-13; ST-05/ST-06)
+
+Field-level encryption and volume encryption cover different things, and Homeplate needs both.
+This section is the deployment note ST-06 requires; it is a **deployment-time control verified by
+inspection**, not something the Jest suite can assert.
+
+**What field-level crypto covers.** `src/db/fieldCrypto.js` encrypts the SRS §3.4 sensitive columns
+— `users.phone_enc` and `users.emergency_contact_{name,phone,email}_enc` (`db/migrations/0001`) —
+with AES-256-GCM under `FIELD_ENCRYPTION_KEY`. That is the whole of it. The key comes from the
+environment, never the repository: the placeholder in `.env.example` is published and therefore
+protects nothing, and config validation refuses it under `NODE_ENV=production` rather than
+pretending to encrypt §3.4 PII with a public key.
+
+**What it does not cover — and what must therefore be encrypted at the volume.** Names, email
+addresses (needed as a login lookup key), listing/review/message text, media objects, the
+PostgreSQL WAL and any query logs, and Redis session/cache persistence all sit on disk in the
+clear. **PostgreSQL, the object store and Redis must therefore run on an encrypted volume:**
+
+- **Local development:** FileVault (macOS) or LUKS (Linux) covering the filesystem that backs the
+  Docker named volumes `pgdata` and `miniodata` (`docker-compose.yml`) — encrypting a project
+  directory is not enough, because Docker keeps volume data under its own root.
+- **Any hosted deployment:** provider-managed volume/disk encryption enabled **at volume creation**
+  (it generally cannot be switched on in place afterwards), plus managed-database encryption at rest
+  where a managed PostgreSQL is used.
+
+**Backups inherit both requirements.** Every dump, snapshot and object-store replica carries the
+same §3.4 PII as the live volume, so backups must sit on encrypted storage **and** expire on the
+NFR-12 clock: **retention is capped at 30 days** (ST-05). A backup that outlives the 30-day erasure
+deadline silently reintroduces data the user asked to have erased, which defeats NFR-12 no matter
+how correct the erasure job is. Restoring a backup that predates an erasure run therefore requires
+re-running the lifecycle sweep before the restored system serves traffic. `FIELD_ENCRYPTION_KEY`
+is never stored inside a backup image — a backup that contains both the ciphertext and its key is
+plaintext.
+
+Encryption in transit is a separate control (TLS 1.2+, NFR-03, `src/middleware/security.js`);
+neither substitutes for the other.
+
+**Moderation provider data-use.** The counterpart ST-06 clause — whether user content may be sent
+to the moderation LLM's free tier at all — is recorded in
+[`docs/adr007-data-use-review.md`](docs/adr007-data-use-review.md). Its finding is
+binding on deployment: live moderation mode is for the ADR-008 **synthetic** evaluation set only,
+and real user content is never sent to the free-tier provider.
+
 ## Conventions
 
 - Parameterized SQL only (NFR-11); Redis holds sessions/cache only, never business state.

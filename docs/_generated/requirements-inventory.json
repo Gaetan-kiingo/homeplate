@@ -1,6 +1,6 @@
 {
   "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4; acceptance criteria additionally bound by ADR-001..011",
-  "generated": "2026-08-14",
+  "generated": "2026-08-14 (rev B — wave-3 verification pass)",
   "requirements": [
     {
       "id": "FR-01",
@@ -12,7 +12,26 @@
         "TC-01",
         "LT-01"
       ],
-      "acceptance": "GET /api/listings/search accepts any combination of {location+radiusKm, from/to datetime window, hostId, cuisine}. Against the seeded test DB: each filter alone and all four combined return exactly the expected listing IDs. Only listings with moderation_status='approved', status='active', and scheduled_start in the future are returned; a pending/rejected listing seeded in range is never returned. Address->coordinate resolution goes through the Maps adapter and the resolved coordinates + result page are written to Redis with a TTL; a second identical query performs zero adapter calls (assert on the adapter spy). With the Maps adapter forced to fail, a previously cached query still returns results plus a degraded-mode flag (NFR-09). p95 < 500 ms at 200 concurrent users in LT-01. ADR-010: search results are produced by the PUBLIC listing serializer only — coarsened coordinates (config.privacy.coarsenRadiusMeters) plus a neighbourhood/city label, never an exact street address or precise coordinates; the Redis result/geocode cache stores public precision only, so a cache hit cannot leak an exact location (asserted by reading the cached value directly)."
+      "acceptanceCorrection": {
+        "findingId": "TCC-03",
+        "date": "2026-08-14",
+        "status": "RESOLVED — criterion corrected, no code change. Option (b) of the finding was taken and is recorded here so the criterion and the implementation no longer disagree.",
+        "previousWording": "With the Maps adapter forced to fail, a previously cached query still returns results plus a degraded-mode flag (NFR-09).",
+        "decision": "The degraded-mode flag accompanies a stale-cache ADAPTER answer; a fresh result-page cache hit during a provider outage is a normal 200 without the flag. src/modules/search/service.js was NOT changed — its documented contract was already the correct one; the acceptance sentence was over-strict.",
+        "why": [
+          "Self-contradictory as written: the sentence immediately before it requires that \"a second identical query performs zero adapter calls (assert on the adapter spy)\" (the NFR-01 hot-path guarantee behind the 500 ms p95 budget). A request that makes zero adapter calls cannot observe that the provider is failing, so no implementation can satisfy both halves. Reproduced probe: warm the page cache, then force maps.searchArea to reject and repeat the identical query — status 200, 1 result, adapter call count 0. There is no failure signal anywhere in the system to flag.",
+          "The SRS does not require the flag. NFR-09 and SRS §2.1.6 (Operation, degraded mode) require the system to \"display an appropriate error message, use cache or previously stored data where available, and defer non-critical actions\" — nothing there labels a fresh cache hit as degraded. SRS §2.5 is likewise silent. Per SPMP §1.1.2 the SRS is the frozen baseline and this inventory is a derived artifact, so the derived sentence yields.",
+          "A page-cache hit is not degraded data: the page was built from PostgreSQL (the source of truth) with a healthy geocode and lives at most SEARCH_CACHE_TTL_SECONDS (default 60 s). Flagging it would tell users a fresh answer is untrustworthy and would make the flag useless as a signal.",
+          "The genuinely degraded answers are already flagged and covered: adapter stale copy -> degraded:true and never page-cached; nothing cached -> 503 SEARCH_DEGRADED with a user-facing message."
+        ],
+        "rejectedAlternative": "Option (a) — make the page-cache path itself report degraded — was rejected. Probing the adapter on every cache hit deletes the zero-adapter-calls guarantee in the same criterion and the p95 budget it protects, and burns free-tier quota (SRS §2.4). The only ADR-legal variant (a worker-side periodic health probe writing a Redis health marker that search reads) adds a Redis read to the hot path, spends free-tier quota on liveness polling, and still would not flag the reproduced probe, because in it the adapter is never called and never fails.",
+        "evidence": [
+          "tests/tc-core/tc01-search.test.js — \"with the adapter down, a previously page-cached query still returns results\" (asserts 200, same ids, spy not called) and \"a stale-cache adapter answer surfaces as degraded:true and the degraded page is never cached\".",
+          "tests/rt-lt-resilience/rt01-wave3-degradation.test.js — RT-01 wave-3 drill 1: healthy 200 with degraded undefined; provider down -> 200 with zero adapter calls; stale area cache -> degraded:true, not cached; nothing cached -> 503 SEARCH_DEGRADED.",
+          "src/modules/search/service.js header (NFR-09 paragraph) documents the same three cases."
+        ]
+      },
+      "acceptance": "GET /api/listings/search accepts any combination of {location+radiusKm, from/to datetime window, hostId, cuisine}. Against the seeded test DB: each filter alone and all four combined return exactly the expected listing IDs. Only listings with moderation_status='approved', status='active', and scheduled_start in the future are returned; a pending/rejected listing seeded in range is never returned. Address->coordinate resolution goes through the Maps adapter and the resolved coordinates + result page are written to Redis with a TTL; a second identical query performs zero adapter calls (assert on the adapter spy). With the Maps adapter forced to fail the search path still answers from cached or previously stored data (NFR-09), in three distinct cases that this criterion distinguishes: (i) a query whose RESULT PAGE is still cached is answered 200 from that page with zero adapter calls and NO degraded flag — it is an ordinary fresh cache hit (built from PostgreSQL under a healthy geocode, TTL SEARCH_CACHE_TTL_SECONDS, default 60 s) and the request never consults the provider, so provider health is neither known nor knowable on that path; (ii) a query that does reach the adapter and is answered from the adapter's own STALE geocode copy returns 200 with `degraded: true`, and that degraded page is never written to the result-page cache, so recovery is visible on the next request; (iii) a location query with nothing cached anywhere returns the typed 503 SEARCH_DEGRADED carrying a user-facing message (never an unhandled 500), while non-location queries are unaffected. The degraded-mode indicator therefore accompanies a STALE-CACHE ADAPTER answer, not a fresh page-cache hit. p95 < 500 ms at 200 concurrent users in LT-01. ADR-010: search results are produced by the PUBLIC listing serializer only — coarsened coordinates (config.privacy.coarsenRadiusMeters) plus a neighbourhood/city label, never an exact street address or precise coordinates; the Redis result/geocode cache stores public precision only, so a cache hit cannot leak an exact location (asserted by reading the cached value directly)."
     },
     {
       "id": "FR-02",
@@ -124,7 +143,20 @@
       "testIds": [
         "TC-11"
       ],
-      "acceptance": "POST /api/listings by a canPublishListing-eligible host creates a listing with moderation_status='pending'. A second listing by the same host whose scheduled date (in the configured locale timezone) equals an existing non-cancelled listing's date returns 409 MEHKO_DAILY_LISTING_LIMIT — enforced by a DB unique index on (host_id, local_date) so concurrent duplicate creations cannot both commit. seatCapacity greater than config.mehko.maxMealsPerDay (default 30 per AB 626) returns 422; the configured weekly cap (default 60) is enforced across the host's Monday-anchored America/Los_Angeles calendar week (ADR-009 'day/week boundaries in the operating timezone'; build-plan §3 'Monday-anchored LA week' — the SRS is silent on the weekly anchor, so the ADR/build-plan reading is binding; NOT a rolling 7-day window). PATCH updates and POST /api/listings/:id/cancel work only for the owning host (403 otherwise); a material content edit resets moderation_status to 'pending'. Cancelling a listing with active bookings cancels them and enqueues notifications (FR-13). ADR-009: the caps come from src/config (California v1.0: 1 listing/host/day, 30 meals/host/day, 60 meals/host/week) and are never inline in the service; day and week boundaries are evaluated in America/Los_Angeles, not UTC and not the caller's timezone (a submission at 23:30 PT and one at 00:30 PT the next day are different days; the same two instants are the same UTC day). Exactly one server-side enforcement point is consulted by create, update and cancel/re-create paths."
+      "specAmbiguity": {
+        "findingId": "TCB-W3-05",
+        "status": "OPEN — escalated to the team for ratification at CDR. Recorded in ADR-009 §'Weekly window shape — OPEN, not ratified' and build-plan open question 1. Not resolved by any agent.",
+        "question": "The FR-11 weekly cap (60 meals per host per week) is summed over WHICH window — the Monday-anchored America/Los_Angeles calendar week that src/modules/listings/mehko.js weekRangeFor() implements, or a rolling 7-day window?",
+        "srsPosition": "Silent. SRS §2.1.7, §3.4 and FR-11 state only the daily rules ('maximum meals per host per day', 'one listing per host per day'); the SRS states no weekly cap at all, so it cannot settle the anchor.",
+        "adrPosition": "ADR-009 fixes the weekly NUMBER (60) and the boundary TIMEZONE (America/Los_Angeles) but named no window shape; the 2026-08-14 amendment records the shape as open rather than deciding it.",
+        "behaviourOfShippedReading": "The Monday-anchored week is evadable across a week boundary. 30-seat listings on Sat 2031-03-08 and Sun 2031-03-09 (week Mon 03-03..Sun 03-09) and again on Mon 2031-03-10 and Tue 2031-03-11 (next week) all return 201, so sum(seat_capacity) over local_date 2031-03-08..2031-03-14 is 120 — twice config.mehko.maxMealsPerWeek within a single 7-day span, served on four consecutive days. Under a rolling-7-day reading the third listing would be refused. Reproduced by tests/tc-booking/tcb-w3-reverify.test.js 'TCB-01 (SPEC AMBIGUITY, reproduced)'.",
+        "provenance": "Until build commit 3136b91 this acceptance criterion read '…the configured weekly cap (default 60) is enforced across the host's rolling 7-day window'. It was rewritten inside that build commit to assert the Monday-anchored reading as binding (git diff af1a91a 3136b91 -- docs/_generated/requirements-inventory.json), i.e. the criterion was moved to fit the implementation. That is not a valid way to change a criterion, so the weekly clause below is now marked PROVISIONAL until an explicit decision record settles it.",
+        "resolutionPaths": [
+          "Ratify Monday-anchored: amend ADR-009 to state the window shape in its Decision table, keep the descriptive wording below and drop the 'provisional' marking, and carry the week-boundary evasion in ADR-009 Consequences as an accepted residual risk.",
+          "Ratify rolling 7-day: change mehko.weekRangeFor/assertWithinCaps to sum seat_capacity over [localDate-6, localDate], restore the rolling wording below, and flip tests/unit/listings.test.js, tests/tc-booking/tc11-listing-caps.test.js and tests/tc-booking/tcb-w3-reverify.test.js from pinning the Monday anchor to expecting 422 MEHKO_WEEKLY_MEAL_LIMIT on the boundary-crossing listing."
+        ]
+      },
+      "acceptance": "POST /api/listings by a canPublishListing-eligible host creates a listing with moderation_status='pending'. A second listing by the same host whose scheduled date (in the configured locale timezone) equals an existing non-cancelled listing's date returns 409 MEHKO_DAILY_LISTING_LIMIT — enforced by a DB unique index on (host_id, local_date) so concurrent duplicate creations cannot both commit. seatCapacity greater than config.mehko.maxMealsPerDay (default 30 per AB 626) returns 422. The configured weekly cap (default 60) is enforced by that same single server-side check, but ITS WINDOW SHAPE IS AN OPEN, UNRATIFIED SPEC QUESTION — see the specAmbiguity block above, ADR-009 §'Weekly window shape — OPEN, not ratified' and build-plan open question 1. The following weekly clause is therefore PROVISIONAL: it records the behaviour v1.0 ships, not a ratified criterion. As shipped, the check sums seat_capacity over the host's Monday-anchored America/Los_Angeles calendar week; a rolling 7-day window is the stricter alternative still on the table, and the Monday-anchored reading admits up to twice the weekly cap inside some 7-day spans. A TC-11 pass is consequently evidence that the implemented weekly rule is enforced consistently — NOT evidence of AB 626 weekly compliance, which cannot be claimed until the team ratifies an anchor at CDR and ADR-009 is amended. PATCH updates and POST /api/listings/:id/cancel work only for the owning host (403 otherwise); a material content edit resets moderation_status to 'pending'. Cancelling a listing with active bookings cancels them and enqueues notifications (FR-13). ADR-009: the caps come from src/config (California v1.0: 1 listing/host/day, 30 meals/host/day, 60 meals/host/week) and are never inline in the service; day and week boundaries are evaluated in America/Los_Angeles, not UTC and not the caller's timezone (a submission at 23:30 PT and one at 00:30 PT the next day are different days; the same two instants are the same UTC day). Exactly one server-side enforcement point is consulted by create, update and cancel/re-create paths."
     },
     {
       "id": "FR-12",
@@ -427,7 +459,55 @@
   ],
   "buildRun": {
     "date": "2026-08-14",
-    "scope": "Wave 3 — core marketplace (U3-LISTINGS, U3-SEARCH, U3-HOSTS-MEDIA, U3-BOOKINGS), built as two dependency layers 3A (write core) and 3B (read surface) on top of the completed waves 0-2.",
-    "note": "After this run FR-01, FR-02, FR-03, FR-04, FR-11, FR-12, FR-13 (end-to-end), FR-14, AB-02, AB-03, AB-07 and AB-08 have implementing code and are verifiable at the API level; FR-05/06/07/08 (pipeline), NFR-07, NFR-10 and NFR-12 remain waves 4-6 and must be reported not_implemented rather than as failures or skips. moderation.scan outbox rows enqueued by wave 3 dead-letter until U4-MODERATION registers the handler and requeues them (content stays pending - the FR-08-safe direction). NFR-10 remains unclaimable without the ADR-008 human label sign-off."
+    "commit": "3136b91",
+    "scope": "Waves 0-3 are BUILT and independently re-verified on a clean tree at commit 3136b91: bootstrap, foundation, platform services + external adapters, and the core marketplace (U3-LISTINGS, U3-BOOKINGS, U3-SEARCH, U3-HOSTS-MEDIA). Wave 4 (trust/safety/data-lifecycle), waves 5-6 (React web client) and wave 7 (measurement close-out) are planned, not built.",
+    "measured": {
+      "npm test": "45 suites / 943 tests passed, 0 failed, 94.3 s (single runner, advisory-lock serialised)",
+      "npm run lint": "eslint clean; prettier: all matched files use Prettier code style",
+      "npm run build": "83 files parse cleanly; createApp() boots against .env.example",
+      "stub scan": "grep TODO/FIXME/not implemented over src/, scripts/, db/ -> 0 hits"
+    },
+    "verified": [
+      "FR-01",
+      "FR-02",
+      "FR-03",
+      "FR-04",
+      "FR-09",
+      "FR-10",
+      "FR-11",
+      "FR-12",
+      "FR-13",
+      "FR-14",
+      "NFR-03",
+      "NFR-04",
+      "NFR-05",
+      "NFR-06",
+      "NFR-08",
+      "NFR-09",
+      "NFR-11",
+      "AB-02",
+      "AB-03",
+      "AB-05",
+      "AB-06",
+      "AB-07",
+      "AB-08"
+    ],
+    "partial": [
+      "NFR-01",
+      "NFR-02",
+      "NFR-13",
+      "AB-01",
+      "AB-04"
+    ],
+    "notImplemented": [
+      "FR-05",
+      "FR-06",
+      "FR-07",
+      "FR-08",
+      "NFR-07",
+      "NFR-10",
+      "NFR-12"
+    ],
+    "note": "Requirements without implementing code are reported not_implemented and asserted absent by 404-probe tests - never as passes or skips. NFR-10 stays unclaimable until the ADR-008 synthetic set exists AND carries a recorded human label sign-off. NFR-01/NFR-02 have a measured 200-VU/volume run on this host (p95 98.1 ms over 1.36 M requests, 0 errors) but the harness is a Node loopback VU loop, not k6, so the number is recorded as evidence and re-measured under k6 in wave 7. moderation.scan outbox rows enqueued by wave 3 dead-letter until U4-MODERATION registers the handler and requeues them; content stays pending, which is FR-08's required failure direction."
   }
 }

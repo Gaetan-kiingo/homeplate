@@ -1,0 +1,98 @@
+# AB-06 / NFR-11 / ST-04 — OWASP ZAP baseline scan against a running Homeplate instance.
+#
+# AB-06's acceptance text ends with "an OWASP ZAP baseline scan against the running app reports
+# no high-risk alerts". The in-suite ST-04 payload lane (tests/st-security/) is the guard that
+# runs on every push; ZAP is the external corroboration and is deliberately NOT wired into
+# .github/workflows/ci.yml — it needs a booted stack, pulls a 3.6 GB image and takes minutes,
+# which would make every push slower for no extra signal. It is opt-in instead:
+#
+#   * manually here (Actions -> "ZAP baseline (AB-06)" -> Run workflow), and
+#   * locally with `npm run scan:zap` against `npm run dev`.
+#
+# Both paths run the SAME npm scripts, so the procedure cannot drift between CI and a laptop.
+# Wave 7 (U7-PERF-SEC) closes AB-06 by committing the produced report and its alert table under
+# docs/results/ next to the IT-03 and LT-01/LT-02 results, with the run date and commit SHA.
+# Full procedure, prerequisites and the self-signed-certificate caveat: .github/SECURITY-SCANS.md
+#
+# No secrets are used: the instance boots from .env.example with mock adapters only
+# (ADR-007 mock LLM, ADR-011 mock notification transport), so nothing here calls a third party.
+name: ZAP baseline (AB-06)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Dev-database URL for the migrate/seed steps (same value as ci.yml).
+      DATABASE_URL: postgres://homeplate:homeplate@localhost:5432/homeplate
+      # The scanner runs in a container; the app runs on the runner host.
+      ZAP_TARGET_URL: https://host.docker.internal:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Start infrastructure (PostgreSQL, Redis, MinIO)
+        run: docker compose up -d --wait
+
+      - name: Install
+        run: npm ci
+
+      - name: Configure (dev defaults, mock adapters, no secrets)
+        run: cp .env.example .env
+
+      - name: Generate dev TLS certificates
+        # certs/ is git-ignored (NFR-03 material never committed); the app has no plain-HTTP
+        # listener, so the scan target is https:// and the certificate is self-signed.
+        run: ./scripts/gen-dev-certs.sh
+
+      - name: Migrate
+        run: npm run migrate
+
+      - name: Seed
+        run: npm run seed
+
+      - name: Start the app (API + outbox worker) and wait for /health
+        run: |
+          nohup npm run dev > zap-dev-server.log 2>&1 &
+          echo $! > zap-dev.pid
+          for i in $(seq 1 60); do
+            if curl -ksS --max-time 2 https://localhost:3000/health > /dev/null 2>&1; then
+              echo "app is listening on https://localhost:3000"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "app did not become ready within 120s"
+          cat zap-dev-server.log
+          exit 1
+
+      - name: OWASP ZAP baseline scan
+        # The scan itself must not decide the job: zap-baseline.py exits non-zero for WARN-level
+        # findings too. The next step is the AB-06 gate and fails only on HIGH-risk alerts.
+        continue-on-error: true
+        run: npm run scan:zap:run
+
+      - name: AB-06 gate — no high-risk alerts
+        run: npm run scan:zap:report
+
+      - name: Stop the app
+        if: always()
+        run: |
+          if [ -f zap-dev.pid ]; then kill "$(cat zap-dev.pid)" 2>/dev/null || true; fi
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline
+          path: |
+            docs/results/zap-baseline.*
+            zap-dev-server.log
+          if-no-files-found: warn
