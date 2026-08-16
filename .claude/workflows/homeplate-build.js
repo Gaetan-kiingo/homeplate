@@ -690,6 +690,10 @@ ${lane.brief}
 
 HOW TO WORK
 - Read ${GEN}/requirements-inventory.json for the authoritative acceptance criteria, and the SRS text for wording.
+- TEST ECONOMICALLY. The full suite is ~60 files / ~1180 tests and takes ~95 s, and the other lanes run
+  concurrently against the same services. Run scoped tests (\`npx jest tests/<lane>/<file>.test.js\`) while you
+  work, and the full suite at most ONCE. Isolate with TEST_DATABASE_URL, TEST_REDIS_URL *and*
+  OBJECT_STORAGE_BUCKET together — isolating only the database lets your FLUSHDB wipe a sibling lane's sessions.
 - EXECUTE. A check may only be marked "pass" on the strength of a command you ran and output you observed. Reading
   the code and concluding it looks right is not evidence — if you could not run it, the status is "untestable" and
   you say why. Never report a measurement you did not take.
@@ -744,7 +748,11 @@ while (round < MAX_REPAIR) {
 
   phase('Repair')
   const groups = groupFindings(actionable)
-  const batches = batchByFileOwnership(groups.map((g) => ({ ...g, files: g.files })), 4)
+  // 8, not 4: batches run sequentially and each waits for its slowest fixer, so a small batch
+  // size dominated wall-clock on the 2026-08-14 run (29 fixers = 8 serial batches = ~5 h).
+  // File-disjointness inside a batch is still enforced, and the runtime concurrency cap
+  // (min(16, cores-2)) remains the real ceiling.
+  const batches = batchByFileOwnership(groups.map((g) => ({ ...g, files: g.files })), 8)
   log(`Repairing ${actionable.length} finding(s) across ${groups.length} owner group(s) in ${batches.length} batch(es)`)
 
   const fixes = []
@@ -770,6 +778,10 @@ RULES
   wrong, say so in "rejected" with evidence instead of quietly changing it.
 - A verifier can be mistaken. If a finding is wrong, put it in "rejected" with the evidence that disproves it —
   do not implement a change you believe is incorrect.
+- TEST ECONOMICALLY. The full suite is ~60 files / ~1180 tests and takes ~95 s, and every other fixer is
+  competing for the same database. While iterating, run only the affected file(s):
+  \`npx jest tests/<lane>/<file>.test.js\`. Run the FULL suite at most ONCE, at the end, to confirm you
+  broke nothing elsewhere. Do not run it after every edit.
 - After fixing, RUN the relevant tests (\`${plan.commands?.test || 'the project test command'}\`) and the linter,
   and confirm the specific failure scenario no longer reproduces. Report the commands and their output.
 - Preserve every ADR invariant while fixing. A fix that satisfies a test by calling an adapter inline from a request

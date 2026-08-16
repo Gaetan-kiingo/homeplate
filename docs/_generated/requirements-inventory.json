@@ -1,6 +1,6 @@
 {
   "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4; acceptance criteria additionally bound by ADR-001..011",
-  "generated": "2026-08-14 (rev B — wave-3 verification pass)",
+  "generated": "2026-08-15 (rev C — wave-3 close-out / re-verification round)",
   "requirements": [
     {
       "id": "FR-01",
@@ -31,7 +31,9 @@
           "src/modules/search/service.js header (NFR-09 paragraph) documents the same three cases."
         ]
       },
-      "acceptance": "GET /api/listings/search accepts any combination of {location+radiusKm, from/to datetime window, hostId, cuisine}. Against the seeded test DB: each filter alone and all four combined return exactly the expected listing IDs. Only listings with moderation_status='approved', status='active', and scheduled_start in the future are returned; a pending/rejected listing seeded in range is never returned. Address->coordinate resolution goes through the Maps adapter and the resolved coordinates + result page are written to Redis with a TTL; a second identical query performs zero adapter calls (assert on the adapter spy). With the Maps adapter forced to fail the search path still answers from cached or previously stored data (NFR-09), in three distinct cases that this criterion distinguishes: (i) a query whose RESULT PAGE is still cached is answered 200 from that page with zero adapter calls and NO degraded flag — it is an ordinary fresh cache hit (built from PostgreSQL under a healthy geocode, TTL SEARCH_CACHE_TTL_SECONDS, default 60 s) and the request never consults the provider, so provider health is neither known nor knowable on that path; (ii) a query that does reach the adapter and is answered from the adapter's own STALE geocode copy returns 200 with `degraded: true`, and that degraded page is never written to the result-page cache, so recovery is visible on the next request; (iii) a location query with nothing cached anywhere returns the typed 503 SEARCH_DEGRADED carrying a user-facing message (never an unhandled 500), while non-location queries are unaffected. The degraded-mode indicator therefore accompanies a STALE-CACHE ADAPTER answer, not a fresh page-cache hit. p95 < 500 ms at 200 concurrent users in LT-01. ADR-010: search results are produced by the PUBLIC listing serializer only — coarsened coordinates (config.privacy.coarsenRadiusMeters) plus a neighbourhood/city label, never an exact street address or precise coordinates; the Redis result/geocode cache stores public precision only, so a cache hit cannot leak an exact location (asserted by reading the cached value directly)."
+      "acceptance": "GET /api/listings/search accepts any combination of {location+radiusKm, from/to datetime window, hostId, cuisine}. Against the seeded test DB: each filter alone and all four combined return exactly the expected listing IDs. Only listings with moderation_status='approved', status='active', and scheduled_start in the future are returned; a pending/rejected listing seeded in range is never returned. Address->coordinate resolution goes through the Maps adapter and the resolved coordinates + result page are written to Redis with a TTL; a second identical query performs zero adapter calls (assert on the adapter spy). With the Maps adapter forced to fail the search path still answers from cached or previously stored data (NFR-09), in three distinct cases that this criterion distinguishes: (i) a query whose RESULT PAGE is still cached is answered 200 from that page with zero adapter calls and NO degraded flag — it is an ordinary fresh cache hit (built from PostgreSQL under a healthy geocode, TTL SEARCH_CACHE_TTL_SECONDS, default 60 s) and the request never consults the provider, so provider health is neither known nor knowable on that path; (ii) a query that does reach the adapter and is answered from the adapter's own STALE geocode copy returns 200 with `degraded: true`, and that degraded page is never written to the result-page cache, so recovery is visible on the next request; (iii) a location query with nothing cached anywhere returns the typed 503 SEARCH_DEGRADED carrying a user-facing message (never an unhandled 500), while non-location queries are unaffected. The degraded-mode indicator therefore accompanies a STALE-CACHE ADAPTER answer, not a fresh page-cache hit. p95 < 500 ms at 200 concurrent users in LT-01. ADR-010: search results are produced by the PUBLIC listing serializer only — coarsened coordinates (config.privacy.coarsenRadiusMeters) plus a neighbourhood/city label, never an exact street address or precise coordinates; the Redis result/geocode cache stores public precision only, so a cache hit cannot leak an exact location (asserted by reading the cached value directly).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-01 + tc01-04-acceptance-gaps; TCC-03 criterion corrected, TCC-02/TCC-05 fixes unverified."
     },
     {
       "id": "FR-02",
@@ -42,7 +44,9 @@
       "testIds": [
         "TC-02"
       ],
-      "acceptance": "GET /api/listings/:id for an approved listing returns, in one response: name, dish description, ingredients[], allergyWarnings[], date/duration, seatCapacity, seatsRemaining, image URLs derived from object-storage keys, host summary (display name, bio, average rating, review count) and the approved reviews for that host. Assert every field is present and equals the seeded value. A listing whose moderation_status is 'pending' or 'rejected' returns 404 to any user other than its owning host (the owner sees it with its moderation status). No host email, phone, or exact street address appears in the payload (NFR-13). ADR-010: the exact street address and precise coordinates are returned only when the caller holds a booking on that listing in status pending or in progress (or is a moderator handling an FR-07 alert on it, which writes an access-log record); every other caller — including a guest whose booking is cancelled or completed — receives the public serializer output."
+      "acceptance": "GET /api/listings/:id for an approved listing returns, in one response: name, dish description, ingredients[], allergyWarnings[], date/duration, seatCapacity, seatsRemaining, image URLs derived from object-storage keys, host summary (display name, bio, average rating, review count) and the approved reviews for that host. Assert every field is present and equals the seeded value. A listing whose moderation_status is 'pending' or 'rejected' returns 404 to any user other than its owning host (the owner sees it with its moderation status). No host email, phone, or exact street address appears in the payload (NFR-13). ADR-010: the exact street address and precise coordinates are returned only when the caller holds a booking on that listing in status pending or in progress (or is a moderator handling an FR-07 alert on it, which writes an access-log record); every other caller — including a guest whose booking is cancelled or completed — receives the public serializer output.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-02; TCC-01 (host summary fallback) and TCC-04 (review preview total/cursor) claimed/observed fixed on disk, both unverified."
     },
     {
       "id": "FR-03",
@@ -53,7 +57,9 @@
       "testIds": [
         "TC-03"
       ],
-      "acceptance": "GET /api/hosts/:id returns selfIntroduction, exampleDishes (the host's approved listings), reviews about the host with numeric ratings and an average, and kitchen/dining image URLs resolved from object-storage keys. Only approved reviews and approved media are returned. The response contains no email, phone, emergency contact, or password hash for any user (assert by key allowlist). Requesting a host profile without an authenticated session returns 401 (AB-08). ADR-010: the host page shows the approximate area (coarsened coordinates + area label) for the host's listings, never the exact street address."
+      "acceptance": "GET /api/hosts/:id returns selfIntroduction, exampleDishes (the host's approved listings), reviews about the host with numeric ratings and an average, and kitchen/dining image URLs resolved from object-storage keys. Only approved reviews and approved media are returned. The response contains no email, phone, emergency contact, or password hash for any user (assert by key allowlist). Requesting a host profile without an authenticated session returns 401 (AB-08). ADR-010: the host page shows the approximate area (coarsened coordinates + area label) for the host's listings, never the exact street address.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-03 + ADR-010 public-serializer assertions."
     },
     {
       "id": "FR-04",
@@ -64,7 +70,9 @@
       "testIds": [
         "TC-04"
       ],
-      "acceptance": "POST /api/bookings/:id/confirm-completion sets host_confirmed or guest_confirmed depending on caller identity. After exactly one confirmation the booking status is still 'in progress' and the response reports awaiting the other party. After both confirmations status='completed' and completed_at is set. Repeating a confirmation is idempotent (no state change, 200). A user who is neither the booking's guest nor the listing's host gets 403. Confirming a booking that is 'pending' (before scheduled start) or 'cancelled' returns 409."
+      "acceptance": "POST /api/bookings/:id/confirm-completion sets host_confirmed or guest_confirmed depending on caller identity. After exactly one confirmation the booking status is still 'in progress' and the response reports awaiting the other party. After both confirmations status='completed' and completed_at is set. Repeating a confirmation is idempotent (no state change, 200). A user who is neither the booking's guest nor the listing's host gets 403. Confirming a booking that is 'pending' (before scheduled start) or 'cancelled' returns 409.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-04 incl. concurrent dual confirmation."
     },
     {
       "id": "FR-05",
@@ -75,7 +83,9 @@
       "testIds": [
         "TC-05"
       ],
-      "acceptance": "POST /api/bookings/:id/reviews accepts {rating: integer 1..5, comment: string, imageKeys: string[]} from the guest (about the host) and from the host (about the guest). Rating outside 1..5 or non-integer returns 422. A review on a booking whose status is not 'completed' returns 409. A second review by the same author on the same booking returns 409 (at most two reviews per booking, one per direction). A created review is stored with moderation_status='pending' and is absent from GET /api/hosts/:id and GET /api/listings/:id until approved (FR-08)."
+      "acceptance": "POST /api/bookings/:id/reviews accepts {rating: integer 1..5, comment: string, imageKeys: string[]} from the guest (about the host) and from the host (about the guest). Rating outside 1..5 or non-integer returns 422. A review on a booking whose status is not 'completed' returns 409. A second review by the same author on the same booking returns 409 (at most two reviews per booking, one per direction). A created review is stored with moderation_status='pending' and is absent from GET /api/hosts/:id and GET /api/listings/:id until approved (FR-08).",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "src/modules/reviews absent; endpoints answer a structured 404. Wave 4 (U4-REVIEWS)."
     },
     {
       "id": "FR-06",
@@ -86,7 +96,9 @@
       "testIds": [
         "TC-06"
       ],
-      "acceptance": "POST /api/bookings/:id/messages and GET /api/bookings/:id/messages succeed only for the booking's guest and the listing's host, and only while the booking status is pending, in progress, or completed; a cancelled booking returns 409 and a third party returns 403. A posted message is persisted and returned immediately (delivered), and in the SAME PostgreSQL transaction an outbox row of type 'moderation.scan' referencing the message ID is written — assert both rows exist and that no LLM adapter call occurred on the request path. Messages are never withheld pending moderation (ADR-002)."
+      "acceptance": "POST /api/bookings/:id/messages and GET /api/bookings/:id/messages succeed only for the booking's guest and the listing's host, and only while the booking status is pending, in progress, or completed; a cancelled booking returns 409 and a third party returns 403. A posted message is persisted and returned immediately (delivered), and in the SAME PostgreSQL transaction an outbox row of type 'moderation.scan' referencing the message ID is written — assert both rows exist and that no LLM adapter call occurred on the request path. Messages are never withheld pending moderation (ADR-002).",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "src/modules/messaging absent. Wave 4 (U4-MESSAGING)."
     },
     {
       "id": "FR-07",
@@ -98,7 +110,9 @@
         "TC-07",
         "IT-04"
       ],
-      "acceptance": "POST /api/bookings/:id/safety-alerts persists a SAFETY_ALERT row (booking_id, raising_user_id, delivery_status='pending') and an outbox row in one transaction, and returns 201 within the request without calling SendGrid inline. The worker then (a) creates a moderator-queue entry, (b) sends the emergency-contact email through the SendGrid adapter, (c) sets delivery_status='delivered'. With an injected SendGrid failure, delivery_status becomes 'retrying', attempts increment with exponential backoff, the alert remains listed in GET /api/moderation/alerts, and after max attempts it is dead-lettered but still visible. If the raising user has no emergency contact, the moderator notification still succeeds and delivery_status='no_channel'. ADR-011: delivery is email via the SendGrid adapter; in dev and the whole automated suite both notification adapters resolve to the mock transport, and each attempt writes a NOTIFICATION_ATTEMPT row (recipient, channel, status) that the test asserts on instead of asserting on SendGrid's behaviour."
+      "acceptance": "POST /api/bookings/:id/safety-alerts persists a SAFETY_ALERT row (booking_id, raising_user_id, delivery_status='pending') and an outbox row in one transaction, and returns 201 within the request without calling SendGrid inline. The worker then (a) creates a moderator-queue entry, (b) sends the emergency-contact email through the SendGrid adapter, (c) sets delivery_status='delivered'. With an injected SendGrid failure, delivery_status becomes 'retrying', attempts increment with exponential backoff, the alert remains listed in GET /api/moderation/alerts, and after max attempts it is dead-lettered but still visible. If the raising user has no emergency contact, the moderator notification still succeeds and delivery_status='no_channel'. ADR-011: delivery is email via the SendGrid adapter; in dev and the whole automated suite both notification adapters resolve to the mock transport, and each attempt writes a NOTIFICATION_ATTEMPT row (recipient, channel, status) that the test asserts on instead of asserting on SendGrid's behaviour. WAVE-3 CLOSE-OUT NOTE (2026-08-15): src/modules/safety/{repo,service,routes}.js, src/schemas/safety.js and src/outbox/handlers/safetyAlert.js landed in repair round 1 (f7f954c) together with tests/unit/safety.test.js, tests/tc-core/tc07-safety.test.js and tests/it-adapters/it04-safety-delivery.test.js. None of it has been independently re-verified. The moderator-queue clause above (GET /api/moderation/alerts) is owned by U4-MODERATION and does not exist yet, so FR-07 is PARTIAL until that route ships and IT-04 asserts the alert is visible in it; the persist -> worker -> emergency-contact-email -> retry/dead-letter half is claimable once re-verified on its own.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Safety module + IT-04 landed in repair round 1, unverified; moderator-queue route is wave 4."
     },
     {
       "id": "FR-08",
@@ -110,7 +124,9 @@
         "TC-08",
         "IT-03"
       ],
-      "acceptance": "Every listing, review, and message submission runs the deterministic pre-filter (blocklist, regex, per-user submission rate limit) before any LLM call; a blocklist hit yields moderation_status='rejected' with decided_by='pre-filter' and zero LLM adapter calls. Content passing the pre-filter is scanned by the worker via the LLM adapter, which returns {category, confidence}; confidence below MODERATION_CONFIDENCE_THRESHOLD or any flagged category creates a moderator-queue item and leaves public content pending. Approved public content becomes visible only after moderation_status='approved'. Messages are readable immediately regardless of scan state; a message later flagged is hidden and queued. With the LLM adapter forced to fail for all attempts, listings and reviews stay 'pending' indefinitely (assert they never appear in search/detail) while the job is retried. Every outcome writes a MODERATION_DECISION row with category, outcome, decided_by in {pre-filter, llm, human}. ADR-007: the LLM stage is reached only through the provider-agnostic adapter configured by LLM_MODERATION_BASE_URL / LLM_MODERATION_API_KEY / MODERATION_MODEL (Google Gemini free tier is the configured v1.0 provider); no provider name, model id or key is hardcoded, CI and the automated suite run the deterministic mock adapter, and only the IT-03 measurement run may call the live API."
+      "acceptance": "Every listing, review, and message submission runs the deterministic pre-filter (blocklist, regex, per-user submission rate limit) before any LLM call; a blocklist hit yields moderation_status='rejected' with decided_by='pre-filter' and zero LLM adapter calls. Content passing the pre-filter is scanned by the worker via the LLM adapter, which returns {category, confidence}; confidence below MODERATION_CONFIDENCE_THRESHOLD or any flagged category creates a moderator-queue item and leaves public content pending. Approved public content becomes visible only after moderation_status='approved'. Messages are readable immediately regardless of scan state; a message later flagged is hidden and queued. With the LLM adapter forced to fail for all attempts, listings and reviews stay 'pending' indefinitely (assert they never appear in search/detail) while the job is retried. Every outcome writes a MODERATION_DECISION row with category, outcome, decided_by in {pre-filter, llm, human}. ADR-007: the LLM stage is reached only through the provider-agnostic adapter configured by LLM_MODERATION_BASE_URL / LLM_MODERATION_API_KEY / MODERATION_MODEL (Google Gemini free tier is the configured v1.0 provider); no provider name, model id or key is hardcoded, CI and the automated suite run the deterministic mock adapter, and only the IT-03 measurement run may call the live API.",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "No pre-filter, no LLM stage, no moderation.scan handler, no decision table writer. Wave 4 (U4-MODERATION). Wave-3 enqueues moderation.scan jobs that dead-letter, so public content stays pending — FR-08's required failure direction."
     },
     {
       "id": "FR-09",
@@ -121,7 +137,9 @@
       "testIds": [
         "TC-09"
       ],
-      "acceptance": "State-driven, both states asserted. Restricted: a user missing email verification, full name, or phone gets 403 with reason codes from POST /api/bookings; a user missing a completed host profile or host-agreement acceptance gets 403 from POST /api/listings. Permitted: once the missing attributes are set, the identical request succeeds. Both checks are served by the single exported policy module (canReserveSeat / canPublishListing); a repository-wide grep proves no other module re-implements either predicate (ADR-006)."
+      "acceptance": "State-driven, both states asserted. Restricted: a user missing email verification, full name, or phone gets 403 with reason codes from POST /api/bookings; a user missing a completed host profile or host-agreement acceptance gets 403 from POST /api/listings. Permitted: once the missing attributes are set, the identical request succeeds. Both checks are served by the single exported policy module (canReserveSeat / canPublishListing); a repository-wide grep proves no other module re-implements either predicate (ADR-006).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-09 both states + single-policy grep."
     },
     {
       "id": "FR-10",
@@ -132,7 +150,15 @@
       "testIds": [
         "TC-10"
       ],
-      "acceptance": "POST /api/auth/register with valid data creates a USER row with email_verified=false, an Argon2id/bcrypt password hash (never the plaintext), and, in the same transaction, an outbox row of type 'email.verification' carrying only IDs. A duplicate email returns 409 (unique constraint, AB-07). GET/POST /api/auth/verify-email with the correct single-use token sets email_verified=true and consumes the token; a wrong, already-used, or expired (> EMAIL_TOKEN_TTL_HOURS) token returns 400 and leaves email_verified=false. No email adapter call occurs on the request path."
+      "acceptance": "POST /api/auth/register with valid data creates a USER row with email_verified=false, an Argon2id/bcrypt password hash (never the plaintext), and, in the same transaction, an outbox row of type 'email.verification' carrying only IDs. A duplicate email returns 409 (unique constraint, AB-07). GET/POST /api/auth/verify-email with the correct single-use token sets email_verified=true and consumes the token; a wrong, already-used, or expired (> EMAIL_TOKEN_TTL_HOURS) token returns 400 and leaves email_verified=false. No email adapter call occurs on the request path. FR-10 DELIVERY PROOF — added 2026-08-15 after finding TCB-W3-01, the wave-3 blocker. The token used to verify MUST be the value actually DELIVERED to the recipient, read out of the ADR-011 mock transport's recorded delivery (render context / message body), NEVER out of the in-process return value of registration or of the token-minting function. Executable form: POST /api/auth/register -> run the outbox worker until the 'email.verification' job is drained -> read the recorded delivery for that user -> extract the verification URL/token from it -> submit exactly that extracted value to the verify endpoint -> re-read the USER row and assert email_verified=true AND that the user now passes canReserveSeat (NFR-06). Assert additionally that no persisted artefact (outbox payload, notification_attempt row, users row, log line) contains the usable raw token (ADR-003 IDs-only), and that a retry/redelivery of the same job neither mints a credential that is not mailed nor invalidates a link already mailed. A test that reads the token from a function return value does NOT verify FR-10: waves 1-2 reported FR-10 as PASS on exactly that mistake while the delivered email carried only a SHA-256 digest, so no real user could ever verify an email and therefore no real user could ever become eligible to book or publish.",
+      "acceptanceCorrection": {
+        "findingId": "TCB-W3-01",
+        "date": "2026-08-15",
+        "status": "OPEN UNTIL RE-VERIFIED — the fix landed in repair round 1 (f7f954c, worker-side resolveRenderContext in src/outbox/handlers/emailVerification.js). It is a fixer claim plus a green suite; the wave-3 close-out run must reproduce the ORIGINAL failure scenario and show it no longer reproduces.",
+        "why": "The criterion as written before this revision could be satisfied by a test that never looked at the delivered email, which is how a production-blocking defect passed two waves of verification. The criterion now names the observation point, not just the outcome."
+      },
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "BLOCKER TCB-W3-01 fixed in repair round 1. Highest-priority re-verification: prove verification end to end from the DELIVERED email."
     },
     {
       "id": "FR-11",
@@ -156,7 +182,9 @@
           "Ratify rolling 7-day: change mehko.weekRangeFor/assertWithinCaps to sum seat_capacity over [localDate-6, localDate], restore the rolling wording below, and flip tests/unit/listings.test.js, tests/tc-booking/tc11-listing-caps.test.js and tests/tc-booking/tcb-w3-reverify.test.js from pinning the Monday anchor to expecting 422 MEHKO_WEEKLY_MEAL_LIMIT on the boundary-crossing listing."
         ]
       },
-      "acceptance": "POST /api/listings by a canPublishListing-eligible host creates a listing with moderation_status='pending'. A second listing by the same host whose scheduled date (in the configured locale timezone) equals an existing non-cancelled listing's date returns 409 MEHKO_DAILY_LISTING_LIMIT — enforced by a DB unique index on (host_id, local_date) so concurrent duplicate creations cannot both commit. seatCapacity greater than config.mehko.maxMealsPerDay (default 30 per AB 626) returns 422. The configured weekly cap (default 60) is enforced by that same single server-side check, but ITS WINDOW SHAPE IS AN OPEN, UNRATIFIED SPEC QUESTION — see the specAmbiguity block above, ADR-009 §'Weekly window shape — OPEN, not ratified' and build-plan open question 1. The following weekly clause is therefore PROVISIONAL: it records the behaviour v1.0 ships, not a ratified criterion. As shipped, the check sums seat_capacity over the host's Monday-anchored America/Los_Angeles calendar week; a rolling 7-day window is the stricter alternative still on the table, and the Monday-anchored reading admits up to twice the weekly cap inside some 7-day spans. A TC-11 pass is consequently evidence that the implemented weekly rule is enforced consistently — NOT evidence of AB 626 weekly compliance, which cannot be claimed until the team ratifies an anchor at CDR and ADR-009 is amended. PATCH updates and POST /api/listings/:id/cancel work only for the owning host (403 otherwise); a material content edit resets moderation_status to 'pending'. Cancelling a listing with active bookings cancels them and enqueues notifications (FR-13). ADR-009: the caps come from src/config (California v1.0: 1 listing/host/day, 30 meals/host/day, 60 meals/host/week) and are never inline in the service; day and week boundaries are evaluated in America/Los_Angeles, not UTC and not the caller's timezone (a submission at 23:30 PT and one at 00:30 PT the next day are different days; the same two instants are the same UTC day). Exactly one server-side enforcement point is consulted by create, update and cancel/re-create paths."
+      "acceptance": "POST /api/listings by a canPublishListing-eligible host creates a listing with moderation_status='pending'. A second listing by the same host whose scheduled date (in the configured locale timezone) equals an existing non-cancelled listing's date returns 409 MEHKO_DAILY_LISTING_LIMIT — enforced by a DB unique index on (host_id, local_date) so concurrent duplicate creations cannot both commit. seatCapacity greater than config.mehko.maxMealsPerDay (default 30 per AB 626) returns 422. The configured weekly cap (default 60) is enforced by that same single server-side check, but ITS WINDOW SHAPE IS AN OPEN, UNRATIFIED SPEC QUESTION — see the specAmbiguity block above, ADR-009 §'Weekly window shape — OPEN, not ratified' and build-plan open question 1. The following weekly clause is therefore PROVISIONAL: it records the behaviour v1.0 ships, not a ratified criterion. As shipped, the check sums seat_capacity over the host's Monday-anchored America/Los_Angeles calendar week; a rolling 7-day window is the stricter alternative still on the table, and the Monday-anchored reading admits up to twice the weekly cap inside some 7-day spans. A TC-11 pass is consequently evidence that the implemented weekly rule is enforced consistently — NOT evidence of AB 626 weekly compliance, which cannot be claimed until the team ratifies an anchor at CDR and ADR-009 is amended. PATCH updates and POST /api/listings/:id/cancel work only for the owning host (403 otherwise); a material content edit resets moderation_status to 'pending'. Cancelling a listing with active bookings cancels them and enqueues notifications (FR-13). ADR-009: the caps come from src/config (California v1.0: 1 listing/host/day, 30 meals/host/day, 60 meals/host/week) and are never inline in the service; day and week boundaries are evaluated in America/Los_Angeles, not UTC and not the caller's timezone (a submission at 23:30 PT and one at 00:30 PT the next day are different days; the same two instants are the same UTC day). Exactly one server-side enforcement point is consulted by create, update and cancel/re-create paths.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Daily cap, single enforcement point and LA-timezone boundaries met (TC-11). The WEEKLY window shape is an unratified spec ambiguity (TCB-W3-05 / ADR-009 open sub-decision) — no AB 626 weekly-compliance claim may rest on a TC-11 pass."
     },
     {
       "id": "FR-12",
@@ -168,7 +196,9 @@
         "TC-12",
         "LT-01"
       ],
-      "acceptance": "POST /api/bookings inserts the BOOKING row and decrements listings.seats_remaining in ONE PostgreSQL transaction using a conditional UPDATE (`SET seats_remaining = seats_remaining - 1 WHERE id = $1 AND seats_remaining > 0`) or SELECT ... FOR UPDATE. With seats_remaining=1 and N=50 concurrent requests, exactly 1 booking is created, seats_remaining=0, and the other 49 receive 409 with capacity unchanged (LT-01 race test asserts sum(bookings)=capacity, never overbooked). A guest already holding config.booking.maxConcurrentPending (default 3) pending bookings receives 409 BOOKING_LIMIT (AB-02). An ineligible guest receives 403 (FR-09) and no row is written. A booking on one's own listing returns 409."
+      "acceptance": "POST /api/bookings inserts the BOOKING row and decrements listings.seats_remaining in ONE PostgreSQL transaction using a conditional UPDATE (`SET seats_remaining = seats_remaining - 1 WHERE id = $1 AND seats_remaining > 0`) or SELECT ... FOR UPDATE. With seats_remaining=1 and N=50 concurrent requests, exactly 1 booking is created, seats_remaining=0, and the other 49 receive 409 with capacity unchanged (LT-01 race test asserts sum(bookings)=capacity, never overbooked). A guest already holding config.booking.maxConcurrentPending (default 3) pending bookings receives 409 BOOKING_LIMIT (AB-02). An ineligible guest receives 403 (FR-09) and no row is written. A booking on one's own listing returns 409.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-12 + LT-01 race (50 concurrent on 1 seat)."
     },
     {
       "id": "FR-13",
@@ -180,7 +210,9 @@
         "TC-13",
         "RT-02"
       ],
-      "acceptance": "Every booking create/cancel/status transition writes exactly one outbox row per affected recipient in the SAME transaction as the booking row (assert both committed or neither, by forcing a post-insert error and observing zero rows of both). Outbox payloads contain IDs only — a test asserts no email address, phone number, or name appears in any payload JSON (ADR-003). With the SendGrid and FCM adapters forced to throw, POST /api/bookings still returns 201 in under 500 ms and the booking is committed. The worker records a NOTIFICATION_ATTEMPT per try with status in {sent, failed, retrying}, retries with exponential backoff up to config.outbox.maxAttempts, and dead-letters afterwards. RT-02: after a simulated worker crash mid-job the job is re-claimed and delivered exactly once per recipient (idempotency key asserted). ADR-011: the configured channel is email via SendGrid; the FCM adapter exists but is gated behind notifications.push.enabled which defaults to false (asserted from config), and dev/test resolve both adapters to the mock transport that records NOTIFICATION_ATTEMPT rows. Both adapters are worker-only: a test asserts no file under src/modules/**/routes.js or service.js imports src/adapters/*."
+      "acceptance": "Every booking create/cancel/status transition writes exactly one outbox row per affected recipient in the SAME transaction as the booking row (assert both committed or neither, by forcing a post-insert error and observing zero rows of both). Outbox payloads contain IDs only — a test asserts no email address, phone number, or name appears in any payload JSON (ADR-003). With the SendGrid and FCM adapters forced to throw, POST /api/bookings still returns 201 in under 500 ms and the booking is committed. The worker records a NOTIFICATION_ATTEMPT per try with status in {sent, failed, retrying}, retries with exponential backoff up to config.outbox.maxAttempts, and dead-letters afterwards. RT-02: after a simulated worker crash mid-job the job is re-claimed and delivered exactly once per recipient (idempotency key asserted). ADR-011: the configured channel is email via SendGrid; the FCM adapter exists but is gated behind notifications.push.enabled which defaults to false (asserted from config), and dev/test resolve both adapters to the mock transport that records NOTIFICATION_ATTEMPT rows. Both adapters are worker-only: a test asserts no file under src/modules/**/routes.js or service.js imports src/adapters/*.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-13 + RT-02; TCB-W3-03 (no notification on pending->in_progress) and TCB-W3-04 (missing SendGrid template ids) fixed in repair round 1, unverified."
     },
     {
       "id": "FR-14",
@@ -191,7 +223,9 @@
       "testIds": [
         "TC-14"
       ],
-      "acceptance": "POST /api/bookings/:id/cancel by the guest or the listing's host before scheduled_start sets status='cancelled', increments listings.seats_remaining by exactly 1, and writes the notification outbox rows — all in one transaction. seats_remaining never exceeds seat_capacity (asserted after repeated/concurrent cancel attempts; a second cancel is idempotent and does not double-restore). Cancelling at or after scheduled_start returns 409. A non-participant returns 403."
+      "acceptance": "POST /api/bookings/:id/cancel by the guest or the listing's host before scheduled_start sets status='cancelled', increments listings.seats_remaining by exactly 1, and writes the notification outbox rows — all in one transaction. seats_remaining never exceeds seat_capacity (asserted after repeated/concurrent cancel attempts; a second cancel is idempotent and does not double-restore). Cancelling at or after scheduled_start returns 409. A non-participant returns 403.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "TC-14 incl. idempotent double-cancel."
     },
     {
       "id": "NFR-01",
@@ -202,7 +236,9 @@
       "testIds": [
         "LT-01"
       ],
-      "acceptance": "k6 scenario at 200 concurrent virtual users for >= 5 minutes against production-like seed volumes exercising GET /api/listings/search, GET /api/listings/:id, GET /api/hosts/:id and GET /api/hosts/:id/reviews reports http_req_duration p(95) < 500 ms with error rate < 1%. The measured p95 number is recorded in the run report; a run that cannot reach 200 VUs on the host machine must report the achieved level and be marked untestable rather than passed."
+      "acceptance": "k6 scenario at 200 concurrent virtual users for >= 5 minutes against production-like seed volumes exercising GET /api/listings/search, GET /api/listings/:id, GET /api/hosts/:id and GET /api/hosts/:id/reviews reports http_req_duration p(95) < 500 ms with error rate < 1%. The measured p95 number is recorded in the run report; a run that cannot reach 200 VUs on the host machine must report the achieved level and be marked untestable rather than passed.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Measured p95 253.7 ms at 200 VUs over 791,709 requests, 0 errors, against NFR-02 volumes — but the harness is a Node loopback VU loop, not k6 (RTLT-02). Evidence, not a pass, until wave 7 re-runs under k6."
     },
     {
       "id": "NFR-02",
@@ -213,7 +249,9 @@
       "testIds": [
         "LT-02"
       ],
-      "acceptance": "The volume seed loads >= 10,000 users, >= 1,000 listings for a single day and >= 1,000 bookings for that day. With that dataset present, the LT-01 scenario is re-run and still reports p(95) < 500 ms. EXPLAIN ANALYZE on the search query shows index usage (no sequential scan on listings) and required indexes exist on (scheduled_start), (host_id, local_date), (moderation_status), and the geo/cuisine filter columns."
+      "acceptance": "The volume seed loads >= 10,000 users, >= 1,000 listings for a single day and >= 1,000 bookings for that day. With that dataset present, the LT-01 scenario is re-run and still reports p(95) < 500 ms. EXPLAIN ANALYZE on the search query shows index usage (no sequential scan on listings) and required indexes exist on (scheduled_start), (host_id, local_date), (moderation_status), and the geo/cuisine filter columns.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Volume dataset (10,000 users / 1,000 listings / 1,000 bookings / 1,001 reviews) loads and LT-01 still meets the budget; same k6 caveat as NFR-01."
     },
     {
       "id": "NFR-03",
@@ -224,7 +262,9 @@
       "testIds": [
         "ST-01"
       ],
-      "acceptance": "The HTTPS server is created with minVersion 'TLSv1.2' (configuration review asserts the literal option). A plain-HTTP request to the service is refused with 403/426 and an 'HTTPS required' body — never served content and never 200. HSTS (Strict-Transport-Security, max-age >= 15552000) is present on every response. A TLS scan of the running dev server negotiates TLS 1.2/1.3 only and fails for TLS 1.0/1.1. Test-mode transport relaxation is gated behind an explicit config flag that fails closed when NODE_ENV=production."
+      "acceptance": "The HTTPS server is created with minVersion 'TLSv1.2' (configuration review asserts the literal option). A plain-HTTP request to the service is refused with 403/426 and an 'HTTPS required' body — never served content and never 200. HSTS (Strict-Transport-Security, max-age >= 15552000) is present on every response. A TLS scan of the running dev server negotiates TLS 1.2/1.3 only and fails for TLS 1.0/1.1. Test-mode transport relaxation is gated behind an explicit config flag that fails closed when NODE_ENV=production.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "ST-01 against a real https.Server: cleartext refused, TLS 1.0/1.1 refused, 1.2/1.3 accepted, HSTS present."
     },
     {
       "id": "NFR-04",
@@ -235,7 +275,9 @@
       "testIds": [
         "ST-02"
       ],
-      "acceptance": "users.password_hash matches the Argon2id ($argon2id$) or bcrypt ($2b$) format with documented parameters (Argon2id memoryCost >= 19456 KiB, timeCost >= 2; or bcrypt cost >= 12). Registering then querying the DB shows the plaintext appears in no column. A grep over the whole repository proves no logger, error handler, or response serializer emits the password field (the request validation layer redacts it). Two registrations with the same password produce different hashes (per-user salt)."
+      "acceptance": "users.password_hash matches the Argon2id ($argon2id$) or bcrypt ($2b$) format with documented parameters (Argon2id memoryCost >= 19456 KiB, timeCost >= 2; or bcrypt cost >= 12). Registering then querying the DB shows the plaintext appears in no column. A grep over the whole repository proves no logger, error handler, or response serializer emits the password field (the request validation layer redacts it). Two registrations with the same password produce different hashes (per-user salt).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "ST-02: Argon2id parameters, no plaintext column, redaction proven by execution."
     },
     {
       "id": "NFR-05",
@@ -246,7 +288,9 @@
       "testIds": [
         "ST-03"
       ],
-      "acceptance": "Five failed POST /api/auth/login attempts for the same account within a 10-minute sliding window cause the 6th attempt to return 429 with Retry-After, even when the credentials are correct. The counter is stored in Redis keyed by account and by source IP with a 600-second TTL. After the lockout window elapses (clock advanced in test) a correct login succeeds. A successful login resets the counter. ST-03 scripts the full sequence and asserts the exact 5-in-10-minutes boundary (attempt 5 fails as invalid credentials, attempt 6 is locked out)."
+      "acceptance": "Five failed POST /api/auth/login attempts for the same account within a 10-minute sliding window cause the 6th attempt to return 429 with Retry-After, even when the credentials are correct. The counter is stored in Redis keyed by account and by source IP with a 600-second TTL. After the lockout window elapses (clock advanced in test) a correct login succeeds. A successful login resets the counter. ST-03 scripts the full sequence and asserts the exact 5-in-10-minutes boundary (attempt 5 fails as invalid credentials, attempt 6 is locked out).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "ST-03: 5-in-10-minutes boundary, per-account and per-source-IP counters."
     },
     {
       "id": "NFR-06",
@@ -258,7 +302,9 @@
         "IT-02",
         "TC-09"
       ],
-      "acceptance": "A single module exports evaluate(userId, action) plus canReserveSeat and canPublishListing and is the only place those rules exist. Truth-table test: canReserveSeat is true only when email_verified AND full_name AND phone_number are all present; canPublishListing additionally requires host_profile_complete AND host_agreement_accepted_at. Each false case returns machine-readable reason codes. Registration and profile update recompute and persist the eligibility flags on the USER row, and the flags equal the policy result after every mutation."
+      "acceptance": "A single module exports evaluate(userId, action) plus canReserveSeat and canPublishListing and is the only place those rules exist. Truth-table test: canReserveSeat is true only when email_verified AND full_name AND phone_number are all present; canPublishListing additionally requires host_profile_complete AND host_agreement_accepted_at. Each false case returns machine-readable reason codes. Registration and profile update recompute and persist the eligibility flags on the USER row, and the flags equal the policy result after every mutation.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "IT-02 truth table + persisted-flag equality after every mutation."
     },
     {
       "id": "NFR-07",
@@ -269,7 +315,9 @@
       "testIds": [
         "UT-01"
       ],
-      "acceptance": "An automated axe-core audit over the key React interfaces (search/browse, listing detail, host profile, booking flow, signup/login, messaging, moderator queue) reports zero violations of impact 'serious' or 'critical' against the wcag2a/wcag2aa rule sets. Keyboard-only traversal reaches every interactive control with a visible focus indicator; all images carry alt text; form controls have associated labels and errors are announced via aria-live; colour contrast >= 4.5:1 for body text. The 5-participant moderated usability study is a human activity recorded as such."
+      "acceptance": "An automated axe-core audit over the key React interfaces (search/browse, listing detail, host profile, booking flow, signup/login, messaging, moderator queue) reports zero violations of impact 'serious' or 'critical' against the wcag2a/wcag2aa rule sets. Keyboard-only traversal reaches every interactive control with a visible focus indicator; all images carry alt text; form controls have associated labels and errors are announced via aria-live; colour contrast >= 4.5:1 for body text. The 5-participant moderated usability study is a human activity recorded as such.",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "client/ does not exist; no .jsx/.tsx anywhere in the repo; npm run test:a11y fails on purpose so its presence is never read as coverage. Waves 5-6 + U7-A11Y-UX."
     },
     {
       "id": "NFR-08",
@@ -280,7 +328,9 @@
       "testIds": [
         "MT-01"
       ],
-      "acceptance": "Performing registration, booking creation, booking cancellation, and a moderation decision in a test environment produces one structured JSON audit record each, containing event name, correlation/request ID, actor user ID, subject entity ID, outcome, and timestamp. Every request carries a correlation ID that propagates into the outbox payload and into the worker's log lines for the resulting job (assert the same ID appears on both sides). Errors log message, stack, correlation ID and HTTP status. Logs contain user IDs only — a scan of captured log output finds no email address, phone number, name, or password (SRS §3.4 PII register)."
+      "acceptance": "Performing registration, booking creation, booking cancellation, and a moderation decision in a test environment produces one structured JSON audit record each, containing event name, correlation/request ID, actor user ID, subject entity ID, outcome, and timestamp. Every request carries a correlation ID that propagates into the outbox payload and into the worker's log lines for the resulting job (assert the same ID appears on both sides). Errors log message, stack, correlation ID and HTTP status. Logs contain user IDs only — a scan of captured log output finds no email address, phone number, name, or password (SRS §3.4 PII register).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "MT-01 verified for real, minus the moderation-decision action, which is not performable until FR-08 ships. MTUT-W3-01/02 and COV-05 fixes unverified."
     },
     {
       "id": "NFR-09",
@@ -291,7 +341,9 @@
       "testIds": [
         "RT-01"
       ],
-      "acceptance": "Each adapter (Maps, SendGrid, FCM, LLM, object storage) enforces a timeout (default 3000 ms), bounded retries with exponential backoff, and a documented fallback. RT-01 cuts off each service in turn: with Maps down, search returns cached results and a degraded-mode indicator plus a user-facing message; with SendGrid or FCM down, bookings still commit and notification jobs remain queued and are delivered after recovery; with the LLM down, public content stays 'pending' and messages still deliver; with object storage down, listing detail renders with a placeholder rather than a 500. No unhandled 5xx is returned in any drill, and every deferred job completes once the service is restored. The LLM adapter's degraded path is exercised against the mock (ADR-007), not the live provider; RT-01 asserts that a Google-side failure degrading both Maps (ADR-005) and moderation (ADR-007) at once still leaves bookings committable and public content pending."
+      "acceptance": "Each adapter (Maps, SendGrid, FCM, LLM, object storage) enforces a timeout (default 3000 ms), bounded retries with exponential backoff, and a documented fallback. RT-01 cuts off each service in turn: with Maps down, search returns cached results and a degraded-mode indicator plus a user-facing message; with SendGrid or FCM down, bookings still commit and notification jobs remain queued and are delivered after recovery; with the LLM down, public content stays 'pending' and messages still deliver; with object storage down, listing detail renders with a placeholder rather than a 500. No unhandled 5xx is returned in any drill, and every deferred job completes once the service is restored. The LLM adapter's degraded path is exercised against the mock (ADR-007), not the live provider; RT-01 asserts that a Google-side failure degrading both Maps (ADR-005) and moderation (ADR-007) at once still leaves bookings committable and public content pending.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "RT-01 drills per adapter; the LLM-outage drill asserts public content stays pending."
     },
     {
       "id": "NFR-10",
@@ -302,7 +354,9 @@
       "testIds": [
         "IT-03"
       ],
-      "acceptance": "A versioned labelled evaluation set of at least 200 items (offensive, spam, fraudulent and benign in balanced proportions, checked into tests/fixtures/moderation-eval/vN/) is scored end-to-end through the real pipeline (pre-filter then LLM). The harness prints and asserts falsePositiveRate < 0.05 and falseNegativeRate < 0.05 and fails if the set contains fewer than 200 items. Results (set version, model/prompt version, counts, both rates) are written to a versioned results file so the bound can be re-checked when the model or prompt changes. ADR-008: the evaluation set is synthetic and team-authored (never scraped), balanced across offensive/spam/fraudulent/benign, at least 200 items, versioned as a directory under tests/fixtures/moderation-eval/vN/. NO PASS MAY BE CLAIMED without a recorded human label sign-off (reviewer name, date, set version) in the results file alongside the model id and prompt version (ADR-007); a run against an unreviewed set reports provisional numbers and does not close NFR-10."
+      "acceptance": "A versioned labelled evaluation set of at least 200 items (offensive, spam, fraudulent and benign in balanced proportions, checked into tests/fixtures/moderation-eval/vN/) is scored end-to-end through the real pipeline (pre-filter then LLM). The harness prints and asserts falsePositiveRate < 0.05 and falseNegativeRate < 0.05 and fails if the set contains fewer than 200 items. Results (set version, model/prompt version, counts, both rates) are written to a versioned results file so the bound can be re-checked when the model or prompt changes. ADR-008: the evaluation set is synthetic and team-authored (never scraped), balanced across offensive/spam/fraudulent/benign, at least 200 items, versioned as a directory under tests/fixtures/moderation-eval/vN/. NO PASS MAY BE CLAIMED without a recorded human label sign-off (reviewer name, date, set version) in the results file alongside the model id and prompt version (ADR-007); a run against an unreviewed set reports provisional numbers and does not close NFR-10. STATE AT 2026-08-15: the ADR-008 set now EXISTS — tests/fixtures/moderation-eval/v1/ carries 224 synthetic items (56 offensive / 56 spam / 56 fraudulent / 56 benign) with a manifest declaring provenance, metric definitions and a set-integrity test. The rest of NFR-10 does not: there is no pre-filter, no LLM classification stage, no moderation.scan handler, no results file and no human label sign-off, so nothing can be scored and NO NUMBER MAY BE QUOTED. Scoring the set through the ADR-007 deterministic MOCK adapter is explicitly NOT a measurement (the mock is a fixture-pattern matcher that scores unseen abusive text as benign at 0.99 confidence) and must never be reported as an NFR-10 result.",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "Eval set exists (224 synthetic items); pipeline, run, results file and human sign-off do not. Unmeasurable, and no number may be quoted (IT-F1)."
     },
     {
       "id": "NFR-11",
@@ -313,7 +367,9 @@
       "testIds": [
         "ST-04"
       ],
-      "acceptance": "Every route declares a schema (body, query, params) enforced by one shared validation middleware; a test enumerates the router and fails if any route lacks a schema. Unknown properties are stripped and type/length/range violations return 422 with field-level errors and no stack trace. All SQL is parameterized — a repository grep proves no string-concatenated or template-literal-interpolated SQL exists. ST-04 fires SQLi payloads (e.g. `' OR 1=1 --`, `'; DROP TABLE users; --`) and XSS payloads (e.g. `<script>alert(1)</script>`, `<img src=x onerror=...>`) at every input boundary (search, listing text, chat, reviews, profile) and asserts: no 500, no data leakage, tables intact, and stored/returned text is escaped or sanitized so no executable markup survives."
+      "acceptance": "Every route declares a schema (body, query, params) enforced by one shared validation middleware; a test enumerates the router and fails if any route lacks a schema. Unknown properties are stripped and type/length/range violations return 422 with field-level errors and no stack trace. All SQL is parameterized — a repository grep proves no string-concatenated or template-literal-interpolated SQL exists. ST-04 fires SQLi payloads (e.g. `' OR 1=1 --`, `'; DROP TABLE users; --`) and XSS payloads (e.g. `<script>alert(1)</script>`, `<img src=x onerror=...>`) at every input boundary (search, listing text, chat, reviews, profile) and asserts: no 500, no data leakage, tables intact, and stored/returned text is escaped or sanitized so no executable markup survives.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "ST-04 payload suite at every wave-0..3 boundary + parameterized-SQL grep; the last raw SQL in a route file (W3-ADR-04/COV-07) is the open exception."
     },
     {
       "id": "NFR-12",
@@ -324,7 +380,9 @@
       "testIds": [
         "ST-05"
       ],
-      "acceptance": "DELETE /api/users/me marks the account deleted and enqueues an erasure job with a due date of now + config.privacy.erasureDays (30). Running the lifecycle job erases or irreversibly anonymizes name, email, phone, emergency contact and password hash on the USER row, deletes every media object owned by the user from object storage by key via the media adapter (assert delete-by-key called per key and that a subsequent fetch 404s), and rewrites reviews, bookings and safety alerts to anonymized author references while retaining them. ST-05 asserts a full-database scan finds none of the user's PII strings after the job, and that the backup-retention configuration/script expires backups older than 30 days. An inactivity sweep flags accounts with last_active_at older than 24 months, records the notice, and erases after the notice period."
+      "acceptance": "DELETE /api/users/me marks the account deleted and enqueues an erasure job with a due date of now + config.privacy.erasureDays (30). Running the lifecycle job erases or irreversibly anonymizes name, email, phone, emergency contact and password hash on the USER row, deletes every media object owned by the user from object storage by key via the media adapter (assert delete-by-key called per key and that a subsequent fetch 404s), and rewrites reviews, bookings and safety alerts to anonymized author references while retaining them. ST-05 asserts a full-database scan finds none of the user's PII strings after the job, and that the backup-retention configuration/script expires backups older than 30 days. An inactivity sweep flags accounts with last_active_at older than 24 months, records the notice, and erases after the notice period.",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "No deletion endpoint, no erasure/anonymisation job, no backup-expiry configuration (STS-W3-03). The media delete-by-key primitive works end to end against MinIO, which is the substrate only. Wave 4 (U4-PRIVACY)."
     },
     {
       "id": "NFR-13",
@@ -335,7 +393,9 @@
       "testIds": [
         "ST-06"
       ],
-      "acceptance": "A schema test asserts the USER/emergency-contact columns are exactly the SRS §3.4 set — no extra personal attribute is stored, and API responses are built from explicit field allowlists. Phone number and emergency-contact fields are stored encrypted at rest with AES-256-GCM using a key from the environment (the ciphertext in the column is not the plaintext; decryption round-trips), and the deployment note documents volume/disk encryption for the rest. Personal-data reads by a Moderator/admin role are permitted only for that role (403 otherwise) and each such read writes an access-log record with actor, subject and purpose. POST /api/users/me/export produces a machine-readable copy of every PII class in the §3.4 register for the requesting user within the 30-day SLA (job created immediately, due date asserted), and the export contains that user's data only. ADR-007 open action: before any real user content is sent to the moderation provider, the team records a finding on the provider's current free-tier data-use terms as part of ST-06 (the pipeline scans private messages, and the SRS §3.4 PII register lists the LLM API as an external recipient)."
+      "acceptance": "A schema test asserts the USER/emergency-contact columns are exactly the SRS §3.4 set — no extra personal attribute is stored, and API responses are built from explicit field allowlists. Phone number and emergency-contact fields are stored encrypted at rest with AES-256-GCM using a key from the environment (the ciphertext in the column is not the plaintext; decryption round-trips), and the deployment note documents volume/disk encryption for the rest. Personal-data reads by a Moderator/admin role are permitted only for that role (403 otherwise) and each such read writes an access-log record with actor, subject and purpose. POST /api/users/me/export produces a machine-readable copy of every PII class in the §3.4 register for the requesting user within the 30-day SLA (job created immediately, due date asserted), and the export contains that user's data only. ADR-007 open action: before any real user content is sent to the moderation provider, the team records a finding on the provider's current free-tier data-use terms as part of ST-06 (the pipeline scans private messages, and the SRS §3.4 PII register lists the LLM API as an external recipient).",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Data minimisation, field-level AES-256-GCM at rest and allowlist serialisation are proven; the CCPA export path does not exist (STS-W3-03) and two ST-06 documentation clauses are only partly closed. Wave 4 (U4-PRIVACY)."
     },
     {
       "id": "AB-01",
@@ -350,7 +410,9 @@
         "TC-08",
         "TC-07"
       ],
-      "acceptance": "A host account that has not completed the profile/host-agreement gate cannot publish (403, FR-09/NFR-06). Every created listing enters moderation_status='pending' and is invisible in search until approved (FR-08); a listing flagged by the pipeline is routed to the moderator queue and never published. Mutual reviews are attributable to completed bookings only (FR-05) and the safety-alert path is reachable from an active booking (FR-07). The test asserts an unapproved/unverified host's listing never appears in GET /api/listings/search."
+      "acceptance": "A host account that has not completed the profile/host-agreement gate cannot publish (403, FR-09/NFR-06). Every created listing enters moderation_status='pending' and is invisible in search until approved (FR-08); a listing flagged by the pipeline is routed to the moderator queue and never published. Mutual reviews are attributable to completed bookings only (FR-05) and the safety-alert path is reachable from an active booking (FR-07). The test asserts an unapproved/unverified host's listing never appears in GET /api/listings/search.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Eligibility gate and pending-until-approved hold; the moderation half (FR-08) and mutual reviews (FR-05) are wave 4."
     },
     {
       "id": "AB-02",
@@ -363,7 +425,9 @@
         "ST-04",
         "LT-01"
       ],
-      "acceptance": "A scripted guest attempting 20 sequential bookings is stopped at config.booking.maxConcurrentPending (default 3) with 409 BOOKING_LIMIT; the 4th onward create no rows and leave seats_remaining unchanged. Ineligible users are blocked before any capacity check (FR-09). Every create/cancel writes an audit record with actor and booking IDs so the pattern is reconstructable (NFR-08). Concurrent hoarding attempts never overbook (FR-12 race assertion)."
+      "acceptance": "A scripted guest attempting 20 sequential bookings is stopped at config.booking.maxConcurrentPending (default 3) with 409 BOOKING_LIMIT; the 4th onward create no rows and leave seats_remaining unchanged. Ineligible users are blocked before any capacity check (FR-09). Every create/cancel writes an audit record with actor and booking IDs so the pattern is reconstructable (NFR-08). Concurrent hoarding attempts never overbook (FR-12 race assertion).",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "Per-guest pending-booking cap + race assertions."
     },
     {
       "id": "AB-03",
@@ -377,7 +441,9 @@
         "ST-03",
         "TC-11"
       ],
-      "acceptance": "A script creating 10 listings for the same host and date yields exactly 1 persisted listing and 9 x 409 (DB unique index on (host_id, local_date)). Listing text runs the deterministic pre-filter; spam samples from the IT-03 labelled set are rejected or queued and never published. Malformed/oversized payloads are rejected by the validation layer with 422. Login rate limiting (NFR-05) blocks scripted credential cycling used to spin up posting accounts."
+      "acceptance": "A script creating 10 listings for the same host and date yields exactly 1 persisted listing and 9 x 409 (DB unique index on (host_id, local_date)). Listing text runs the deterministic pre-filter; spam samples from the IT-03 labelled set are rejected or queued and never published. Malformed/oversized payloads are rejected by the validation layer with 422. Login rate limiting (NFR-05) blocks scripted credential cycling used to spin up posting accounts.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "DB unique index on (host_id, local_date) proven; the moderation half is wave 4, and the weekly cap carries the FR-11 ambiguity."
     },
     {
       "id": "AB-04",
@@ -392,7 +458,9 @@
         "TC-05",
         "TC-07"
       ],
-      "acceptance": "Abusive review text never becomes publicly visible: it is either rejected by the pre-filter or held pending and routed to the moderator queue. Abusive message text is delivered (per FR-08 policy) but asynchronously scanned; a flagged message is hidden from subsequent GETs and appears in the moderator queue. A moderator can escalate to a safety alert, and every moderation decision writes a MODERATION_DECISION row with category, outcome and decided_by (NFR-08). Offensive items from the >=200-item labelled set are detected within the <5% false-negative bound (IT-03)."
+      "acceptance": "Abusive review text never becomes publicly visible: it is either rejected by the pre-filter or held pending and routed to the moderator queue. Abusive message text is delivered (per FR-08 policy) but asynchronously scanned; a flagged message is hidden from subsequent GETs and appears in the moderator queue. A moderator can escalate to a safety alert, and every moderation decision writes a MODERATION_DECISION row with category, outcome and decided_by (NFR-08). Offensive items from the >=200-item labelled set are detected within the <5% false-negative bound (IT-03).",
+      "statusAt_f7f954c": "not_implemented",
+      "statusNote": "Depends on FR-05, FR-06 and FR-08, none of which exist."
     },
     {
       "id": "AB-05",
@@ -405,7 +473,9 @@
         "ST-02",
         "ST-01"
       ],
-      "acceptance": "A scripted brute-force of 50 attempts against one account is locked out after 5 failures within 10 minutes (429 with Retry-After) and correct credentials are still refused during the lockout. Passwords are stored only as Argon2id/bcrypt hashes (ST-02) so a stolen dump yields no plaintext. All login traffic is HTTPS/TLS 1.2+ and plain HTTP is refused (ST-01). Session tokens are opaque, >= 128 bits of entropy, stored in Redis with a TTL, and delivered in an HttpOnly, Secure, SameSite cookie; logout deletes the Redis session so the token is unusable afterwards."
+      "acceptance": "A scripted brute-force of 50 attempts against one account is locked out after 5 failures within 10 minutes (429 with Retry-After) and correct credentials are still refused during the lockout. Passwords are stored only as Argon2id/bcrypt hashes (ST-02) so a stolen dump yields no plaintext. All login traffic is HTTPS/TLS 1.2+ and plain HTTP is refused (ST-01). Session tokens are opaque, >= 128 bits of entropy, stored in Redis with a TTL, and delivered in an HttpOnly, Secure, SameSite cookie; logout deletes the Redis session so the token is unusable afterwards.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "ST-02/ST-03/ST-01 + session-token entropy, HttpOnly/Secure/SameSite, logout invalidation."
     },
     {
       "id": "AB-06",
@@ -416,7 +486,9 @@
       "testIds": [
         "ST-04"
       ],
-      "acceptance": "The ST-04 payload suite (SQLi and XSS vectors) is fired at every input boundary — search query params, listing create/update text, chat messages, review comments, profile fields, moderation notes. Assertions: no request returns 500, no response contains unescaped payload markup, the users/listings/bookings tables are intact after the run, and no query is built by string concatenation (static grep). An OWASP ZAP baseline scan against the running app reports no high-risk alerts."
+      "acceptance": "The ST-04 payload suite (SQLi and XSS vectors) is fired at every input boundary — search query params, listing create/update text, chat messages, review comments, profile fields, moderation notes. Assertions: no request returns 500, no response contains unescaped payload markup, the users/listings/bookings tables are intact after the run, and no query is built by string concatenation (static grep). An OWASP ZAP baseline scan against the running app reports no high-risk alerts.",
+      "statusAt_f7f954c": "partial",
+      "statusNote": "Targeted SQLi/XSS suite passes; the OWASP ZAP baseline scan has a CI workflow and a documented procedure (STS-W3-04 fix) but has never been RUN, so no report exists."
     },
     {
       "id": "AB-07",
@@ -429,7 +501,9 @@
         "TC-11",
         "MT-01"
       ],
-      "acceptance": "users.email carries a unique constraint; a second registration with the same email returns 409 and creates no row, and an account cannot publish until that email is verified (FR-10). The daily cap is enforced in exactly one server-side place (the listing service, backed by the DB unique index) — a grep proves no second implementation and no client-side-only check. Listing creations are logged with host ID and local date so duplicate-account patterns are reviewable (NFR-08). Phone-number uniqueness and identity verification are recorded as deferred to v2.0 and are explicitly not implemented."
+      "acceptance": "users.email carries a unique constraint; a second registration with the same email returns 409 and creates no row, and an account cannot publish until that email is verified (FR-10). The daily cap is enforced in exactly one server-side place (the listing service, backed by the DB unique index) — a grep proves no second implementation and no client-side-only check. Listing creations are logged with host ID and local date so duplicate-account patterns are reviewable (NFR-08). Phone-number uniqueness and identity verification are recorded as deferred to v2.0 and are explicitly not implemented.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "Unique verified email + single server-side daily enforcement point; multi-account evasion remains an accepted v1.0 residual per ADR-009."
     },
     {
       "id": "AB-08",
@@ -441,7 +515,9 @@
         "ST-06",
         "ST-04"
       ],
-      "acceptance": "Every profile, listing-detail, host-profile and messaging endpoint requires a valid session; unauthenticated requests get 401 and are never served personal data. Responses are built from explicit field allowlists: host email, phone, emergency contact and exact street address never appear in any list or detail payload (only approximate/geocoded area is exposed pre-booking; the precise address is released only to a confirmed guest of that booking). A test enumerates every public response schema and fails on any disallowed PII key. Read-API rate limiting is documented as an explicitly deferred v2.0 control and is not implemented. ADR-010: the public serializer is the DEFAULT on every read path, so a newly added endpoint is minimal unless it deliberately opts into the privileged view; the adr-conformance lane enumerates search, listing detail, host profile, messaging and moderation responses and fails on any exact address or precise coordinate outside the pending/in-progress-booking and moderator cases."
+      "acceptance": "Every profile, listing-detail, host-profile and messaging endpoint requires a valid session; unauthenticated requests get 401 and are never served personal data. Responses are built from explicit field allowlists: host email, phone, emergency contact and exact street address never appear in any list or detail payload (only approximate/geocoded area is exposed pre-booking; the precise address is released only to a confirmed guest of that booking). A test enumerates every public response schema and fails on any disallowed PII key. Read-API rate limiting is documented as an explicitly deferred v2.0 control and is not implemented. ADR-010: the public serializer is the DEFAULT on every read path, so a newly added endpoint is minimal unless it deliberately opts into the privileged view; the adr-conformance lane enumerates search, listing detail, host profile, messaging and moderation responses and fails on any exact address or precise coordinate outside the pending/in-progress-booking and moderator cases.",
+      "statusAt_f7f954c": "met_pending_reverify",
+      "statusNote": "Session-authenticated reads, allowlist serialisation, ADR-010 public-serializer sweep. COV-01 (flaky canary assertion) is the open item."
     }
   ],
   "adrs": [
@@ -458,56 +534,64 @@
     "ADR-011 email channel, push behind a disabled flag"
   ],
   "buildRun": {
-    "date": "2026-08-14",
-    "commit": "3136b91",
-    "scope": "Waves 0-3 are BUILT and independently re-verified on a clean tree at commit 3136b91: bootstrap, foundation, platform services + external adapters, and the core marketplace (U3-LISTINGS, U3-BOOKINGS, U3-SEARCH, U3-HOSTS-MEDIA). Wave 4 (trust/safety/data-lifecycle), waves 5-6 (React web client) and wave 7 (measurement close-out) are planned, not built.",
-    "measured": {
-      "npm test": "45 suites / 943 tests passed, 0 failed, 94.3 s (single runner, advisory-lock serialised)",
-      "npm run lint": "eslint clean; prettier: all matched files use Prettier code style",
-      "npm run build": "83 files parse cleanly; createApp() boots against .env.example",
-      "stub scan": "grep TODO/FIXME/not implemented over src/, scripts/, db/ -> 0 hits"
+    "date": "2026-08-15",
+    "commit": "f7f954c",
+    "lineage": {
+      "3136b91": "Wave 3 built (listings, bookings, search, hosts/media) — green at 45 suites / 943 tests.",
+      "f7f954c": "Wave-3 verification repair round 1. Also landed, beyond wave-3 scope: the FR-07 safety module and its outbox handler, and the ADR-008 v1 evaluation set (224 synthetic items)."
     },
-    "verified": [
-      "FR-01",
-      "FR-02",
-      "FR-03",
-      "FR-04",
-      "FR-09",
-      "FR-10",
-      "FR-11",
-      "FR-12",
-      "FR-13",
-      "FR-14",
-      "NFR-03",
-      "NFR-04",
-      "NFR-05",
-      "NFR-06",
-      "NFR-08",
-      "NFR-09",
-      "NFR-11",
-      "AB-02",
-      "AB-03",
-      "AB-05",
-      "AB-06",
-      "AB-07",
-      "AB-08"
-    ],
-    "partial": [
-      "NFR-01",
-      "NFR-02",
-      "NFR-13",
-      "AB-01",
-      "AB-04"
-    ],
-    "notImplemented": [
-      "FR-05",
-      "FR-06",
-      "FR-07",
-      "FR-08",
-      "NFR-07",
-      "NFR-10",
-      "NFR-12"
-    ],
-    "note": "Requirements without implementing code are reported not_implemented and asserted absent by 404-probe tests - never as passes or skips. NFR-10 stays unclaimable until the ADR-008 synthetic set exists AND carries a recorded human label sign-off. NFR-01/NFR-02 have a measured 200-VU/volume run on this host (p95 98.1 ms over 1.36 M requests, 0 errors) but the harness is a Node loopback VU loop, not k6, so the number is recorded as evidence and re-measured under k6 in wave 7. moderation.scan outbox rows enqueued by wave 3 dead-letter until U4-MODERATION registers the handler and requeues them; content stays pending, which is FR-08's required failure direction."
+    "scope": "Waves 0-3 are BUILT. Repair round 1 has landed but NOTHING in it has been independently re-verified. Wave 4 (moderation, reviews, messaging, privacy; safety partially pre-landed), waves 5-6 (React web client) and wave 7 (measurement close-out) are planned, not built.",
+    "measuredByFixers": {
+      "npm test": "60 suites / 1182 tests passed, 91 s (clean machine, single runner)",
+      "npm run lint": "clean (eslint + prettier)",
+      "npm run build": "clean",
+      "caveat": "These gates were green BEFORE the 40 wave-3 findings were discovered, including the FR-10 production blocker. A green suite is a necessary condition, not evidence that a claimed fix works."
+    },
+    "verificationRound1": {
+      "lanes": 8,
+      "checks": 264,
+      "findings": 40,
+      "blockers": 3,
+      "claimedResolved": 30,
+      "neverRepaired": [
+        "IT-F1",
+        "STS-W3-03",
+        "TCB-W3-05",
+        "TCC-04",
+        "W3-ADR-04",
+        "COV-01",
+        "COV-06",
+        "COV-07",
+        "RTLT-02",
+        "W3-ADR-03"
+      ],
+      "machineReadable": "docs/_generated/verification-findings-wave3.json"
+    },
+    "openItemsClassification": {
+      "wave4_scope_do_not_build_now": [
+        "IT-F1 (NFR-10)",
+        "STS-W3-03 (NFR-12 erasure / NFR-13 export)"
+      ],
+      "needs_human_ratification_at_CDR": [
+        "TCB-W3-05 (FR-11 weekly MEHKO window shape, ADR-009 open sub-decision)"
+      ],
+      "host_prerequisite_untestable_here": [
+        "RTLT-02 (k6 not installed; do not vendor k6)"
+      ],
+      "actionable_in_wave3_closeout": [
+        "COV-01",
+        "TCC-04",
+        "W3-ADR-04 + COV-07 (same defect)",
+        "COV-06",
+        "W3-ADR-03 (confirm only)"
+      ]
+    },
+    "note": "Requirements without implementing code are reported not_implemented and asserted absent by 404-probe tests — never as passes, never as skips, and never as a reason to start a later wave. NFR-10 stays unclaimable until the pipeline exists AND the ADR-008 set carries a recorded human label sign-off (reviewer, date, set version) alongside the model id. No AB 626 WEEKLY-compliance claim may rest on a TC-11 pass until the team ratifies the ADR-009 window shape at CDR."
+  },
+  "statusLegend": {
+    "met_pending_reverify": "Implementing code and a named proving test exist, but the fix or the test landed in repair round 1 (f7f954c) and has not been independently re-executed. A fixer claim plus a green suite is not confirmation: the suite was green before these defects were found.",
+    "partial": "At least one acceptance clause has no implementing code, or is measured by an instrument the criterion does not name.",
+    "not_implemented": "No implementing code in waves 0-3. Asserted absent by 404-probe tests. Never reported as a pass and never a reason to start building a later wave.",
+    "unverifiable_here": "Cannot be measured in this environment or by an agent (host prerequisite, or a human act such as the ADR-008 label sign-off)."
   }
 }

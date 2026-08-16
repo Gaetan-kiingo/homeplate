@@ -53,16 +53,42 @@ rescheduling when a listing moves earlier (TCB-W3-02); no notification on `pendi
 
 ## How to restart
 
-Run a fresh verification (the previous run's cache is session-scoped and will not survive):
+A close-out run was launched on 2026-08-15 and **stopped during its planning phase, before any fixer
+started** — no source file was touched. Its coordinator did finish first, and its output is kept:
+`docs/_generated/requirements-inventory.json` is now rev C, carrying a `statusAt_f7f954c` +
+`statusNote` snapshot for all 35 requirements, and `build-plan.md` is regenerated to match. Read
+those two files first — they are the cheapest picture of where every requirement stands.
+
+Restart with a fresh run (workflow caches are session-scoped and do not survive a restart):
 
 ```
-Workflow homeplate-build with args as a JSON OBJECT:
+Workflow name "homeplate-build", args as a JSON OBJECT (never a key=value string):
 {"mode":"verify","model":"opus","maxRepairRounds":1,
- "focus":"<point at docs/_generated/verification-findings-wave3.json; confirm the 30 claimed
-           resolutions by re-running each original failure scenario, then repair the remainder>"}
+ "focus":"<see below>"}
 ```
 
-Gotchas that cost time last run:
+The focus that was prepared for this run, and should be reused, is recorded verbatim in the
+2026-08-15 session; its essentials are:
+
+1. Confirm the 30 claimed resolutions by re-executing each original `failureScenario` — a claim plus
+   a green suite is NOT confirmation, since the suite was green before these bugs were found. For
+   TCB-W3-01 specifically, prove end-to-end that a user can verify their email with the value the
+   mock transport actually delivered.
+2. Verify normal lane scope against the current tree, using `git diff 3136b91..f7f954c` rather than
+   re-deriving everything.
+3. Of the 10 unrepaired findings, only four are actionable in wave 3: **COV-01** (flaky AB-08 canary —
+   `not.toContain('742')` matches random UUIDs), **TCC-04** (FR-02 truncates host reviews to 5 with no
+   total or cursor), **W3-ADR-04 / COV-07** (same issue — raw SQL in `src/modules/media/routes.js`
+   belongs in the media repo), **COV-06** (sendgrid/fcm delivery bodies uncovered — improve without
+   any live provider call, ADR-011). The others are fenced off: IT-F1 (NFR-10) and STS-W3-03
+   (NFR-12/13) are **wave-4 scope — report as not_implemented, do not start building wave 4**;
+   TCB-W3-05 is a **human decision** already recorded as open in ADR-009; RTLT-02 needs k6 installed
+   on the host.
+4. Deliverable: overwrite `docs/verification-report.md` for waves 0–3, including the FR-10 lesson.
+
+**Deadline context:** the SPMP puts **CDR on 2026-08-22**. This close-out produces the CDR evidence.
+
+Gotchas that cost time (the first two are now fixed in `.claude/workflows/homeplate-build.js`):
 
 - **Args must be a JSON object.** A bare `mode=verify model=opus` string is swallowed whole into
   `focus`, silently leaving mode `full` and model `fable` — and a Fable usage limit kills the run.
