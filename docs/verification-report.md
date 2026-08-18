@@ -358,6 +358,15 @@ study (§5 below).
 *skipped* specifically so its absence cannot be misread as coverage — which is why
 `npm run test:a11y` is wired to fail on purpose and is kept out of CI.
 
+**Position taken 2026-08-18 (team decision).** The §4.5 deadline is **declared missed at CDR**, not
+quietly deferred. The statement to be read, the causal chain behind it, and a ready-to-run study
+protocol — task sets for both roles, participant criteria, and a triage rubric — are in
+[`docs/ut01-usability-study-plan.md`](ut01-usability-study-plan.md). Participants and a fixed date
+are named at the CDR stand-up (build-plan action **A-NFR07-2**); the session runs when wave 6
+delivers the seven interfaces. That file's §6 record block is `_unfilled_` and, like the ADR-007 and
+ADR-008 sign-offs, may not be filled in by an agent. NFR-07 stays **not implemented** until both that
+block is complete and the axe-core audit is clean.
+
 ---
 
 ### F-06 — CLOSED 2026-08-18: the ST-06 ADR-007 data-use review is signed
@@ -450,7 +459,7 @@ a human must do.
 
 | Check | Why it cannot be verified here | What the team must do |
 |---|---|---|
-| **UT-01 — 5-participant moderated usability study** (SRS §4.5) | A human activity by definition: "a moderated usability test with at least 5 participants covering both roles". No automation can produce it. | Schedule it **after** the wave 5–6 client lands, covering the guest booking flow and the host listing flow, and record participants, date and triage outcome. **SRS §4.5 requires findings to be triaged *before* the Critical Design Review. With CDR on 2026-08-22 and no client, that deadline will not be met by this build — say so at CDR rather than letting it pass silently.** |
+| **UT-01 — 5-participant moderated usability study** (SRS §4.5) | A human activity by definition: "a moderated usability test with at least 5 participants covering both roles". No automation can produce it. | **Declared missed at CDR, on the record (team decision, 2026-08-18)** — SRS §4.5 requires triage *before* CDR, and with CDR on 2026-08-22 and the client in waves 5–6 there is no subject to test. The statement, the causal chain and a ready-to-run protocol (both role task sets, participant criteria, triage rubric) are in `docs/ut01-usability-study-plan.md`. Participants and date are named at the CDR stand-up (A-NFR07-2); the session runs when wave 6 delivers the seven interfaces; its §6 record block must then be filled in by a human. |
 | **NFR-07 — axe-core WCAG 2.1 AA audit + keyboard/screen-reader spot checks** | There is no rendered interface and no browser toolchain in this repository (F-05). | Pin the harness in wave 5 in one `npm install`, then audit all seven named interfaces. Until then, **no violation count exists and none should be quoted.** |
 | **NFR-10 — moderation FP/FN rates** | The pipeline that would be measured does not exist, and ADR-008 forbids a claim without human label sign-off (F-04). | Build the wave-4 pipeline, run IT-03 live once (recording the model id), and sign off the 224-item label set. |
 | **NFR-12 — erasure within 30 days, and backup expiry** | The behaviour does not exist to be measured, and a 30-day window cannot be observed inside a test run regardless (F-03, F-07). | Build the wave-4 erasure job, then verify by **clock injection** rather than by waiting: assert that a deletion request schedules erasure at `now() + config.privacy.erasureDays` and that the job, run at that simulated instant, empties every §3.4 column. Backup expiry additionally needs a real backup target, i.e. a deployment. |
@@ -667,8 +676,10 @@ Stated plainly, because an overstated CDR document is worse than none:
    verification run corrected a requirement's acceptance wording rather than the code, and that
    should be a team decision on the record, not an inherited fact.
 3. ~~**Sign `docs/adr007-data-use-review.md`** (F-06)~~ — **DONE 2026-08-18:** option (a) + (b) ratified. Remaining: Nam Tran's SPMP §7.4 countersignature.
-4. **Schedule the UT-01 study** and state openly at CDR that the SRS §4.5 "triage before CDR"
-   deadline is missed because the client ships in waves 5–6 (F-05).
+4. ~~**Schedule the UT-01 study**~~ — **DONE 2026-08-18:** the miss is declared on the record and the
+   protocol is written (`docs/ut01-usability-study-plan.md`). Remaining human action: name the five
+   participants, the date and the owner at the CDR stand-up (A-NFR07-2), then run it when wave 6
+   lands and fill in that file's §6 record block.
 5. **Land a shared `drainOutbox()` test helper** and sweep the remaining bounded drain loops, so
    F-01's class of defect cannot return one file at a time. While there, accept or reject the
    one-line `allowExitOnIdle: true` fix for residual **R-1**, then turn on `TEST_STRICT_HANDLES=1`
