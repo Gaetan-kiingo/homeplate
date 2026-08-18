@@ -16,8 +16,8 @@ React client) are **not built**, and this report never reports an unbuilt requir
 | Report date | 2026-08-17 (amended 2026-08-18 — ADR-009 weekly window ratified, weekly cap corrected to 90 per AB 1325; see F-02) |
 | Commit (`git rev-parse --short HEAD`) | **`8807117`** (wave-3 close-out); the 2026-08-18 AB 1325 amendment sits on top of it |
 | Wave-3 baseline | `bc27199` (wave-3 code `3136b91`, repair round 1 `f7f954c`) |
-| Working tree | **Dirty.** Repair rounds 1 and 2 and this re-verification are uncommitted: **49 modified files**, **11 new test files**, plus two new untracked directories (`docs/results/`, `.github/zap/`). The human team commits; no agent has committed or pushed. |
-| CI state | **origin/main is still `af1a91a`** — waves 0–2 only. *CI has never executed a single line of wave-3 code.* |
+| Working tree | **Clean and pushed.** All wave-3 work, the 2026-08-18 team ratifications and the CI hardening are committed and on `origin/main` at `155b810`. |
+| CI state | **Green on wave 3.** `origin/main` is `155b810`; run 32187777816 passed 71 suites / 1302 tests on a cold runner in 2m54s under `TEST_STRICT_HANDLES=1` (F-09 closed 2026-08-18). |
 | Test framework | Jest 29 + Supertest against a seeded PostgreSQL 16 database, Redis 7 and MinIO (docker compose), `maxWorkers: 1` |
 
 ### Commands run for this report, and their real output
@@ -436,9 +436,14 @@ the round-1 findings file does not conclude the item was quietly dropped.
 
 ---
 
-### F-09 — CI has never executed wave 3 (being closed by this push)
-**Severity:** Major · **Requirement:** none directly (evidence quality for all) · **Status: OPEN
-until the first wave-3 CI run reports.**
+### F-09 — CLOSED 2026-08-18: CI has now executed wave 3, and it is green
+**Severity:** was Major · **Requirement:** none directly (evidence quality for all) ·
+**Status: CLOSED.** Run [32187777816](https://github.com/Gaetan-kiingo/homeplate/actions/runs/32187777816)
+on `155b810`: **71 suites / 1302 tests passed**, every step green, job **2m54s** (suite 125.6 s on the
+runner). Coverage on the runner: statements **93.95 %**, branches **83.96 %**, functions **97.69 %**,
+lines **94.74 %** — within a rounding step of the local figures, i.e. no environment-specific gap.
+The suite **exited on its own** under `TEST_STRICT_HANDLES=1`, so the hang did not reappear on a cold
+machine.
 
 **Reproduction.** `origin/main` ends at `af1a91a` — waves 0–2 only, 28 suites, 611 tests. Every wave-3
 number in this report was measured on one developer machine.
@@ -462,9 +467,15 @@ which the verification run did not produce):
   first by a strict + coverage run (exit 0). A leaked handle now reddens the build instead of
   warning. `--forceExit` remains banned.
 
-**Why it is still open:** a push has been made, but the finding closes only when the run reports
-green. CI proves committedness and cold-machine reproducibility — not latency, not the ZAP scan, not
-anything needing a deployment (see `ci-readiness.md`).
+**What this now proves.** Every file the suite needs is genuinely committed; the run reproduces from
+a cold checkout with no developer-machine state — no pre-existing database, no `.env`, no
+certificates (CI generates them); and the toolchain resolves from `package-lock.json` on the pinned
+Node. Wave 3's evidence is no longer single-machine.
+
+**What it still does not prove**, and must not be read as proving: NFR-01 latency (k6 ran locally; a
+shared runner is not a latency environment), AB-06's ZAP scan, anything requiring a deployment
+(external TLS certificate validity, NFR-09 availability, backup expiry), and NFR-07/UT-01, which has
+no client. See `docs/results/ci-readiness.md`.
 
 ---
 
@@ -509,8 +520,9 @@ failure was diagnosed and repaired at its cause. That is strong evidence, not a 
 guarantee. The defect class F-01 belongs to — assertions whose outcome depends on residue left by
 sibling suites — is closed at the five sites that could reach it; the lower-risk residual sites are
 named in F-01. The honest claim is: **"the one intermittent we reproduced is fixed at its cause, and
-the suite then ran green three times in a row on an idle machine."** Repeated CI runs are what will
-settle it for good (F-09).
+the suite then ran green three times in a row on an idle machine."** Since then it has also run green
+under coverage twice, under `TEST_STRICT_HANDLES=1` once, and once on a cold CI runner (F-09).
+Repeated CI runs over time are what will settle it for good.
 
 **Residual R-1 — one ambient pending timer at teardown (not a hang).** Runs C, D and E printed:
 
@@ -676,7 +688,10 @@ Stated plainly, because an overstated CDR document is worse than none:
    ratified 2026-08-18 and the cap corrected to 90 (F-02). Daily cap and single enforcement point
    were already proven. The claim is that the *ratified* rule is enforced — not legal advice.
 6. **No 99 % availability figure.** Only the NFR-09 degradation *mechanisms* are proven.
-7. **No claim about CI.** CI has never run wave 3 (F-09); every number here was measured locally.
+7. **CI has now run wave 3 and is green** (F-09, run 32187777816: 71 suites / 1302 tests on a cold
+   runner). That proves the tree is genuinely committed and reproduces without developer-machine
+   state. It does **not** prove NFR-01 latency, AB-06's ZAP scan, or anything needing a deployment —
+   those numbers were measured locally and are labelled as such.
 8. **No claim that the reviews, messaging or moderation surfaces are safe** — they do not exist, so
    AB-04 has nothing to test and is reported as *not implemented* rather than silently omitted.
 
