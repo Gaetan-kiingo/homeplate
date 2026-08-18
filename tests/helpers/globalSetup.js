@@ -69,6 +69,15 @@ async function ensureDatabase(databaseUrl) {
 // The connections must stay open for the whole run: the handle stashed on globalThis exposes the
 // end() that globalTeardown already calls, and releases the database lock and the resource claims
 // together.
+//
+// The lane owns a FOURTH resource that is not claimed here because it needs no claim: the
+// throwaway volume-seed database LANE.volumeDatabase (`<lane db>_volume`), created and dropped
+// WITH (FORCE) by tests/unit/db.test.js. It is derived from the lane's database name
+// (tests/helpers/env.js laneVolumeDatabase), so only this lane can name it, and two runs of the
+// SAME lane are already serialized by the database lock taken below. It used to be a hardcoded
+// 'homeplate_dbunit_volume_test' shared by every lane, and DROP … WITH (FORCE) terminated the
+// sibling lane's backends mid-seed (IT2-F1). Any future test that creates host-level state must
+// derive its name in env.js the same way rather than hardcoding one here.
 async function acquireJestSuiteLock(databaseUrl) {
   const lock = await acquireSuiteLock({
     databaseUrl,

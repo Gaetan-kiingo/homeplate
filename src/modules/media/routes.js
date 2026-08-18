@@ -24,11 +24,12 @@
 //   NFR-08 (MT-01) — every mutation writes one structured audit record (IDs only) through
 //            the request-scoped logger, so the correlation id rides every line.
 //
-// Local data access note: all media_objects access goes through src/modules/media/repo.js
-// (findOwnedById / markDeleted — NFR-11, ADR-004). The one remaining local statement is the
-// review-authorship SELECT in assertEntityAttachable (parameterized, NFR-11): the reviews
-// module ships in wave 4, so its repo does not exist yet — wave 4 replaces that SELECT with
-// the reviews repo's authorship lookup (tracked in build-plan §4, U4-REVIEWS).
+// Data access note (ADR-001 layering): this file executes NO SQL. Every read it needs comes
+// from a repo — media_objects through src/modules/media/repo.js (findOwnedById / markDeleted),
+// listings through the listings repo, review authorship through mediaRepo.findReviewAuthorId.
+// That last one is a transitional tenant of the media repo because U4-REVIEWS ships in wave 4;
+// when it lands, the function moves to src/modules/reviews/repo.js and the call here re-points
+// at it (tracked in build-plan §4, U4-REVIEWS). Nothing on this path changes behaviourally.
 'use strict';
 
 const express = require('express');
@@ -38,7 +39,6 @@ const { requireSession } = require('../auth/middleware');
 const mediaService = require('./service');
 const mediaRepo = require('./repo');
 const mediaUrls = require('../../lib/mediaUrls');
-const { query } = require('../../db/pool');
 const { audit } = require('../../lib/logger');
 const { ForbiddenError, NotFoundError } = require('../../lib/errors');
 const listingsRepo = require('../listings/repo');
@@ -76,11 +76,12 @@ async function assertEntityAttachable(userId, kind, entityId) {
   }
 
   if (kind === 'review') {
-    // Wave-4 note: this parameterized SELECT moves to the reviews repo's authorship lookup
-    // once U4-REVIEWS creates that module (see header note).
-    const { rows } = await query(`SELECT author_id FROM reviews WHERE id = $1`, [entityId]);
-    if (rows.length === 0) throw new NotFoundError('Review not found');
-    if (rows[0].author_id !== userId) {
+    // Authorship comes from the repo layer (mediaRepo hosts it until U4-REVIEWS lands — see
+    // header note). null row → the review does not exist; a null authorId (NFR-12 anonymized
+    // author) matches no caller, so such a review is attachable by nobody.
+    const review = await mediaRepo.findReviewAuthorId(entityId);
+    if (!review) throw new NotFoundError('Review not found');
+    if (review.authorId !== userId) {
       throw new ForbiddenError('You can only attach media to your own review', {
         code: 'MEDIA_ENTITY_NOT_OWNED',
       });

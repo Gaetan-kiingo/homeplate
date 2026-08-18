@@ -25,8 +25,10 @@
 //            or a listing whose host_profiles row is gone) degrades to the anonymized
 //            display identity, never to `host: null` (TCC-01; NFR-12-safe — see
 //            hostContextFor). `reviews` is a bounded PREVIEW of the newest approved reviews
-//            (PROFILE_REVIEWS_LIMIT); host.reviewCount is the authoritative total and
-//            GET /api/hosts/:id/reviews?page=N serves the remainder (TCC-04).
+//            (PROFILE_REVIEWS_LIMIT) and the payload SAYS SO: reviewsTotal (the approved
+//            review count) and reviewsPageSize (the preview cap) ride the same response, so
+//            reviewsTotal > reviews.length tells a client the array is a page and
+//            GET /api/hosts/:id/reviews?page=N&pageSize=M serves the remainder (TCC-04).
 //            Pending/rejected listings are 404 to everyone but the owning host; the exact
 //            address/precise coordinates ride ONLY the privileged serializer behind
 //            ./access.canViewPreciseLocation (ADR-010).
@@ -279,14 +281,20 @@ async function hostDisplayNameFallback(hostId) {
  * from the wave-4 U4-PRIVACY erasure path, so it is handled here rather than deferred.
  *
  * `reviews` is a bounded PREVIEW — the newest PROFILE_REVIEWS_LIMIT approved reviews, the
- * same page size the FR-03 host page opens with. reviewCount below is the AUTHORITATIVE
- * total (a client compares it with reviews.length to detect truncation) and
- * GET /api/hosts/:id/reviews?page=N serves the remainder, so no review is unreachable
- * (TCC-04).
+ * same page size the FR-03 host page opens with; an unbounded review array on a hot detail
+ * read is not an option (NFR-01 p95, NFR-02 volumes). The truncation is therefore made
+ * SELF-DESCRIBING on the wire instead of implied: reviewsTotal is the approved-review total
+ * (hostsRepo.getReviewStats — the same number as host.reviewCount, stated next to the array
+ * it bounds so a client reading `reviews` alone can still tell a 5-review host from a
+ * 500-review one) and reviewsPageSize is the preview cap. reviewsTotal > reviews.length ⇒
+ * fetch the rest from GET /api/hosts/:id/reviews?page=N&pageSize=M (hosts/service
+ * .listHostReviews, which returns page/pageSize/total), so no review is unreachable (TCC-04).
+ * Neither key adds a query: reviewsTotal reuses the stats round trip the host summary
+ * already makes, and reviewsPageSize is a module constant.
  *
  * @param {string} hostId
  * @returns {Promise<{host: {displayName, bio, averageRating, reviewCount},
- *                    reviews: object[]}>}
+ *                    reviews: object[], reviewsTotal: number, reviewsPageSize: number}>}
  */
 async function hostContextFor(hostId) {
   const [host, stats, reviewRows] = await Promise.all([
@@ -308,6 +316,9 @@ async function hostContextFor(hostId) {
       reviewCount: stats.reviewCount,
     },
     reviews: reviewRows.map(hostSerializers.publicReview),
+    // TCC-04: the preview labels itself — total + page size, never a bare truncated array.
+    reviewsTotal: stats.reviewCount,
+    reviewsPageSize: PROFILE_REVIEWS_LIMIT,
   };
 }
 
@@ -317,8 +328,9 @@ async function hostContextFor(hostId) {
  *  - everyone else: 404 unless moderation_status='approved'; then privileged ONLY when
  *    access.canViewPreciseLocation says so (live guest / access-logged FR-07 moderator),
  *    public projection otherwise.
- *  - EVERY successful response additionally carries the FR-02 host context ({host, reviews}
- *    — serializers.DETAIL_CONTEXT_KEYS) in the same payload.
+ *  - EVERY successful response additionally carries the FR-02 host context
+ *    ({host, reviews, reviewsTotal, reviewsPageSize} — serializers.DETAIL_CONTEXT_KEYS) in
+ *    the same payload.
  * @param {{userId: string, roles?: string[]}} auth  authenticated viewer (AB-08: 401 upstream)
  */
 async function getListing(auth, listingId) {
@@ -340,9 +352,16 @@ async function getListing(auth, listingId) {
       : serializers.publicListing(row, media);
   }
 
-  // FR-02 acceptance: host summary + approved host reviews ride the SAME response.
+  // FR-02 acceptance: host summary + approved host reviews ride the SAME response, the
+  // review array explicitly labelled as a bounded page (TCC-04).
   const context = await hostContextFor(row.host_id);
-  return { ...base, host: context.host, reviews: context.reviews };
+  return {
+    ...base,
+    host: context.host,
+    reviews: context.reviews,
+    reviewsTotal: context.reviewsTotal,
+    reviewsPageSize: context.reviewsPageSize,
+  };
 }
 
 // ---- update ----------------------------------------------------------------------------------

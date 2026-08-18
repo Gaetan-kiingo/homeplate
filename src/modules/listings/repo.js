@@ -14,6 +14,33 @@
 //   ADR-010 — rows carry BOTH precise (lat/lng, street address) and public-precision
 //            (coarse_*, area_label) location; what leaves the API is decided EXCLUSIVELY by
 //            src/modules/listings/serializers.js — this repo returns full rows to services.
+//   NFR-12 (TCC-02 / TCC-RV-02) — the ERASURE direction. See ERASURE SEMANTICS below: every
+//            DISCOVERY read in this file carries the live-host predicate (findApprovedByHost);
+//            findById is deliberately visibility-neutral, because the FR-02 detail read is a
+//            RETENTION surface, not a discovery one.
+//
+// ERASURE SEMANTICS (NFR-12) — the one reading wave 3 implements, recorded here because this
+// module is where the wave-4 U4-PRIVACY cascade will land. A soft-deleted account
+// (users.deleted_at IS NOT NULL) makes its listings UNDISCOVERABLE and its identity ANONYMOUS,
+// but does not retroactively delete the meal record a guest may already hold a booking against:
+//   • discovery MUST NOT surface them — FR-01 search (src/modules/search/repo.js
+//     VISIBLE_PREDICATES), FR-03 host page (404 at hosts/repo.findHost) and the FR-03 example
+//     dishes (findApprovedByHost, below) all answer "gone";
+//   • retention MAY still answer — GET /api/listings/:id stays 200 with the ANONYMIZED host
+//     summary so an existing booking's meal page does not evaporate. This is the SRS §3.4
+//     "retained anonymized after account deletion" direction, and it is PINNED by
+//     tests/tc-core/tc02-host-summary-fallback.test.js (TCC-01): the payload must carry a
+//     display summary and must never contain the erased full_name. It is why findById below
+//     carries NO deleted_at predicate — adding one is not a hardening, it is the opposite
+//     decision, and it would fail that test.
+// ONE GAP REMAINS, AND IT IS NOT IN THIS FILE (TCC-RV-02): a listing whose host is soft-deleted
+// is still RESERVABLE by known id, because src/modules/bookings/repo.selectListing classifies
+// bookability from listings.status / moderation_status / scheduled_start only. Under the
+// semantics above the fix is not another read predicate but the erasure cascade itself: the
+// deletion transaction must cancel the host's active listings (status → 'cancelled'), which
+// bookings/service already refuses with LISTING_NOT_BOOKABLE and search already hides. That
+// cascade is wave-4 U4-PRIVACY work (NFR-12 has no v1.0 deletion endpoint, so nothing is
+// exposed today); it is specified here so it is written, not rediscovered.
 //
 // Row-shape contract (COV-W3-02): findApprovedByHost — the read-surface path whose rows go
 // straight to serializers — returns the canonical camelCase toListing projection. The
@@ -110,7 +137,18 @@ async function insertListing(client, fields) {
   return rows[0];
 }
 
-/** Full row by id (or null). Visibility decisions belong to the service/serializers. */
+/**
+ * Full row by id (or null). Visibility decisions belong to the service/serializers.
+ *
+ * NFR-12 (TCC-RV-02): deliberately carries NO users.deleted_at predicate. Its two callers are
+ * RETENTION/authorization reads, not discovery: listings/service.getListing (the FR-02 detail
+ * page, which must keep answering 200 with the anonymized host summary — see ERASURE SEMANTICS
+ * in the module header and tests/tc-core/tc02-host-summary-fallback.test.js) and
+ * media/routes.js's owner-only attach guard. Nothing reaches the FR-12 booking path through
+ * here — src/modules/bookings loads listings exclusively through its own
+ * bookings/repo.selectListing — so hiding rows here would not make a deleted host's meal
+ * unbookable; only the U4-PRIVACY cascade does that.
+ */
 async function findById(id, client = null) {
   const { rows } = await run(`SELECT * FROM listings WHERE id = $1`, [id], client);
   return rows[0] || null;
@@ -125,6 +163,24 @@ async function findByIdForUpdate(client, id) {
 /**
  * A host's publicly visible listings: approved + active + upcoming, soonest first
  * (FR-03 "example dishes" — wave-3B hosts module shapes these through publicListing).
+ *
+ * NFR-12 (TCC-RV-02) — this is a DISCOVERY read, so it carries the same erasure direction the
+ * FR-01 search repo does: a soft-deleted host's meals are not offered to anyone. Today
+ * hosts/service.getHostPage already 404s first (requireHost → hosts/repo.findHost filters
+ * users.deleted_at), so this predicate is defence in depth on the second of the two listing
+ * discovery surfaces — it means the erasure direction survives a future caller that reaches
+ * example dishes without going through requireHost, instead of depending on a guard one call
+ * frame up. Fail-closed: a missing users row yields NULL — i.e. NOT true, so the listing is
+ * hidden (listings.host_id is NOT NULL REFERENCES users, so that cannot happen today; the
+ * direction still matters if it ever changes).
+ *
+ * The live-host check is written as a SCALAR SUBQUERY, matching src/modules/search/repo.js
+ * VISIBLE_PREDICATES verbatim — deliberately NOT `EXISTS (…)`. PostgreSQL pulls an EXISTS
+ * sublink up into a semi-join; an expression sublink is never pulled up and stays a per-row
+ * users_pkey lookup applied as a filter after the (host_id, …) index work. Keeping the two
+ * discovery predicates textually identical is the point: one form, one plan shape, one place
+ * to change if the erasure semantics is ever revised.
+ *
  * @returns {Promise<Array<object>>} canonical toListing (camelCase) projections — this is
  *   the read-surface path, so rows go out in the one canonical shape (COV-W3-02); the
  *   ADR-010 disclosure decision still belongs exclusively to the serializers.
@@ -136,6 +192,7 @@ async function findApprovedByHost(hostId, { limit = 20 } = {}, client = null) {
        AND moderation_status = 'approved'
        AND status = 'active'
        AND scheduled_start > now()
+       AND (SELECT u.deleted_at IS NULL FROM users u WHERE u.id = listings.host_id)
      ORDER BY scheduled_start, id
      LIMIT $2`,
     [hostId, limit],

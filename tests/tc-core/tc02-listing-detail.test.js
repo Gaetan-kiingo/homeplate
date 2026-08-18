@@ -8,6 +8,9 @@
 //   - the acceptance additionally demands host summary (display name, bio, average rating,
 //     review count) and the host's approved reviews IN THE SAME RESPONSE — asserted in its
 //     own test so a gap is visible without masking the rest;
+//   - TCC-04: that embedded review list is a BOUNDED preview, so the payload must label it —
+//     reviewsTotal + reviewsPageSize — and the remainder must be reachable through the
+//     documented pager GET /api/hosts/:id/reviews (asserted end to end, preview ∪ page 2);
 //   - pending/rejected → 404 for any user but the owning host; the owner sees it WITH its
 //     moderation status;
 //   - NFR-13: no host email/phone/exact street address in the public payload;
@@ -144,6 +147,68 @@ describe('TC-02 / FR-02 — content fields equal the seeded values', () => {
     expect(Array.isArray(body.reviews)).toBe(true);
     expect(body.reviews.length).toBe(1);
     expect(body.reviews[0].rating).toBe(5);
+    // A host with fewer reviews than the preview cap still states the total explicitly.
+    expect(body.reviewsTotal).toBe(1);
+    expect(body.reviewsPageSize).toBeGreaterThanOrEqual(body.reviews.length);
+  });
+});
+
+// TCC-04 regression. The embedded review list is a BOUNDED preview (NFR-01/NFR-02: no read
+// path returns an unbounded row set), so the payload has to say so — otherwise a client
+// reading `reviews` cannot distinguish a 5-review host from a 500-review one, and the FR-02
+// clause "and the approved reviews for that host" is only partly served. Pinned here:
+// reviewsTotal + reviewsPageSize ride the detail response, and every review the preview
+// omits is reachable through the documented pager GET /api/hosts/:id/reviews.
+describe('TC-02 / FR-02 — the embedded review list is a self-describing page (TCC-04)', () => {
+  const REVIEW_COUNT = 7; // > the preview cap
+  let busyHost;
+  let busyListing;
+
+  beforeAll(async () => {
+    busyHost = await dbh.makeUser({ can_publish_listing: true, full_name: 'Tc02 Busy Host' });
+    await dbh.makeHostProfile({ user_id: busyHost.id, bio: 'Seven happy guests.' });
+    busyListing = await support.makeApprovedListing({ host_id: busyHost.id });
+    for (let i = 0; i < REVIEW_COUNT; i += 1) {
+      const guest = await dbh.makeUser();
+      const pastListing = await support.makeApprovedListing({ host_id: busyHost.id });
+      const booking = await support.makeCompletedBooking(pastListing.id, guest.id);
+      await dbh.insertRow('reviews', {
+        booking_id: booking.id,
+        author_id: guest.id,
+        target_user_id: busyHost.id,
+        rating: 5,
+        body: `tc02 preview review ${i}`,
+        moderation_status: 'approved',
+      });
+    }
+  });
+
+  test('a truncated preview declares its total and page size, and the pager serves the rest', async () => {
+    const res = await detail(busyListing.id, viewerCookie);
+    expect(res.status).toBe(200);
+    const body = res.body.listing;
+
+    // The array IS bounded …
+    expect(body.reviews.length).toBe(body.reviewsPageSize);
+    expect(body.reviewsPageSize).toBeLessThan(REVIEW_COUNT);
+    // … and the response discloses the truncation instead of hiding it.
+    expect(body.reviewsTotal).toBe(REVIEW_COUNT);
+    expect(body.host.reviewCount).toBe(REVIEW_COUNT); // the two totals never disagree
+    expect(body.reviewsTotal).toBeGreaterThan(body.reviews.length);
+
+    // No review is unreachable from the detail payload: the documented pager returns the
+    // remainder, and preview ∪ page 2 covers every approved review exactly once.
+    const pageSize = body.reviewsPageSize;
+    const page2 = await support.get(
+      app,
+      `/api/hosts/${busyHost.id}/reviews?page=2&pageSize=${pageSize}`,
+      viewerCookie
+    );
+    expect(page2.status).toBe(200);
+    expect(page2.body.total).toBe(REVIEW_COUNT);
+    expect(page2.body.reviews.length).toBe(REVIEW_COUNT - pageSize);
+    const ids = new Set([...body.reviews.map((r) => r.id), ...page2.body.reviews.map((r) => r.id)]);
+    expect(ids.size).toBe(REVIEW_COUNT);
   });
 });
 
@@ -193,7 +258,12 @@ describe('TC-02 / FR-02 — NFR-13 + ADR-010 progressive disclosure', () => {
   test('the public payload carries EXACTLY the public allowlist keys plus no email/phone/street address', async () => {
     const res = await detail(listing.id, viewerCookie);
     expect(res.status).toBe(200);
-    const keys = Object.keys(res.body.listing).filter((k) => !['host', 'reviews'].includes(k));
+    // Strip the FR-02 detail-only context (host summary + labelled review preview) by the
+    // serializer's own constant rather than a hardcoded pair, so this assertion keeps
+    // measuring "the listing projection is exactly PUBLIC_KEYS" as the context set evolves.
+    const keys = Object.keys(res.body.listing).filter(
+      (k) => !serializers.DETAIL_CONTEXT_KEYS.includes(k)
+    );
     expect(keys.sort()).toEqual([...serializers.PUBLIC_KEYS].sort());
     const raw = JSON.stringify(res.body);
     expect(raw).not.toContain(STREET);

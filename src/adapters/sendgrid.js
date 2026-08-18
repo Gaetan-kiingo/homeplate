@@ -179,6 +179,122 @@ function hasSubject(template) {
   }
 })();
 
+// ---- reference block: an explicit per-template allow-list (finding RTLT-05) -------------------
+//
+// FR-10, FR-13, NFR-08. renderEmail() used to finish by echoing `Object.entries(params)` under a
+// "Reference:" heading. `params` is the PERSISTED outbox/attempt payload, so whatever a flow
+// happened to put in it shipped to the recipient as product copy. The FR-10 verification mail a
+// real user received therefore ended:
+//
+//     Reference:
+//       userId: c4e2c519-01a1-4424-a5c4-51ffda749eaf
+//       tokenHash: d05563a5…(64 hex)
+//
+// — an internal database id plus the single-use token's SHA-256 DIGEST, neither of which the
+// recipient can act on (the actionable value is the link printed above them), and every FR-13
+// booking mail carried its own UUIDs the same way. That is a PASS-THROUGH BY DEFAULT: any key a
+// future flow adds to a payload reaches a mailbox with no author ever deciding it should. It also
+// makes the body a misleading signal — an `expect(body).not.toContain(tokenHash)` check failed
+// while FR-10 was in fact correct.
+//
+// The block is now an EXPLICIT ALLOW-LIST PER TEMPLATE, DEFAULT DENY: an unregistered template
+// (or a key nobody listed) renders nothing. §3.4/NFR-08 already keep the ids where support needs
+// them — the NOTIFICATION_ATTEMPT row and the structured log — which is the right home for them.
+//
+//   verification  → NOTHING. The body is a sentence and a link; userId/tokenHash have zero
+//                   recipient value and tokenHash is a credential digest.
+//   booking.*     → bookingId only: the handle a guest or host quotes to support. `event` is
+//                   internal enum jargon and the subject already states it in English.
+//   safety-alert-*→ alertId (+ bookingId): FR-07's quotable handle for the moderator queue and
+//                   the emergency contact.
+const NO_REFERENCE_FIELDS = Object.freeze([]);
+const BOOKING_REFERENCE_FIELDS = Object.freeze(['bookingId']);
+const SAFETY_REFERENCE_FIELDS = Object.freeze(['alertId', 'bookingId']);
+
+const REFERENCE_FIELDS = Object.freeze({
+  // — FR-10: no reference block at all (both spellings) —
+  [TEMPLATE_IDS.emailVerification]: NO_REFERENCE_FIELDS,
+  'email-verification': NO_REFERENCE_FIELDS,
+  // — FR-13/FR-14 booking family, derived from the emitted vocabulary —
+  ...Object.fromEntries(
+    BOOKING_EVENTS.map((event) => [templateForBookingEvent(event), BOOKING_REFERENCE_FIELDS])
+  ),
+  // — FR-07 safety alerts —
+  [TEMPLATE_IDS.safetyAlertEmergency]: SAFETY_REFERENCE_FIELDS,
+  [TEMPLATE_IDS.safetyAlertModerator]: SAFETY_REFERENCE_FIELDS,
+  // — legacy hyphenated spellings (no emitter; kept in step with their dotted twins) —
+  'booking-created': BOOKING_REFERENCE_FIELDS,
+  'booking-confirmed': BOOKING_REFERENCE_FIELDS,
+  'booking-status-changed': BOOKING_REFERENCE_FIELDS,
+  'booking-cancelled': BOOKING_REFERENCE_FIELDS,
+  'inactivity-notice': NO_REFERENCE_FIELDS,
+});
+
+/**
+ * Belt and braces on top of the allow-list: a value that LOOKS like a credential (a long hex
+ * digest) or a key that NAMES one is never printed in a body, even if someone allow-lists it.
+ * FR-10's tokenHash is the case that motivated this; the check is on shape, not on that one key.
+ */
+const CREDENTIAL_LIKE_KEY = /(token|secret|password|hash|digest|otp|passcode|signature)/i;
+const CREDENTIAL_LIKE_VALUE = /^[0-9a-f]{32,}$/i;
+
+function isCredentialLike(key, value) {
+  if (CREDENTIAL_LIKE_KEY.test(key)) return true;
+  return typeof value === 'string' && CREDENTIAL_LIKE_VALUE.test(value);
+}
+
+/** The allow-listed reference keys for a template; unregistered templates render none. */
+function referenceFieldsFor(template) {
+  return Object.prototype.hasOwnProperty.call(REFERENCE_FIELDS, template)
+    ? REFERENCE_FIELDS[template]
+    : NO_REFERENCE_FIELDS;
+}
+
+/**
+ * The "Reference:" body lines for one send: allow-listed keys only, in the registry's order,
+ * skipping absent/empty values and anything credential-shaped.
+ * @returns {string[]} zero lines when the template publishes no reference at all
+ */
+function referenceLines(template, params) {
+  const lines = [];
+  for (const key of referenceFieldsFor(template)) {
+    if (!Object.prototype.hasOwnProperty.call(params, key)) continue;
+    const value = params[key];
+    if (value === null || value === undefined || value === '') continue;
+    if (isCredentialLike(key, value)) continue;
+    lines.push(`  ${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`);
+  }
+  return lines;
+}
+
+// RTLT-05 regression guard, enforced at require time in EVERY environment alongside the subject
+// registry: a template id the v1.0 flows emit must have an EXPLICIT reference decision (possibly
+// the empty list), so a new flow cannot inherit "print whatever the payload holds" by omission.
+// The FR-10 verification templates are additionally pinned to the empty list — re-adding
+// tokenHash there is the exact regression this finding is about.
+(function assertReferenceCoverage() {
+  const emitted = [...Object.values(TEMPLATE_IDS), ...BOOKING_EVENTS.map(templateForBookingEvent)];
+  const missing = [...new Set(emitted)].filter(
+    (id) => !Object.prototype.hasOwnProperty.call(REFERENCE_FIELDS, id)
+  );
+  if (missing.length > 0) {
+    throw new InternalError(
+      `SendGrid adapter: template ids emitted by the v1.0 flows have no reference-field decision: ` +
+        `${missing.join(', ')} — add them to REFERENCE_FIELDS (finding RTLT-05)`,
+      { code: 'EMAIL_REFERENCE_REGISTRY_INCOMPLETE', retryable: false }
+    );
+  }
+  for (const id of [TEMPLATE_IDS.emailVerification, 'email-verification']) {
+    if (referenceFieldsFor(id).length !== 0) {
+      throw new InternalError(
+        `SendGrid adapter: the FR-10 verification template "${id}" must publish NO reference ` +
+          `fields — its params are a user id and a credential digest (finding RTLT-05)`,
+        { code: 'EMAIL_REFERENCE_REGISTRY_INCOMPLETE', retryable: false }
+      );
+    }
+  }
+})();
+
 // FR-10 — the verification email is the one v1.0 message whose body must carry an ACTIONABLE
 // secret (the single-use link), not just reference IDs. Both the emitted dotted job-type
 // spelling and the legacy hyphenated one name that template, so the fail-loud check in
@@ -201,8 +317,10 @@ function subjectFor(template) {
 
 /**
  * Renders the minimal v1.0 email body. `params` carry template identifiers and entity IDs
- * only — never names, emails or phone numbers (§3.4 PII register, ADR-003) — so the body is
- * safe to build mechanically; wave 3-4 flows layer richer copy on top of this contract.
+ * only — never names, emails or phone numbers (§3.4 PII register, ADR-003) — but being free of
+ * PII does not make an internal id worth PRINTING: only the keys REFERENCE_FIELDS allow-lists
+ * for this template reach the recipient's mailbox, and nothing credential-shaped ever does
+ * (finding RTLT-05). Wave 3-4 flows layer richer copy on top of this contract.
  *
  * `renderContext` is the per-send, NEVER-persisted material the transport resolves at send
  * time (src/modules/notifications/transport.js): today only `verificationUrl`, FR-10's
@@ -230,13 +348,9 @@ function renderEmail(template, params = {}, renderContext = {}) {
     lines.push('', 'The link can be used once.');
     if (renderContext.expiresAt) lines.push(`It expires at ${renderContext.expiresAt}.`);
   }
-  const entries = Object.entries(params);
-  if (entries.length > 0) {
-    lines.push('', 'Reference:');
-    for (const [key, value] of entries) {
-      lines.push(`  ${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`);
-    }
-  }
+  // RTLT-05: allow-listed reference keys only — never the whole params object.
+  const reference = referenceLines(template, params || {});
+  if (reference.length > 0) lines.push('', 'Reference:', ...reference);
   lines.push('', 'Sign in to Homeplate to view the details.');
   return { subject, text: lines.join('\n') };
 }
@@ -309,8 +423,10 @@ module.exports = {
   subjectFor,
   hasSubject,
   templateForBookingEvent,
+  referenceFieldsFor,
   EMAIL_SUBJECTS,
   TEMPLATE_IDS,
   BOOKING_EVENTS,
   VERIFICATION_TEMPLATE_IDS,
+  REFERENCE_FIELDS,
 };

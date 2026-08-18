@@ -61,6 +61,11 @@ let port;
 beforeAll(async () => {
   app = createApp({ logger: quiet });
   server = http.createServer(app);
+  // The repo's ONE binding rule (finding STS-R2-01): every test listener binds the SPECIFIC
+  // loopback address, never the wildcard, so no other process can bind 127.0.0.1 on this port
+  // and shadow us for our own client. tests/helpers/env.js enforces this for the hostless
+  // listeners supertest and src/server.js create; stated explicitly here because this harness
+  // is also driven outside Jest (lt01-run.js).
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   port = server.address().port;
 });

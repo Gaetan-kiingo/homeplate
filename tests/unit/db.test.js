@@ -21,6 +21,7 @@ const { runMigrations, listMigrations } = require('../../scripts/migrate');
 const { seed, localDateFor, VOLUME_TARGETS } = require('../../scripts/seed');
 const dbh = require('../helpers/db');
 const redish = require('../helpers/redis');
+const { LANE, laneVolumeDatabaseUrl } = require('../helpers/env');
 const { retryStrategy } = require('../../src/db/redis');
 const { logger } = require('../../src/lib/logger');
 const { withTransaction } = require('../../src/db/tx');
@@ -33,10 +34,27 @@ const quiet = { log: () => {}, warn: () => {} };
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 afterAll(async () => {
-  // Remove this suite's rows (helper emails are namespaced); FK rules cascade the rest.
-  await dbh.query(`DELETE FROM users WHERE email LIKE '%@dbunit.homeplate.invalid'`);
-  await dbh.closeDb();
-  await redish.closeTestRedis();
+  // TEARDOWN MUST RELEASE ITS HANDLES ON EVERY PATH (finding TCC-RV-04, NFR-02 toolchain).
+  // jest.config.js runs with maxWorkers=1, and Jest then executes every test file IN ITS MAIN
+  // PROCESS (shouldRunInBand: maxWorkers <= 1). So the pool connections and the shared ioredis
+  // client this file opens are ref'd sockets in Jest's OWN event loop — leave one open and the
+  // run prints its summary and then never exits ("Jest did not exit one second after the test
+  // run has completed"), which hangs CI even though every test passed.
+  // The cleanup DELETE is the fragile step: it legitimately fails when this lane's backends were
+  // terminated (e.g. a stray WITH (FORCE) drop — IT2-F1). Sequencing it with `await` ahead of the
+  // closes meant that one failure skipped BOTH of them and leaked both sockets, so it runs in a
+  // try/finally and each close is guaranteed even if the previous step throws. Nothing is
+  // swallowed: the original failure still fails the suite.
+  try {
+    // Remove this suite's rows (helper emails are namespaced); FK rules cascade the rest.
+    await dbh.query(`DELETE FROM users WHERE email LIKE '%@dbunit.homeplate.invalid'`);
+  } finally {
+    try {
+      await dbh.closeDb();
+    } finally {
+      await redish.closeTestRedis();
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -413,12 +431,18 @@ describe('seed — base fixture (SRS §4.1 reproducible seed)', () => {
 
 // ---------------------------------------------------------------------------------------------
 describe('migrations + volume seed on a pristine database (NFR-02)', () => {
-  const VOLUME_DB = 'homeplate_dbunit_volume_test';
-  const volumeUrl = (() => {
-    const url = new URL(process.env.DATABASE_URL);
-    url.pathname = `/${VOLUME_DB}`;
-    return url.toString();
-  })();
+  // The database name is DERIVED from the lane identity (tests/helpers/env.js), never hardcoded.
+  // This block drops its database WITH (FORCE), which terminates every other backend connected to
+  // it; a fixed name would be identical in every lane regardless of TEST_DATABASE_URL and would
+  // escape the lane-claim registry entirely, so two concurrent lanes killed each other mid-seed
+  // ("Connection terminated unexpectedly" / "terminating connection due to administrator command"
+  // — verification finding IT2-F1). Two runs of the SAME lane are serialized by the suite advisory
+  // lock, so this database has exactly one writer at a time.
+  const VOLUME_DB = LANE.volumeDatabase;
+  const volumeUrl = laneVolumeDatabaseUrl();
+  // Quoted identifier: the name comes from the lane's URL, which may legitimately contain
+  // characters PostgreSQL would otherwise need folded (globalSetup quotes CREATE DATABASE too).
+  const volumeIdent = `"${VOLUME_DB.replace(/"/g, '""')}"`;
   const adminUrl = (() => {
     const url = new URL(process.env.DATABASE_URL);
     url.pathname = '/postgres';
@@ -429,13 +453,19 @@ describe('migrations + volume seed on a pristine database (NFR-02)', () => {
   beforeAll(async () => {
     admin = new Client({ connectionString: adminUrl, connectionTimeoutMillis: 5000 });
     await admin.connect();
-    await admin.query(`DROP DATABASE IF EXISTS ${VOLUME_DB} WITH (FORCE)`);
-    await admin.query(`CREATE DATABASE ${VOLUME_DB}`);
+    await admin.query(`DROP DATABASE IF EXISTS ${volumeIdent} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${volumeIdent}`);
   });
 
   afterAll(async () => {
-    if (admin) {
-      await admin.query(`DROP DATABASE IF EXISTS ${VOLUME_DB} WITH (FORCE)`);
+    if (!admin) return;
+    // The drop is best-effort — it fails if anything reconnected to the database between the
+    // FORCE and the drop — but `admin` is a bare pg Client on the maintenance database, i.e. a
+    // ref'd socket in Jest's main process (maxWorkers=1 ⇒ tests run in band). Ending it inside a
+    // finally is what stops a failed drop from turning into "Jest did not exit …" (TCC-RV-04).
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS ${volumeIdent} WITH (FORCE)`);
+    } finally {
       await admin.end();
     }
   });
@@ -456,11 +486,52 @@ describe('migrations + volume seed on a pristine database (NFR-02)', () => {
     }
   });
 
+  // A LOST CONNECTION IS NOT AN NFR-02 FAILURE (findings TCC-RV-05 / COV-13). Observed on a busy
+  // shared host: the bulk load lost its socket mid-transaction and this test failed with
+  // 'Connection terminated unexpectedly' raised from scripts/seed.js:333's ROLLBACK — the
+  // rollback itself failing on the already-dead client, which also MASKS the original error.
+  // Nothing about the schema, the data or the volume targets was wrong; the machine hiccuped, and
+  // "the suite is green" stopped being a property of the code.
+  // So the load is retried once on a connection-loss error — the volume seed is one transaction
+  // and idempotent (deterministic IDs + ON CONFLICT DO NOTHING), so a retry is safe whether the
+  // lost attempt rolled back or had already committed — and the AUTHORITATIVE NFR-02 evidence is
+  // the row census taken against the database below, not the seed's own insert count, which a
+  // retry legitimately reports as 0 when the lost attempt had already committed. Anything that is
+  // NOT a connection loss still fails immediately and unretried.
+  const CONNECTION_LOST =
+    /Connection terminated|terminating connection|connection is closed|Client has encountered a connection error|ECONNRESET|socket hang up/i;
+
+  /**
+   * @param {number} [attempts]
+   * @returns {Promise<{result: object, attempt: number, transient: string[]}>}
+   */
+  async function seedVolumeResilient(attempts = 2) {
+    const transient = [];
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        const result = await seed({ databaseUrl: volumeUrl, set: 'volume', log: quiet });
+        return { result, attempt, transient };
+      } catch (err) {
+        if (attempt >= attempts || !CONNECTION_LOST.test(err.message)) throw err;
+        transient.push(err.message);
+        console.warn(
+          `db.test.js: volume seed attempt ${attempt} lost its PostgreSQL connection ` +
+            `(${err.message}) — retrying once. This is host contention, not an NFR-02 defect; ` +
+            'the volume targets are asserted from a census of the database below.'
+        );
+      }
+    }
+  }
+
   test('seed --volume loads >= 10,000 users / 1,000 listings on ONE LA day / 1,000 bookings', async () => {
-    const result = await seed({ databaseUrl: volumeUrl, set: 'volume', log: quiet });
-    expect(result.counts.users).toBeGreaterThanOrEqual(VOLUME_TARGETS.users);
-    expect(result.counts.listings).toBeGreaterThanOrEqual(VOLUME_TARGETS.listings);
-    expect(result.counts.bookings).toBeGreaterThanOrEqual(VOLUME_TARGETS.bookings);
+    const { result, attempt } = await seedVolumeResilient();
+    // The seed's own insert census is checked when the load ran clean — the normal case. After a
+    // retry it is not the acceptance signal (see above); the census below always is.
+    if (attempt === 1) {
+      expect(result.counts.users).toBeGreaterThanOrEqual(VOLUME_TARGETS.users);
+      expect(result.counts.listings).toBeGreaterThanOrEqual(VOLUME_TARGETS.listings);
+      expect(result.counts.bookings).toBeGreaterThanOrEqual(VOLUME_TARGETS.bookings);
+    }
 
     const client = new Client({ connectionString: volumeUrl, connectionTimeoutMillis: 5000 });
     await client.connect();
@@ -484,7 +555,7 @@ describe('migrations + volume seed on a pristine database (NFR-02)', () => {
     }
 
     // Deterministic IDs make the volume seed idempotent as well.
-    const again = await seed({ databaseUrl: volumeUrl, set: 'volume', log: quiet });
+    const { result: again } = await seedVolumeResilient();
     expect(again.rows).toBe(0);
   });
 });

@@ -317,9 +317,31 @@ describe('FR-12 — concurrent seat requests never overbook; refusals leave capa
     const cookies = await Promise.all(
       (await Promise.all(Array.from({ length: 40 }, () => makeGuest()))).map(cookieFor)
     );
+    const startedAt = Date.now();
     const responses = await Promise.all(cookies.map((c) => book(c, listing.id)));
+    const elapsedMs = Date.now() - startedAt;
     const created = responses.filter((r) => r.status === 201);
     const refused = responses.filter((r) => r.status === 409);
+    // DIAGNOSTIC, not a relaxation: this assertion has been reported as intermittently failing
+    // in full-suite runs with an opaque "Expected length: 3, Received length: N". 40 concurrent
+    // requests contend for a pool of src/db/pool.js `max: 10` connections with
+    // `connectionTimeoutMillis: 5_000`, so on a loaded host a request can fail to ACQUIRE a
+    // connection and return 500 — which is neither 201 nor 409 and silently shrinks both
+    // buckets. Surface the real status distribution before the counts are asserted so the next
+    // failure names its cause instead of looking like an overbooking bug. The 3/37 assertions
+    // below are unchanged.
+    const unexpected = responses.filter((r) => r.status !== 201 && r.status !== 409);
+    if (unexpected.length > 0) {
+      const distribution = responses.reduce((acc, r) => {
+        acc[r.status] = (acc[r.status] || 0) + 1;
+        return acc;
+      }, {});
+      throw new Error(
+        `FR-12: ${unexpected.length}/40 concurrent booking responses were neither 201 nor 409 ` +
+          `after ${elapsedMs} ms. distribution=${JSON.stringify(distribution)} ` +
+          `firstBody=${JSON.stringify(unexpected[0].body)}`
+      );
+    }
     expect(created).toHaveLength(3);
     expect(refused).toHaveLength(37);
     for (const r of refused) expect(r.body.error.code).toBe('NO_CAPACITY');

@@ -16,6 +16,10 @@
 //       flagged as never named outside their own file are executed here so the coverage
 //       report shows a real hit rather than an unexercised branch.
 //
+//   P3  Open-handle regression guard (COV-09 / MTUT-RV-01) — a static scan asserting that
+//       every test file which requires the shared ioredis client also quits it, so the
+//       "Jest did not exit" hang this very file caused cannot be reintroduced silently.
+//
 // Requirement / decision traceability (SRS Appendix B):
 //   FR-01   — location search resolves through the Maps adapter (searchArea).
 //   NFR-01  — repeat lookups are served from the Redis cache.
@@ -24,9 +28,12 @@
 //             street address or precise coordinates.
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const maps = require('../../src/adapters/maps');
 const { coarsen, defaultAreaLabel, METERS_PER_DEGREE_LAT } = require('../../src/lib/geoPrecision');
-const { redis } = require('../../src/db/redis');
+const { redis, closeTestRedis } = require('../helpers/redis');
 const sanitize = require('../../src/lib/sanitize');
 const resilience = require('../../src/lib/resilience');
 const dispatch = require('../../src/outbox/dispatch');
@@ -36,6 +43,18 @@ const tokens = require('../../src/modules/users/tokens');
 const fcm = require('../../src/adapters/fcm');
 
 const MAPS_KEYS = 'hp:cache:maps:*';
+
+// COV-09 (this lane's own defect): this file opened the shared ioredis connection and never
+// quit it, so the Jest worker kept a live TCPWRAP handle after the last suite finished and the
+// run ended with "Jest did not exit one second after the test run has completed". Every other
+// suite that touches Redis already closes it here; this file was the only one that did not
+// (`grep -L 'closeTestRedis\|closeRedis' $(grep -rl 'helpers/redis\|db/redis' tests/**/*.test.js)`
+// returned exactly this path). Proven: `npx jest tests/coverage/cov-verify-probes.test.js
+// tests/unit/db.test.js` hangs after printing results, while the same run with
+// tests/coverage/coverage-lane.test.js in its place exits cleanly in 8 s.
+afterAll(async () => {
+  await closeTestRedis();
+});
 
 async function mapsCacheEntries() {
   const keys = await redis.keys(MAPS_KEYS);
@@ -221,5 +240,72 @@ describe('coverage lane P2 — statically unreferenced exports do real work', ()
     expect(err).toBeInstanceOf(Error);
     expect(typeof err.code).toBe('string');
     expect(err.code.length).toBeGreaterThan(0);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// P3 — open-handle regression guard (COV-09 / MTUT-RV-01; NFR-08 reproducible toolchain)
+//
+// The defect this guards against was in THIS file: it required the shared ioredis client
+// (src/db/redis.js, re-exported by tests/helpers/redis.js) and never quit it, so the Jest
+// worker held a live TCPWRAP handle after the last suite finished and every run ended with
+// "Jest did not exit one second after the test run has completed" — making automated
+// invocations look hung (one had to be killed at 8m20s despite the tests finishing in 91s).
+// `--detectOpenHandles` named exactly one handle, this file's `redis.keys()` call.
+//
+// The leak is invisible in a scoped green run — the tests still PASS, the process just never
+// exits — so nothing else in the suite catches it. This static scan does: any test file that
+// takes the shared client must also give it back. It is deliberately a source scan rather
+// than a runtime probe, because a runtime probe would have to open the very handle it is
+// checking for. `--forceExit` is not an acceptable alternative: it masks the leak and can
+// abandon a Redis connection mid-command, leaving the lane's claim registry stale.
+// -------------------------------------------------------------------------------------------
+describe('coverage lane P3 — every Redis-using test file quits the shared client', () => {
+  const TESTS_ROOT = path.resolve(__dirname, '..');
+
+  // Matches `require('…/helpers/redis')` and `require('…/src/db/redis')` in any quote style.
+  const REQUIRES_SHARED_REDIS = /require\(\s*['"][^'"]*(?:helpers\/redis|db\/redis)['"]\s*\)/;
+  // closeRedis() (the app's own quit) or closeTestRedis() (the helper's thin wrapper).
+  const QUITS_SHARED_REDIS = /\bclose(?:Test)?Redis\s*\(/;
+  const HAS_AFTER_ALL = /\bafterAll\s*\(/;
+
+  /**
+   * Drop comments before matching. Without this the guard is satisfiable by PROSE: this very
+   * file's header explains the fix in words, and a leaking file that merely mentioned
+   * "closeRedis()" in a comment would pass while still holding the handle open.
+   * @param {string} src
+   * @returns {string} source with block and line comments blanked out
+   */
+  function stripComments(src) {
+    return src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+  }
+
+  function testFiles(dir, out = []) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, entry.name);
+      if (entry.isDirectory()) testFiles(p, out);
+      else if (entry.name.endsWith('.test.js')) out.push(p);
+    }
+    return out;
+  }
+
+  const redisUsers = testFiles(TESTS_ROOT)
+    .map((file) => ({ file, code: stripComments(fs.readFileSync(file, 'utf8')) }))
+    .filter(({ code }) => REQUIRES_SHARED_REDIS.test(code));
+
+  test('the scan actually reaches the suite (a broken walk must fail, not pass vacuously)', () => {
+    // 54 test files required the shared client at wave-3 re-verification; the floor is set well
+    // below that so ordinary suite churn does not trip it, but an empty/mis-rooted walk does.
+    expect(redisUsers.length).toBeGreaterThan(20);
+    // This file is itself in scope — the guard must cover the file that broke the rule.
+    expect(redisUsers.map(({ file }) => file)).toContain(__filename);
+  });
+
+  test('no test file opens the shared ioredis client without closing it in afterAll', () => {
+    const offenders = redisUsers
+      .filter(({ code }) => !(QUITS_SHARED_REDIS.test(code) && HAS_AFTER_ALL.test(code)))
+      .map(({ file }) => path.relative(TESTS_ROOT, file));
+    // Named, not just counted: the failure message must point at the file to fix.
+    expect(offenders).toEqual([]);
   });
 });

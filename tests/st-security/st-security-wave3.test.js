@@ -33,6 +33,30 @@ function quietLogger() {
 
 const app = createApp({ config, logger: quietLogger() });
 
+// ---------------------------------------------------------------------------------------------
+// DETERMINISM HARNESS (verification round 2 — finding STS-R2-01)
+// Supertest's default `request(expressApp)` binds a throwaway server to the WILDCARD address
+// ('::') and then connects to 127.0.0.1. The loopback ephemeral-port space is machine-global, and a
+// SPECIFIC 127.0.0.1 bind shadows a wildcard one for 127.0.0.1 clients, so whenever any other
+// process on the host already holds 127.0.0.1:<the port jest was handed> — a sibling verifier
+// lane, tests/rt-lt-resilience/lt01-race.test.js / lt01-run.js (both bind '127.0.0.1'), an
+// editor helper, a local model server — the request silently lands on THAT server. Observed in
+// this lane on unchanged code: `read ECONNRESET`, a 200 whose body has no `user`, and a
+// registration that created no row. Binding the specific loopback address ourselves is
+// unshadowable (a second 127.0.0.1 bind gets EADDRINUSE, so the port is never handed out twice),
+// so every request in this file goes over a socket that can only reach OUR app.
+const boundServers = [];
+function bind(target) {
+  const server = require('http').createServer(target).listen(0, '127.0.0.1');
+  boundServers.push(server);
+  return server;
+}
+afterAll(async () => {
+  for (const s of boundServers) await new Promise((resolve) => s.close(resolve));
+});
+const listener = bind(app);
+const api = () => request(listener);
+
 // ---- fixtures -------------------------------------------------------------------------------
 
 async function cookieFor(user) {
@@ -144,7 +168,7 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
   test('SQLi in cuisine never 500s and leaves the listings table intact', async () => {
     const before = await db.countRows('listings');
     for (const p of SQLI) {
-      const res = await request(app)
+      const res = await api()
         .get('/api/listings/search')
         .set('Cookie', cookie)
         .query({ cuisine: p, pageSize: 5 });
@@ -157,7 +181,7 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
 
   test('XSS in cuisine comes back inert — no raw markup anywhere in the response', async () => {
     for (const p of XSS) {
-      const res = await request(app)
+      const res = await api()
         .get('/api/listings/search')
         .set('Cookie', cookie)
         .query({ cuisine: p, pageSize: 5 });
@@ -170,7 +194,7 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
   });
 
   test('hostId must be a UUID — SQLi in hostId is a field-level 422, never a query', async () => {
-    const res = await request(app)
+    const res = await api()
       .get('/api/listings/search')
       .set('Cookie', cookie)
       .query({ hostId: "' OR 1=1 --" });
@@ -179,7 +203,7 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
   });
 
   test('unknown query params are stripped (NFR-11), request still succeeds', async () => {
-    const res = await request(app)
+    const res = await api()
       .get('/api/listings/search')
       .set('Cookie', cookie)
       .query({ evil: "'; DROP TABLE users; --", pageSize: 5 });
@@ -188,7 +212,7 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
   });
 
   test('malformed from/to returns 422 field errors with no stack trace', async () => {
-    const res = await request(app)
+    const res = await api()
       .get('/api/listings/search')
       .set('Cookie', cookie)
       .query({ from: 'not-a-date', to: "1' OR '1'='1" });
@@ -203,7 +227,7 @@ describe('ST-04 wave-3 injection: listing text boundary (FR-11/FR-02)', () => {
   test('XSS in title/description/ingredients is stored ESCAPED — no executable markup persists', async () => {
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
-    const res = await request(app)
+    const res = await api()
       .post('/api/listings')
       .set('Cookie', cookie)
       .send(
@@ -233,7 +257,7 @@ describe('ST-04 wave-3 injection: listing text boundary (FR-11/FR-02)', () => {
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
     const usersBefore = await db.countRows('users');
-    const res = await request(app)
+    const res = await api()
       .post('/api/listings')
       .set('Cookie', cookie)
       .send(listingBody({ description: SQLI[1] }));
@@ -245,12 +269,9 @@ describe('ST-04 wave-3 injection: listing text boundary (FR-11/FR-02)', () => {
   test('XSS via PATCH update is stored escaped too', async () => {
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
-    const created = await request(app)
-      .post('/api/listings')
-      .set('Cookie', cookie)
-      .send(listingBody());
+    const created = await api().post('/api/listings').set('Cookie', cookie).send(listingBody());
     expect(created.status).toBe(201);
-    const patch = await request(app)
+    const patch = await api()
       .patch(`/api/listings/${created.body.listing.id}`)
       .set('Cookie', cookie)
       .send({ description: `updated ${XSS[0]}` });
@@ -265,7 +286,7 @@ describe('ST-04 wave-3 injection: listing text boundary (FR-11/FR-02)', () => {
   test('non-UUID junk in /api/listings/:id path is 404, never 500 (falls through the UUID constraint)', async () => {
     const cookie = await cookieFor(await makeEligibleGuest());
     for (const p of ["' OR 1=1 --", '1;DELETE', '%00', '..%2f..%2fetc']) {
-      const res = await request(app)
+      const res = await api()
         .get(`/api/listings/${encodeURIComponent(p)}`)
         .set('Cookie', cookie);
       expect(res.status).not.toBe(500);
@@ -284,7 +305,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
 
   test('SQLi/XSS in /api/hosts/:id is 422/404, never 500', async () => {
     for (const p of [...SQLI, ...XSS]) {
-      const res = await request(app)
+      const res = await api()
         .get(`/api/hosts/${encodeURIComponent(p)}`)
         .set('Cookie', cookie);
       expect(res.status).not.toBe(500);
@@ -294,7 +315,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
 
   test('hosts reviews pagination rejects hostile page/pageSize with 422', async () => {
     const host = await makeEligibleHost();
-    const res = await request(app)
+    const res = await api()
       .get(`/api/hosts/${host.id}/reviews`)
       .set('Cookie', cookie)
       .query({ page: "1' OR '1'='1", pageSize: -5 });
@@ -302,7 +323,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
   });
 
   test('media upload target refuses executable content types (text/html) with 422', async () => {
-    const res = await request(app)
+    const res = await api()
       .post('/api/media/uploads')
       .set('Cookie', cookie)
       .send({ kind: 'listing', contentType: 'text/html', sizeBytes: 100 });
@@ -317,7 +338,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
       `listing/${guest.id}/ok.jpg; DROP TABLE media_objects;`,
     ];
     for (const key of hostiles) {
-      const res = await request(app)
+      const res = await api()
         .post('/api/media')
         .set('Cookie', cookie)
         .send({ storageKey: key, kind: 'listing' });
@@ -331,7 +352,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
   test("media attach outside the caller's own namespace is 403 (AB-08 cross-user planting)", async () => {
     const other = await makeEligibleGuest();
     const foreignKey = `listing/${other.id}/${crypto.randomUUID()}.jpg`;
-    const res = await request(app)
+    const res = await api()
       .post('/api/media')
       .set('Cookie', cookie)
       .send({ storageKey: foreignKey, kind: 'listing' });
@@ -346,7 +367,7 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
 describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
   test('a host without the profile/agreement gate cannot publish (403 before any listing work)', async () => {
     const bare = await db.makeUser({ phone_enc: 'enc:v1:fixture' }); // no host profile
-    const res = await request(app)
+    const res = await api()
       .post('/api/listings')
       .set('Cookie', await cookieFor(bare))
       .send(listingBody());
@@ -363,10 +384,7 @@ describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
     const hostCookie = await cookieFor(host);
     const viewer = await cookieFor(await makeEligibleGuest());
 
-    const created = await request(app)
-      .post('/api/listings')
-      .set('Cookie', hostCookie)
-      .send(listingBody());
+    const created = await api().post('/api/listings').set('Cookie', hostCookie).send(listingBody());
     expect(created.status).toBe(201);
     const listingId = created.body.listing.id;
     const { rows } = await db.query(`SELECT moderation_status FROM listings WHERE id = $1`, [
@@ -375,7 +393,7 @@ describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
     expect(rows[0].moderation_status).toBe('pending');
 
     // Distinct pageSize per phase => distinct search cache identity (no stale-page bleed).
-    const hidden = await request(app)
+    const hidden = await api()
       .get('/api/listings/search')
       .set('Cookie', viewer)
       .query({ hostId: host.id, pageSize: 20 });
@@ -385,7 +403,7 @@ describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
 
     await db.query(`UPDATE listings SET moderation_status = 'approved' WHERE id = $1`, [listingId]);
 
-    const visible = await request(app)
+    const visible = await api()
       .get('/api/listings/search')
       .set('Cookie', viewer)
       .query({ hostId: host.id, pageSize: 19 });
@@ -408,7 +426,7 @@ describe('AB-02 hoarding bookings (FR-12, config.booking.maxConcurrentPending)',
     for (let i = 0; i <= cap; i += 1) listings.push(await makeApprovedListing());
 
     for (let i = 0; i < cap; i += 1) {
-      const res = await request(app)
+      const res = await api()
         .post('/api/bookings')
         .set('Cookie', cookie)
         .send({ listingId: listings[i].id });
@@ -416,7 +434,7 @@ describe('AB-02 hoarding bookings (FR-12, config.booking.maxConcurrentPending)',
     }
 
     const blockedListing = listings[cap];
-    const blocked = await request(app)
+    const blocked = await api()
       .post('/api/bookings')
       .set('Cookie', cookie)
       .send({ listingId: blockedListing.id });
@@ -438,7 +456,7 @@ describe('AB-02 hoarding bookings (FR-12, config.booking.maxConcurrentPending)',
   test('an ineligible guest is 403 BEFORE any capacity work (FR-09)', async () => {
     const ineligible = await db.makeUser(); // no phone => canReserveSeat false
     const listing = await makeApprovedListing();
-    const res = await request(app)
+    const res = await api()
       .post('/api/bookings')
       .set('Cookie', await cookieFor(ineligible))
       .send({ listingId: listing.id });
@@ -463,7 +481,7 @@ describe('AB-03 scripted listings (FR-11 daily cap, NFR-11 validation)', () => {
 
     const statuses = [];
     for (let i = 0; i < 10; i += 1) {
-      const res = await request(app)
+      const res = await api()
         .post('/api/listings')
         .set('Cookie', cookie)
         .send(
@@ -482,12 +500,12 @@ describe('AB-03 scripted listings (FR-11 daily cap, NFR-11 validation)', () => {
   test('malformed / oversized payloads are rejected by validation with 422', async () => {
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
-    const res = await request(app)
+    const res = await api()
       .post('/api/listings')
       .set('Cookie', cookie)
       .send(listingBody({ title: 'x'.repeat(500) }));
     expect(res.status).toBe(422);
-    const res2 = await request(app)
+    const res2 = await api()
       .post('/api/listings')
       .set('Cookie', cookie)
       .send({ title: 'no other fields' });
@@ -506,7 +524,7 @@ describe('AB-07 unverified email cannot publish (FR-10/NFR-06)', () => {
       phone_enc: 'enc:v1:fixture',
     });
     await db.makeHostProfile({ user_id: host.id });
-    const res = await request(app)
+    const res = await api()
       .post('/api/listings')
       .set('Cookie', await cookieFor(host))
       .send(listingBody());
@@ -522,14 +540,14 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
     const listing = await makeApprovedListing();
     const host = await makeEligibleHost();
     const probes = [
-      request(app).get('/api/listings/search'),
-      request(app).get(`/api/listings/${listing.id}`),
-      request(app).get(`/api/hosts/${host.id}`),
-      request(app).get(`/api/hosts/${host.id}/reviews`),
-      request(app).get('/api/bookings'),
-      request(app).post('/api/bookings').send({ listingId: listing.id }),
-      request(app).post('/api/listings').send(listingBody()),
-      request(app).post('/api/media/uploads').send({
+      api().get('/api/listings/search'),
+      api().get(`/api/listings/${listing.id}`),
+      api().get(`/api/hosts/${host.id}`),
+      api().get(`/api/hosts/${host.id}/reviews`),
+      api().get('/api/bookings'),
+      api().post('/api/bookings').send({ listingId: listing.id }),
+      api().post('/api/listings').send(listingBody()),
+      api().post('/api/media/uploads').send({
         kind: 'listing',
         contentType: 'image/jpeg',
         sizeBytes: 10,
@@ -546,7 +564,7 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
     const host = await makeEligibleHost();
     const listing = await makeApprovedListing({ host_id: host.id });
     const viewer = await cookieFor(await makeEligibleGuest());
-    const res = await request(app)
+    const res = await api()
       .get('/api/listings/search')
       .set('Cookie', viewer)
       .query({ hostId: host.id, pageSize: 18 });
@@ -583,7 +601,7 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
   test('listing detail for a STRANGER is the public projection; a pending guest gets the address; a cancelled booking reverts it', async () => {
     const listing = await makeApprovedListing();
     const stranger = await makeEligibleGuest();
-    const strangerRes = await request(app)
+    const strangerRes = await api()
       .get(`/api/listings/${listing.id}`)
       .set('Cookie', await cookieFor(stranger));
     expect(strangerRes.status).toBe(200);
@@ -598,15 +616,13 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
       status: 'pending',
     });
     const guestCookie = await cookieFor(guest);
-    const guestRes = await request(app)
-      .get(`/api/listings/${listing.id}`)
-      .set('Cookie', guestCookie);
+    const guestRes = await api().get(`/api/listings/${listing.id}`).set('Cookie', guestCookie);
     expect(guestRes.status).toBe(200);
     expect(guestRes.body.listing.addressLine1).toContain('Evergreen Canary');
 
     // Cancelled booking: back to public.
     await db.query(`UPDATE bookings SET status = 'cancelled' WHERE id = $1`, [booking.id]);
-    const after = await request(app).get(`/api/listings/${listing.id}`).set('Cookie', guestCookie);
+    const after = await api().get(`/api/listings/${listing.id}`).set('Cookie', guestCookie);
     expect(after.status).toBe(200);
     expect(JSON.stringify(after.body)).not.toContain(CANARY_STREET);
   });
@@ -615,7 +631,7 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
     const host = await makeEligibleHost();
     await makeApprovedListing({ host_id: host.id });
     const viewer = await cookieFor(await makeEligibleGuest());
-    const res = await request(app).get(`/api/hosts/${host.id}`).set('Cookie', viewer);
+    const res = await api().get(`/api/hosts/${host.id}`).set('Cookie', viewer);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body.host).sort()).toEqual([...hostSerializers.HOST_PAGE_KEYS].sort());
     const flat = JSON.stringify(res.body);
@@ -633,12 +649,12 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
     const guest = await makeEligibleGuest();
     const cookie = await cookieFor(guest);
     const listing = await makeApprovedListing();
-    const created = await request(app)
+    const created = await api()
       .post('/api/bookings')
       .set('Cookie', cookie)
       .send({ listingId: listing.id });
     expect(created.status).toBe(201);
-    const detail = await request(app)
+    const detail = await api()
       .get(`/api/bookings/${created.body.booking.id}`)
       .set('Cookie', cookie);
     expect(detail.status).toBe(200);
@@ -658,7 +674,7 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
       'listing'
     );
     const attacker = await cookieFor(await makeEligibleGuest());
-    const res = await request(app).delete(`/api/media/${media.id}`).set('Cookie', attacker);
+    const res = await api().delete(`/api/media/${media.id}`).set('Cookie', attacker);
     expect(res.status).toBe(404);
     const { rows } = await db.query(`SELECT deleted_at FROM media_objects WHERE id = $1`, [
       media.id,
@@ -674,7 +690,7 @@ describe('ST-06 moderator precise-location access is role-restricted AND logged'
   test('moderator WITHOUT an FR-07 alert gets the PUBLIC projection and writes no access_log row', async () => {
     const listing = await makeApprovedListing();
     const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
-    const res = await request(app)
+    const res = await api()
       .get(`/api/listings/${listing.id}`)
       .set('Cookie', await cookieFor(moderator));
     expect(res.status).toBe(200);
@@ -698,7 +714,7 @@ describe('ST-06 moderator precise-location access is role-restricted AND logged'
     await db.insertRow('safety_alerts', { booking_id: booking.id, raised_by: guest.id });
 
     const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
-    const res = await request(app)
+    const res = await api()
       .get(`/api/listings/${listing.id}`)
       .set('Cookie', await cookieFor(moderator));
     expect(res.status).toBe(200);
@@ -722,7 +738,7 @@ describe('ST-06 moderator precise-location access is role-restricted AND logged'
     await db.insertRow('safety_alerts', { booking_id: booking.id, raised_by: guest.id });
 
     const plainUser = await makeEligibleGuest();
-    const res = await request(app)
+    const res = await api()
       .get(`/api/listings/${listing.id}`)
       .set('Cookie', await cookieFor(plainUser));
     expect(res.status).toBe(200);

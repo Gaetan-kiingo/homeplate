@@ -1,0 +1,96 @@
+{
+  "requirement": [
+    "NFR-01"
+  ],
+  "budget": {
+    "p95Ms": 500,
+    "errorRate": 0.01,
+    "concurrentUsers": 200
+  },
+  "p95BudgetEnforced": false,
+  "p95BudgetForcedOnContendedHost": false,
+  "gateReason": "NOT enforced: LT01_ENFORCE_P95 is unset — `npm test` records this measurement and gates on the error budget and the cliff ceiling only (findings TCC-RV-05 / COV-13)",
+  "withinBudget": {
+    "overallP95": true,
+    "everyEndpointP95": true,
+    "errorRate": true
+  },
+  "measuredAt": "2026-08-18T03:08:59.648Z",
+  "commit": "176ba399d2db93958ac640da4059627c680297d0",
+  "lane": "lane \"homeplate_test\" (redis db 1, bucket homeplate-media-test, volume db homeplate_test_volume)",
+  "host": {
+    "platform": "darwin 24.6.0",
+    "cpus": 12,
+    "totalMemGb": 24,
+    "loadavg1m": 13.44,
+    "node": "v24.15.0"
+  },
+  "contention": {
+    "before": {
+      "quiescent": true,
+      "foreignLanes": 0,
+      "detail": "no foreign lane in the registry (this run is lane \"homeplate_test\" (redis db 1, bucket homeplate-media-test, volume db homeplate_test_volume))"
+    },
+    "after": {
+      "quiescent": true,
+      "foreignLanes": 0,
+      "detail": "no foreign lane in the registry (this run is lane \"homeplate_test\" (redis db 1, bucket homeplate-media-test, volume db homeplate_test_volume))"
+    },
+    "quiescent": true
+  },
+  "report": {
+    "scenario": "LT-01 core-operation mix (search/listing-detail/host-page/host-reviews)",
+    "harness": "node in-process VU loop over real loopback HTTP (in-suite regression gate; the NFR-01 acceptance measurement is the k6 run in tests/load/smoke.js); closed model, 1 in-flight request per VU",
+    "vus": 200,
+    "requestedDurationMs": 45000,
+    "wallMs": 45038,
+    "dataset": {
+      "volumeListings": 1000,
+      "approvedReviews": 1001,
+      "users": 10000,
+      "bookings": 1000
+    },
+    "requests": 169104,
+    "throughputRps": 3754.7,
+    "errors": 0,
+    "errorRate": 0,
+    "errorKinds": {},
+    "overall": {
+      "count": 169104,
+      "p50": 55.2,
+      "p95": 109.4,
+      "p99": 118.7,
+      "max": 271.7
+    },
+    "endpoints": {
+      "hostReviews": {
+        "count": 25379,
+        "p50": 53.5,
+        "p95": 61.1,
+        "p99": 69,
+        "max": 203.5
+      },
+      "search": {
+        "count": 67629,
+        "p50": 2.5,
+        "p95": 4,
+        "p99": 5.2,
+        "max": 199.5
+      },
+      "listingDetail": {
+        "count": 42311,
+        "p50": 88,
+        "p95": 97.7,
+        "p99": 140.8,
+        "max": 246.9
+      },
+      "hostPage": {
+        "count": 33785,
+        "p50": 105.3,
+        "p95": 115.8,
+        "p99": 194.4,
+        "max": 271.7
+      }
+    }
+  }
+}

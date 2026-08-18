@@ -64,13 +64,20 @@ const PRIVILEGED_ONLY_KEYS = Object.freeze([
 ]);
 
 /**
- * FR-02 detail-only context keys: the service attaches { host, reviews } ON TOP of the
- * listing projection for GET /api/listings/:id — and ONLY there. Search results (U3-SEARCH)
- * and host-page example dishes (U3-HOSTS-MEDIA) stay exactly PUBLIC_KEYS. Both values are
- * composed from the U3-HOSTS-MEDIA repo/serializers (non-PII columns only), so neither key
+ * FR-02 detail-only context keys: the service attaches
+ * { host, reviews, reviewsTotal, reviewsPageSize } ON TOP of the listing projection for
+ * GET /api/listings/:id — and ONLY there. Search results (U3-SEARCH) and host-page example
+ * dishes (U3-HOSTS-MEDIA) stay exactly PUBLIC_KEYS. Every value is composed from the
+ * U3-HOSTS-MEDIA repo/serializers (non-PII columns only) or is a plain count, so no key here
  * can widen the ADR-010/NFR-13 disclosure surface.
+ *
+ * `reviews` is a bounded PREVIEW (NFR-01/NFR-02: no read path returns an unbounded row set),
+ * so the payload must SAY it is a page rather than leave a client guessing: reviewsTotal is
+ * the number of approved reviews about the host and reviewsPageSize is the preview cap, so
+ * `reviewsTotal > reviews.length` tells a client, from the detail response alone, that
+ * GET /api/hosts/:id/reviews?page=N&pageSize=M holds the remainder (TCC-04).
  */
-const DETAIL_CONTEXT_KEYS = Object.freeze(['host', 'reviews']);
+const DETAIL_CONTEXT_KEYS = Object.freeze(['host', 'reviews', 'reviewsTotal', 'reviewsPageSize']);
 
 /**
  * The complete FR-02 host-summary key set (NFR-13/AB-08 allowlist): display identity, bio

@@ -411,7 +411,12 @@ describe('MT-01 — worker-initiated transitions stay traceable', () => {
     );
 
     const registry = loadHandlers({ log: recLogger });
-    for (let i = 0; i < 25; i += 1) {
+    // DETERMINISM (verification-report F-01): a RUNAWAY GUARD, not a budget. pollOnce claims from the
+    // whole outbox table oldest-first, ten rows a pass, so the passes this job needs depend
+    // on how many rows sibling suites left behind — state this test does not own. The loop
+    // is ended by the `stats.claimed === 0` break below (jobs that back off take a future
+    // available_at and drop out of the claim), never by this number.
+    for (let i = 0; i < 5000; i += 1) {
       const stats = await pollOnce({ registry, log: recLogger });
       const { rows } = await query('SELECT status FROM bookings WHERE id = $1', [promoteBookingId]);
       if (rows[0].status !== 'pending') break;
@@ -427,13 +432,16 @@ describe('MT-01 — worker-initiated transitions stay traceable', () => {
     expect(promoted).toHaveLength(1);
     // NFR-08: the worker line is traceable back to the request that created the booking.
     expect(promoted[0].correlationId).toBe(cid);
-    // Observed shape of this system-initiated audit record (measured 2026-08-14):
+    // MTUT-W3-02 (re-verification 2026-08-17): MT-01's acceptance names an ACTOR on every audit
+    // record. Round-1 measurement of this record's key set found no `actorUserId` at all:
     //   ["level","time","service","correlationId","jobId","jobType","attempt","audit",
     //    "event","outcome","entityType","entityId","msg"]
-    // — no `actorUserId`. Reported as finding W3-MT-03: MT-01's acceptance names an actor on
-    // every record; a worker transition has no user actor and should record the system as one
-    // (e.g. actorUserId: null + actor: 'system:outbox') rather than omit the field. Not
-    // asserted here so the lane's failing set stays exactly the reproducible defects.
+    // The repair makes the system actor explicit rather than absent. Asserted here so the
+    // resolution is proven by a test, not by a fixer's report: the key must be PRESENT (pino
+    // drops `undefined` but emits `null`), and `actor` must name the worker.
+    expect(Object.keys(promoted[0])).toContain('actorUserId');
+    expect(promoted[0].actorUserId).toBeNull();
+    expect(promoted[0].actor).toBe('system:outbox');
     expect(promoted[0].jobType).toBe('booking.promote');
   });
 });

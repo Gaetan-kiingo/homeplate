@@ -320,13 +320,48 @@ describe('FR-12/FR-04 — scheduled promotion job (pending → in_progress at sc
     ]);
     await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = $1`, [jobs[0].id]);
     const registry = createRegistry([promoteHandler]);
-    // Other due jobs (this suite's undelivered notify rows) share the queue: poll until OUR
-    // job leaves 'pending' (each pass claims a batch; unhandled types back off out of the way).
-    for (let i = 0; i < 20; i += 1) {
-      const { rows } = await query('SELECT status FROM outbox_jobs WHERE id = $1', [jobs[0].id]);
-      if (rows[0].status !== 'pending') break;
-      await pollOnce({ registry });
+
+    /**
+     * Deliver ONE job through the real worker claim path, scoped to rows this test created.
+     *
+     * DETERMINISM (finding TCBV2-01): pollOnce() claims from the WHOLE shared outbox table
+     * `ORDER BY available_at, id LIMIT config.outbox.batchSize` (10). Every suite in the run
+     * shares that table and outbox_jobs is reset only in globalSetup, so foreign PENDING rows
+     * left by whichever files Jest happened to schedule earlier sit AHEAD of this job (their
+     * available_at is older). The previous fixed 20-pass loop therefore starved: measured on
+     * this tree, 0 foreign due rows needed 1 pass, 50 needed 6, and 250 exhausted all 20
+     * passes leaving the booking 'pending' — the exact intermittent failure reported against
+     * this test. Parking the foreign rows for the duration (and restoring them) makes the
+     * outcome depend only on rows this test owns. The assertions below are unchanged.
+     */
+    async function deliverScoped(jobId) {
+      const { rows: parked } = await query(
+        `SELECT id, available_at FROM outbox_jobs
+          WHERE status = 'pending' AND id <> $1`,
+        [jobId]
+      );
+      await query(
+        `UPDATE outbox_jobs SET available_at = now() + interval '1 hour'
+          WHERE status = 'pending' AND id <> $1`,
+        [jobId]
+      );
+      try {
+        for (let i = 0; i < 5; i += 1) {
+          const { rows } = await query('SELECT status FROM outbox_jobs WHERE id = $1', [jobId]);
+          if (rows[0].status !== 'pending') break;
+          await pollOnce({ registry });
+        }
+      } finally {
+        for (const row of parked) {
+          await query('UPDATE outbox_jobs SET available_at = $2 WHERE id = $1', [
+            row.id,
+            row.available_at,
+          ]);
+        }
+      }
     }
+
+    await deliverScoped(jobs[0].id);
 
     const { rows: promoted } = await query('SELECT status FROM bookings WHERE id = $1', [
       bookingId,
@@ -337,11 +372,7 @@ describe('FR-12/FR-04 — scheduled promotion job (pending → in_progress at sc
     await query(`UPDATE outbox_jobs SET status = 'pending', available_at = now() WHERE id = $1`, [
       jobs[0].id,
     ]);
-    for (let i = 0; i < 20; i += 1) {
-      const { rows } = await query('SELECT status FROM outbox_jobs WHERE id = $1', [jobs[0].id]);
-      if (rows[0].status !== 'pending') break;
-      await pollOnce({ registry });
-    }
+    await deliverScoped(jobs[0].id);
     const { rows: again } = await query('SELECT status FROM bookings WHERE id = $1', [bookingId]);
     expect(again[0].status).toBe('in_progress');
   });

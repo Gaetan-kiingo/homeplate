@@ -541,8 +541,14 @@ describe('IT-01 wave 3 · booking.promote scheduled worker path (FR-04/FR-12, RT
       type: 'booking.promote',
       payload: { bookingId: booking.id },
       dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
-      availableAt: new Date(), // due now: the worker delivers it before the meal starts
+      // Due now — but "now" per the DATABASE clock, not this process's. The worker's claim
+      // predicate is `available_at <= now()` evaluated by PostgreSQL, so seeding available_at
+      // from `new Date()` makes the row's dueness depend on the Node↔PostgreSQL clock offset
+      // (measured on this host at ~0.5 ms with PostgreSQL BEHIND Node — i.e. in the wrong
+      // direction). makeDue() sets it from now() inside the database and removes the dependency.
+      availableAt: new Date(Date.now() + 3600 * 1000),
     });
+    await makeDue(delivering.id);
     await drainDue();
 
     expect((await jobRow(delivering.id)).status).toBe('delivered');
@@ -571,8 +577,10 @@ describe('IT-01 wave 3 · booking.promote scheduled worker path (FR-04/FR-12, RT
       type: 'booking.promote',
       payload: { bookingId: booking.id },
       dedupeKey: `${base.dedupe_key}:rprior-${uniq()}`,
-      availableAt: new Date(),
+      // Due per the DATABASE clock (see the note in the 'live dedupe' test above).
+      availableAt: new Date(Date.now() + 3600 * 1000),
     });
+    await makeDue(delivering.id);
     await drainDue();
 
     expect((await jobRow(delivering.id)).status).toBe('delivered');

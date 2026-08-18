@@ -708,6 +708,87 @@ describe('POST /api/media and DELETE /api/media/:id', () => {
     expect(foreignProfile.status).toBe(403);
   });
 
+  // FR-05 / AB-08 — review photos travel through this same surface (kind='review'). The
+  // reviews MODULE ships in wave 4, but the §3.4 reviews table and the authorship rule exist
+  // today, so the rejection path is exercised here rather than left dead until wave 4. The
+  // authorship lookup itself is a repo call (mediaRepo.findReviewAuthorId — ADR-001: routes
+  // validate, repos query), not raw SQL in the route.
+  /** A review row authored by `authorId` about `targetUserId`, on its own booking. */
+  async function makeReviewAuthoredBy(authorId, targetUserId) {
+    const booking = await dbh.makeBooking({
+      listing_id: otherListing.id,
+      ...(authorId ? { guest_id: authorId } : {}),
+    });
+    return dbh.insertRow('reviews', {
+      booking_id: booking.id,
+      author_id: authorId,
+      target_user_id: targetUserId,
+      rating: 5,
+      body: 'Review-attach fixture.',
+      moderation_status: 'pending',
+    });
+  }
+
+  test('a minted review key attaches to a review the caller authored (FR-05)', async () => {
+    const review = await makeReviewAuthoredBy(host.id, otherListing.host_id);
+    const target = await mint(hostCookie, 'review');
+
+    const res = await request(app).post('/api/media').set('Cookie', hostCookie).send({
+      storageKey: target.storageKey,
+      kind: 'review',
+      entityId: review.id,
+      contentType: 'image/jpeg',
+      sizeBytes: 4096,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.media).toMatchObject({ kind: 'review', entityId: review.id });
+
+    const { rows } = await dbh.query(`SELECT * FROM media_objects WHERE storage_key = $1`, [
+      target.storageKey,
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner_user_id: host.id,
+      entity_type: 'review',
+      entity_id: review.id,
+      deleted_at: null,
+    });
+  });
+
+  test('attaching to a review the caller did not author is 403; unknown review 404 (AB-08)', async () => {
+    // Authored by someone else — the caller's own namespace key is not enough.
+    const foreignReview = await makeReviewAuthoredBy(otherUser.id, host.id);
+    const target = await mint(hostCookie, 'review');
+    const notAuthor = await request(app)
+      .post('/api/media')
+      .set('Cookie', hostCookie)
+      .send({ storageKey: target.storageKey, kind: 'review', entityId: foreignReview.id });
+    expect(notAuthor.status).toBe(403);
+    expect(notAuthor.body.error.code).toBe('MEDIA_ENTITY_NOT_OWNED');
+
+    // A review whose author was severed by the NFR-12 anonymization path belongs to nobody.
+    const anonymized = await makeReviewAuthoredBy(null, host.id);
+    const anon = await request(app)
+      .post('/api/media')
+      .set('Cookie', hostCookie)
+      .send({ storageKey: target.storageKey, kind: 'review', entityId: anonymized.id });
+    expect(anon.status).toBe(403);
+
+    const missing = await request(app).post('/api/media').set('Cookie', hostCookie).send({
+      storageKey: target.storageKey,
+      kind: 'review',
+      entityId: '88888888-8888-4888-8888-888888888888',
+    });
+    expect(missing.status).toBe(404);
+
+    // Nothing was recorded by any of the three refusals.
+    const { rows } = await dbh.query(
+      `SELECT count(*)::int AS n FROM media_objects WHERE storage_key = $1`,
+      [target.storageKey]
+    );
+    expect(rows[0].n).toBe(0);
+  });
+
   test('attaching the same storage key twice is a 409 conflict', async () => {
     const target = await mint(hostCookie, 'host_profile', 'image/png');
     const body = { storageKey: target.storageKey, kind: 'host_profile' };

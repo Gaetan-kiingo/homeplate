@@ -712,10 +712,40 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
     // No results file anywhere: no reviewer, no date, no model id, no measured rate.
     expect(set.hasResults).toBe(false);
     expect(fs.existsSync(path.join(set.dir, 'RESULTS.md'))).toBe(false);
-    const resultDirs = ['docs/results', 'docs/_generated/results'].filter((rel) =>
-      fs.existsSync(path.join(REPO_ROOT, rel))
-    );
-    expect(resultDirs).toEqual([]);
+    // DETERMINISM (findings MTUT-RV-02 / COV-11, verification round 2): this used to assert that
+    // the *directories* docs/results and docs/_generated/results did not exist at all. That is an
+    // assertion over global repository state this test does not own, and it is false the moment
+    // any unrelated measurement runs: package.json `scan:zap:run` begins with
+    // `mkdir -p docs/results`, and build-plan wave 7 tells the team to commit the LT-01 k6 summary
+    // and the ZAP baseline there. An unrelated lane writing docs/results/lt01-k6-summary.json (and
+    // even the bare empty directory, which git does not track, so `git status` showed nothing)
+    // reddened this test on a checkout byte-identical to a green one — observed 2026-08-17,
+    // full-suite runs A/B/C. An empty directory is not evidence of a measurement.
+    //
+    // What ADR-008 actually forbids is claiming NFR-10 without a *moderation* measurement result
+    // carrying a human label sign-off. So scan for that artefact by name (recursively, since a
+    // future run may nest it), and let every unrelated artefact in the same directory stay inert.
+    // The token must not be swallowed by a longer word, or the probe reacquires exactly the
+    // defect it is fixing: bare `eval` matches "retrieval-*.json" and bare `it-?03` matches
+    // "unit03-*.json", so an unrelated lane could redden NFR-10 readiness by choosing a filename.
+    // The lookbehind rejects a preceding LETTER only, so "-eval", "_eval" and "nfr10_it-03" still
+    // match. Keep this pattern in step with the note in tests/rt-lt-resilience/lt01-lt02-wave3.js,
+    // which names its artefact deliberately to avoid it.
+    const MODERATION_RESULT_RE = /(moderation|(?<![a-z])nfr-?10|(?<![a-z])it-?03|(?<![a-z])eval)/i;
+    const moderationResultFiles = [];
+    const scanForModerationResults = (dir, rel) => {
+      if (!fs.existsSync(dir)) return;
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const childRel = `${rel}/${entry.name}`;
+        if (MODERATION_RESULT_RE.test(entry.name)) moderationResultFiles.push(childRel);
+        else if (entry.isDirectory())
+          scanForModerationResults(path.join(dir, entry.name), childRel);
+      }
+    };
+    for (const rel of ['docs/results', 'docs/_generated/results']) {
+      scanForModerationResults(path.join(REPO_ROOT, rel), rel);
+    }
+    expect(moderationResultFiles).toEqual([]);
     expect(set.manifest.labelReview.status).toBe('unreviewed');
     expect(set.manifest.labelReview.reviewer).toBeNull();
     expect(set.manifest.labelReview.date).toBeNull();

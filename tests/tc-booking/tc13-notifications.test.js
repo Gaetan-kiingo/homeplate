@@ -37,9 +37,69 @@ function uniqueEmail() {
 
 async function drainOutbox() {
   // Deliver every currently-due pending job so later assertions see only OUR job.
-  for (let i = 0; i < 20; i += 1) {
+  //
+  // DETERMINISM (finding TCBV2-01): pollOnce() claims at most config.outbox.batchSize (10)
+  // rows per pass from the WHOLE shared outbox table, which every suite in the run writes to
+  // and which is reset only in globalSetup. A fixed 20-pass bound therefore drains at most
+  // ~200 rows, so once earlier files have left more pending rows than that — which depends on
+  // Jest's file ordering, not on this test — the drain silently returns with the queue still
+  // full and "later assertions see only OUR job" stops being true. The loop is now bounded by
+  // PROGRESS (it stops the moment a pass claims nothing) with a wall-clock ceiling, so it
+  // cannot spin forever and cannot terminate early with work outstanding.
+  const deadline = Date.now() + 20000;
+  for (let i = 0; i < 2000; i += 1) {
     const stats = await pollOnce({ registry });
     if (stats.claimed === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(
+        `drainOutbox: still claiming jobs after 20 s (${i + 1} passes) — the shared outbox queue ` +
+          'is not draining; assertions that assume an empty queue would be meaningless.'
+      );
+    }
+  }
+}
+
+/**
+ * Run `fn` (a worker pass) with ONLY `jobIds` due: every other pending row in the shared table
+ * is parked an hour out for the duration and its original available_at restored afterwards.
+ *
+ * DETERMINISM (finding TCBV2-01, second half): draining the queue first is not by itself enough
+ * to make "the next pass claims OUR job" true. A drained foreign job that FAILS is rescheduled
+ * available_at = now() + backoffBaseMs (5 s), so it becomes due again inside this file's own
+ * run and competes for the 10 claim slots of the very next pass — and the claim is ordered by
+ * available_at, so those older rows win. Measured on this tree with foreign pending rows seeded
+ * ahead of the file: 600 rows still passed, 3000 rows failed at the 'redelivery is exactly-once'
+ * assertion with `Expected: 2 / Received: 0` because the booking's two notify.booking rows were
+ * never claimed. Parking makes each pass depend only on rows the test itself created, so the
+ * assertions below hold at any queue depth. The pass semantics are unchanged: exactly one
+ * pollOnce per call site, claiming exactly the jobs named here.
+ *
+ * @param {Array<string|number>} jobIds outbox_jobs.id values this pass must be able to claim
+ * @param {() => Promise<T>} fn
+ * @returns {Promise<T>}
+ * @template T
+ */
+async function withOnlyTheseDue(jobIds, fn) {
+  const ids = jobIds.map(String);
+  const { rows: parked } = await query(
+    `SELECT id, available_at FROM outbox_jobs
+      WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))`,
+    [ids]
+  );
+  await query(
+    `UPDATE outbox_jobs SET available_at = now() + interval '1 hour'
+      WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))`,
+    [ids]
+  );
+  try {
+    return await fn();
+  } finally {
+    for (const row of parked) {
+      await query('UPDATE outbox_jobs SET available_at = $2 WHERE id = $1', [
+        row.id,
+        row.available_at,
+      ]);
+    }
   }
 }
 
@@ -83,8 +143,9 @@ describe('FR-13 / TC-13 — deferred notification mechanism (wave-2 substrate)',
     const jobId = jobs[0].id;
 
     // Worker hits the injected failure: job retried with backoff, attempt row recorded,
-    // and the user row is UNTOUCHED.
-    await pollOnce({ registry });
+    // and the user row is UNTOUCHED. Scoped to OUR row (TCBV2-01) so a foreign job can neither
+    // take this pass's claim slots nor eat one of the injected failures.
+    await withOnlyTheseDue([jobId], () => pollOnce({ registry }));
     const { rows: afterFail } = await query('SELECT * FROM outbox_jobs WHERE id = $1', [jobId]);
     expect(afterFail[0].status).toBe('pending'); // retrying, not lost, not dead
     expect(afterFail[0].attempt_count).toBe(1);
@@ -104,7 +165,7 @@ describe('FR-13 / TC-13 — deferred notification mechanism (wave-2 substrate)',
     // Recovery: clear failures, make the job due again, deliver exactly once.
     mockTransport.reset();
     await query('UPDATE outbox_jobs SET available_at = now() WHERE id = $1', [jobId]);
-    await pollOnce({ registry });
+    await withOnlyTheseDue([jobId], () => pollOnce({ registry }));
     const { rows: delivered } = await query('SELECT * FROM outbox_jobs WHERE id = $1', [jobId]);
     expect(delivered[0].status).toBe('delivered');
 
@@ -324,9 +385,14 @@ describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)
     expect(committed[0].status).toBe('pending');
 
     // Worker pass 1: both notify jobs hit the injected failures → retrying, attempt rows.
+    // Scoped to THIS booking's rows (TCBV2-01): one pass has 10 claim slots, and foreign rows
+    // are older, so an unscoped pass claims them instead once the shared queue is deep.
     const registry = createRegistry([notifyHandler]);
-    await pollOnce({ registry });
     let jobs = await notifyJobsFor(bookingId);
+    const notifyIds = jobs.map((j) => j.id);
+    expect(notifyIds).toHaveLength(2);
+    await withOnlyTheseDue(notifyIds, () => pollOnce({ registry }));
+    jobs = await notifyJobsFor(bookingId);
     for (const job of jobs) {
       expect(job.status).toBe('pending'); // retried with backoff, not lost, not dead
       expect(job.attempt_count).toBe(1);
@@ -346,7 +412,7 @@ describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)
         WHERE type = 'notify.booking' AND payload->>'bookingId' = $1`,
       [bookingId]
     );
-    await pollOnce({ registry });
+    await withOnlyTheseDue(notifyIds, () => pollOnce({ registry }));
     jobs = await notifyJobsFor(bookingId);
     for (const job of jobs) expect(job.status).toBe('delivered');
     const { rows: sent } = await query(
@@ -370,7 +436,12 @@ describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)
     const bookingId = res.body.booking.id;
 
     const registry = createRegistry([notifyHandler]);
-    await pollOnce({ registry });
+    // Scoped to THIS booking's two notify rows (TCBV2-01): with a deep shared queue an
+    // unscoped pass spends its 10 claim slots on older foreign rows and delivers nothing here,
+    // which is exactly how this assertion failed under a seeded 3000-row queue.
+    const notifyIds = (await notifyJobsFor(bookingId)).map((j) => j.id);
+    expect(notifyIds).toHaveLength(2);
+    await withOnlyTheseDue(notifyIds, () => pollOnce({ registry }));
     const countSent = async () => {
       const { rows } = await query(
         `SELECT count(*)::int AS c FROM notification_attempts
@@ -389,7 +460,7 @@ describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)
         WHERE type = 'notify.booking' AND payload->>'bookingId' = $1`,
       [bookingId]
     );
-    await pollOnce({ registry });
+    await withOnlyTheseDue(notifyIds, () => pollOnce({ registry }));
     expect(await countSent()).toBe(afterFirst); // no double-send
   });
 });

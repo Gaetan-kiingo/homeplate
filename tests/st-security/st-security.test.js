@@ -46,6 +46,30 @@ function configWith(serverOverrides = {}, rootOverrides = {}) {
 // App under test: transport relaxed (test env) so Supertest can drive it over http.
 const app = createApp({ config: baseConfig, logger: quietLogger() });
 
+// ---------------------------------------------------------------------------------------------
+// DETERMINISM HARNESS (verification round 2 — finding STS-R2-01)
+// Supertest's default `request(expressApp)` binds a throwaway server to the WILDCARD address
+// ('::') and then connects to 127.0.0.1. The loopback ephemeral-port space is machine-global, and a
+// SPECIFIC 127.0.0.1 bind shadows a wildcard one for 127.0.0.1 clients, so whenever any other
+// process on the host already holds 127.0.0.1:<the port jest was handed> — a sibling verifier
+// lane, tests/rt-lt-resilience/lt01-race.test.js / lt01-run.js (both bind '127.0.0.1'), an
+// editor helper, a local model server — the request silently lands on THAT server. Observed in
+// this lane on unchanged code: `read ECONNRESET`, a 200 whose body has no `user`, and a
+// registration that created no row. Binding the specific loopback address ourselves is
+// unshadowable (a second 127.0.0.1 bind gets EADDRINUSE, so the port is never handed out twice),
+// so every request in this file goes over a socket that can only reach OUR app.
+const boundServers = [];
+function bind(target) {
+  const server = require('http').createServer(target).listen(0, '127.0.0.1');
+  boundServers.push(server);
+  return server;
+}
+afterAll(async () => {
+  for (const s of boundServers) await new Promise((resolve) => s.close(resolve));
+});
+const listener = bind(app);
+const api = () => request(listener);
+
 function cookieFromLogin(res) {
   const setCookie = res.headers['set-cookie'] || [];
   const hp = setCookie.find((c) => c.startsWith(`${baseConfig.auth.sessionCookieName}=`));
@@ -94,15 +118,13 @@ describe('ST-01 TLS enforcement (NFR-03, AB-05)', () => {
       config: configWith({ enforceHttps: true }),
       logger: quietLogger(),
     });
-    const res = await request(httpsApp).get('/api/users/me');
+    const res = await request(bind(httpsApp)).get('/api/users/me');
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('HTTPS_REQUIRED');
   });
 
   test('HSTS header (max-age >= 15552000) is present on responses', async () => {
-    const res = await request(app)
-      .post('/api/auth/login')
-      .send({ email: 'x@y.z', password: 'nope' });
+    const res = await api().post('/api/auth/login').send({ email: 'x@y.z', password: 'nope' });
     const hsts = res.headers['strict-transport-security'];
     expect(hsts).toBeTruthy();
     const m = /max-age=(\d+)/.exec(hsts);
@@ -125,7 +147,12 @@ describe('ST-01 TLS enforcement (NFR-03, AB-05)', () => {
     const server = https.createServer(buildTlsOptions(baseConfig), (req, res) => {
       res.writeHead(200).end('ok');
     });
-    server.listen(0);
+    // DETERMINISM (round 2, finding STS-R2-01): bind the SPECIFIC loopback address rather than
+    // the wildcard. A wildcard ('::') bind leaves 127.0.0.1:<same port> free for a sibling
+    // process to claim with a CLEARTEXT server, and BSD then routes our own client to it —
+    // tls.connect dies with ERR_SSL_PACKET_LENGTH_TOO_LONG and the TLS test goes red for a
+    // reason that has nothing to do with TLS. A specific bind cannot be shadowed.
+    server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const port = server.address().port;
     try {
@@ -181,9 +208,7 @@ describe('ST-02 password hashing (NFR-04)', () => {
   test('register stores an Argon2id/bcrypt hash, never the plaintext', async () => {
     const email = newEmail();
     const password = 'CorrectHorseBatteryStaple1';
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email, password, fullName: 'Pat Q' });
+    const res = await api().post('/api/auth/register').send({ email, password, fullName: 'Pat Q' });
     expect(res.status).toBe(201);
 
     const { rows } = await db.query('SELECT password_hash FROM users WHERE email = $1', [email]);
@@ -206,7 +231,7 @@ describe('ST-02 password hashing (NFR-04)', () => {
   test('plaintext appears in no column of the row', async () => {
     const email = newEmail();
     const password = 'UniqueSecret-9f3aQ!plain';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     const serialized = JSON.stringify(rows[0]);
     expect(serialized).not.toContain(password);
@@ -216,8 +241,8 @@ describe('ST-02 password hashing (NFR-04)', () => {
     const password = 'SamePasswordTwice-123';
     const e1 = newEmail();
     const e2 = newEmail();
-    await request(app).post('/api/auth/register').send({ email: e1, password });
-    await request(app).post('/api/auth/register').send({ email: e2, password });
+    await api().post('/api/auth/register').send({ email: e1, password });
+    await api().post('/api/auth/register').send({ email: e2, password });
     const { rows } = await db.query(
       'SELECT email, password_hash FROM users WHERE email = ANY($1)',
       [[e1, e2]]
@@ -229,9 +254,9 @@ describe('ST-02 password hashing (NFR-04)', () => {
   test('register/login responses never echo the password field', async () => {
     const email = newEmail();
     const password = 'NeverEchoed-55';
-    const reg = await request(app).post('/api/auth/register').send({ email, password });
+    const reg = await api().post('/api/auth/register').send({ email, password });
     expect(JSON.stringify(reg.body)).not.toContain(password);
-    const login = await request(app).post('/api/auth/login').send({ email, password });
+    const login = await api().post('/api/auth/login').send({ email, password });
     expect(JSON.stringify(login.body)).not.toContain(password);
     await delRateLimitKeys(email);
   });
@@ -264,18 +289,16 @@ describe('ST-03 login lockout (NFR-05)', () => {
   test('5 failures then 6th locked out with Retry-After even for correct credentials', async () => {
     const email = newEmail();
     const password = 'RealPassword-321';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
 
     // Attempts 1..5: wrong password -> 401 invalid credentials.
     for (let i = 1; i <= 5; i += 1) {
-      const res = await request(app)
-        .post('/api/auth/login')
-        .send({ email, password: 'wrong-pass' });
+      const res = await api().post('/api/auth/login').send({ email, password: 'wrong-pass' });
       expect(res.status).toBe(401);
     }
     // Attempt 6: CORRECT credentials, but locked out -> 429 with Retry-After.
-    const locked = await request(app).post('/api/auth/login').send({ email, password });
+    const locked = await api().post('/api/auth/login').send({ email, password });
     expect(locked.status).toBe(429);
     expect(locked.headers['retry-after']).toBeTruthy();
     expect(Number(locked.headers['retry-after'])).toBeGreaterThan(0);
@@ -286,14 +309,14 @@ describe('ST-03 login lockout (NFR-05)', () => {
   test('after the window resets, correct credentials succeed', async () => {
     const email = newEmail();
     const password = 'RealPassword-654';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
     for (let i = 1; i <= 5; i += 1) {
-      await request(app).post('/api/auth/login').send({ email, password: 'wrong-pass' });
+      await api().post('/api/auth/login').send({ email, password: 'wrong-pass' });
     }
     // Simulate window expiry by clearing the counters (TTL elapse).
     await delRateLimitKeys(email);
-    const ok = await request(app).post('/api/auth/login').send({ email, password });
+    const ok = await api().post('/api/auth/login').send({ email, password });
     expect(ok.status).toBe(200);
     await delRateLimitKeys(email);
   });
@@ -301,14 +324,14 @@ describe('ST-03 login lockout (NFR-05)', () => {
   test('a successful login resets the account counter', async () => {
     const email = newEmail();
     const password = 'RealPassword-987';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
     // 4 failures (below threshold)
     for (let i = 1; i <= 4; i += 1) {
-      await request(app).post('/api/auth/login').send({ email, password: 'wrong-pass' });
+      await api().post('/api/auth/login').send({ email, password: 'wrong-pass' });
     }
     // success resets account counter
-    const ok = await request(app).post('/api/auth/login').send({ email, password });
+    const ok = await api().post('/api/auth/login').send({ email, password });
     expect(ok.status).toBe(200);
     const acct = await redis.get(rateLimit.accountKey(email));
     expect(acct === null || Number(acct) === 0).toBe(true);
@@ -318,14 +341,14 @@ describe('ST-03 login lockout (NFR-05)', () => {
   test('AB-05 scripted brute-force of 50 attempts: locked from attempt 6 on, correct password refused throughout', async () => {
     const email = newEmail();
     const password = 'RealPassword-050';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
 
     const statuses = [];
     for (let i = 1; i <= 50; i += 1) {
       // Attackers mix guesses; make attempt 30 the CORRECT password — it must still be 429.
       const guess = i === 30 ? password : `guess-${i}`;
-      const res = await request(app).post('/api/auth/login').send({ email, password: guess });
+      const res = await api().post('/api/auth/login').send({ email, password: guess });
       statuses.push(res.status);
     }
     expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
@@ -337,9 +360,9 @@ describe('ST-03 login lockout (NFR-05)', () => {
   test('rate-limit counters are stored in Redis keyed by account and IP with a TTL', async () => {
     const email = newEmail();
     const password = 'RealPassword-000';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
-    await request(app).post('/api/auth/login').send({ email, password: 'wrong-pass' });
+    await api().post('/api/auth/login').send({ email, password: 'wrong-pass' });
     const ttl = await redis.ttl(rateLimit.accountKey(email));
     expect(ttl).toBeGreaterThan(0);
     expect(ttl).toBeLessThanOrEqual(baseConfig.auth.loginWindowSeconds);
@@ -362,15 +385,15 @@ describe('ST-04 injection defenses (NFR-11, AB-06)', () => {
     const before = await db.countRows('users');
     for (const p of SQLI) {
       // login email/password
-      const r1 = await request(app).post('/api/auth/login').send({ email: p, password: p });
+      const r1 = await api().post('/api/auth/login').send({ email: p, password: p });
       expect(r1.status).not.toBe(500);
       // register with payload as fullName (valid email so it reaches the DB layer)
-      const r2 = await request(app)
+      const r2 = await api()
         .post('/api/auth/register')
         .send({ email: newEmail(), password: 'ValidPass-123', fullName: p });
       expect(r2.status).not.toBe(500);
       // verify-email token param
-      const r3 = await request(app).get('/api/auth/verify-email').query({ token: p });
+      const r3 = await api().get('/api/auth/verify-email').query({ token: p });
       expect(r3.status).not.toBe(500);
     }
     // users table intact (still queryable, row count did not collapse to error)
@@ -381,7 +404,7 @@ describe('ST-04 injection defenses (NFR-11, AB-06)', () => {
   test('XSS payloads in stored profile text are escaped (no raw <script> persists)', async () => {
     for (const p of XSS) {
       const email = newEmail();
-      const res = await request(app)
+      const res = await api()
         .post('/api/auth/register')
         .send({ email, password: 'ValidPass-123', fullName: p });
       expect(res.status).not.toBe(500);
@@ -455,7 +478,7 @@ describe('ST-04 injection defenses (NFR-11, AB-06)', () => {
 // ---------------------------------------------------------------------------------------------
 describe('ST-05 erasure (NFR-12) — endpoint/job are wave-4; primitives exist', () => {
   test('DELETE /api/users/me is NOT yet implemented (no erasure endpoint in this run)', async () => {
-    const res = await request(app).delete('/api/users/me');
+    const res = await api().delete('/api/users/me');
     // No DELETE handler => 404/405, never a 2xx erasure confirmation.
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect([404, 405]).toContain(res.status);
@@ -508,9 +531,9 @@ describe('ST-06 data protection (NFR-13)', () => {
   async function registerAndLogin() {
     const email = newEmail();
     const password = 'DataProtect-123';
-    await request(app).post('/api/auth/register').send({ email, password, fullName: 'Data Owner' });
+    await api().post('/api/auth/register').send({ email, password, fullName: 'Data Owner' });
     await delRateLimitKeys(email);
-    const login = await request(app).post('/api/auth/login').send({ email, password });
+    const login = await api().post('/api/auth/login').send({ email, password });
     return { email, cookie: cookieFromLogin(login), userId: login.body.user.id };
   }
 
@@ -527,7 +550,7 @@ describe('ST-06 data protection (NFR-13)', () => {
   test('phone + emergency contact are stored as ciphertext (not plaintext) in the DB', async () => {
     const { cookie, userId } = await registerAndLogin();
     expect(cookie).toBeTruthy();
-    const patch = await request(app)
+    const patch = await api()
       .patch('/api/users/me')
       .set('Cookie', cookie)
       .send({
@@ -557,7 +580,7 @@ describe('ST-06 data protection (NFR-13)', () => {
 
   test('GET /api/users/me output is an allowlist — no password_hash / raw ciphertext leaks', async () => {
     const { cookie } = await registerAndLogin();
-    const res = await request(app).get('/api/users/me').set('Cookie', cookie);
+    const res = await api().get('/api/users/me').set('Cookie', cookie);
     expect(res.status).toBe(200);
     const flat = JSON.stringify(res.body);
     expect(flat).not.toMatch(/password_hash/);
@@ -588,7 +611,7 @@ describe('ST-06 data protection (NFR-13)', () => {
 
   test('POST /api/users/me/export is NOT yet implemented (wave-4 U4-PRIVACY)', async () => {
     const { cookie } = await registerAndLogin();
-    const res = await request(app).post('/api/users/me/export').set('Cookie', cookie);
+    const res = await api().post('/api/users/me/export').set('Cookie', cookie);
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect([404, 405]).toContain(res.status);
   });
@@ -618,9 +641,9 @@ describe('Abuse cases AB-01..AB-08', () => {
   test('AB-05 account takeover: opaque >=128-bit session cookie, HttpOnly+Secure+SameSite; logout invalidates', async () => {
     const email = newEmail();
     const password = 'Takeover-123';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await delRateLimitKeys(email);
-    const login = await request(app).post('/api/auth/login').send({ email, password });
+    const login = await api().post('/api/auth/login').send({ email, password });
     const setCookie = (login.headers['set-cookie'] || [])[0] || '';
     expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/Secure/i);
@@ -631,10 +654,10 @@ describe('Abuse cases AB-01..AB-08', () => {
     expect(token.length).toBeGreaterThanOrEqual(43);
 
     // Session works, then logout invalidates it.
-    const me1 = await request(app).get('/api/users/me').set('Cookie', cookie);
+    const me1 = await api().get('/api/users/me').set('Cookie', cookie);
     expect(me1.status).toBe(200);
-    await request(app).post('/api/auth/logout').set('Cookie', cookie);
-    const me2 = await request(app).get('/api/users/me').set('Cookie', cookie);
+    await api().post('/api/auth/logout').set('Cookie', cookie);
+    const me2 = await api().get('/api/users/me').set('Cookie', cookie);
     expect(me2.status).toBe(401);
     await delRateLimitKeys(email);
   });
@@ -642,14 +665,14 @@ describe('Abuse cases AB-01..AB-08', () => {
   test('AB-07 duplicate email registration -> 409 (unique constraint)', async () => {
     const email = newEmail();
     const password = 'DupEmail-123';
-    const r1 = await request(app).post('/api/auth/register').send({ email, password });
+    const r1 = await api().post('/api/auth/register').send({ email, password });
     expect(r1.status).toBe(201);
-    const r2 = await request(app).post('/api/auth/register').send({ email, password });
+    const r2 = await api().post('/api/auth/register').send({ email, password });
     expect(r2.status).toBe(409);
   });
 
   test('AB-08 scraping personal data: unauthenticated profile read -> 401', async () => {
-    const res = await request(app).get('/api/users/me');
+    const res = await api().get('/api/users/me');
     expect(res.status).toBe(401);
   });
 

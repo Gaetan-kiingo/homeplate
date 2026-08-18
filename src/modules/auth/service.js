@@ -10,7 +10,11 @@
 //                   afterwards by design, so it can neither ride in the outbox payload nor
 //                   be reconstructed from the stored digest). verifyEmail() flips the flag
 //                   only for a correct, unconsumed, unexpired token; anything else is 400
-//                   with the flag unchanged.
+//                   with the flag unchanged. resendVerificationEmail() is the RECOVERY path
+//                   (NFR-09): when the first delivery dead-letters or never arrives it
+//                   commits a fresh token + a fresh outbox row in one transaction, throttled
+//                   on its own counter and answering identically for an unknown, an
+//                   already-verified and a freshly re-queued address (AB-05).
 //   NFR-04 (ST-02) — passwords enter only ./passwords.hashPassword; the plaintext is never
 //                   stored, logged or echoed anywhere.
 //   NFR-05 (ST-03) — login() consults ./rateLimit BEFORE verifying credentials: the 6th
@@ -26,7 +30,8 @@
 //   AB-07          — duplicate email registration maps the users_email_key unique-constraint
 //                   violation (23505) to 409, never a second row.
 //
-// Public interface (build-plan §3): authService.register/login/logout/verifyEmail.
+// Public interface (build-plan §3): authService.register/login/logout/verifyEmail/
+// resendVerificationEmail (request path) + createVerificationLink (WORKER path only).
 'use strict';
 
 const config = require('../../config');
@@ -125,6 +130,87 @@ async function register({ email, password, fullName, phone }, { log = logger } =
     entityId: user.id,
   });
   return { user, verification };
+}
+
+/**
+ * Re-queue a verification email (FR-10 recovery path; NFR-09 "deferred, never dropped").
+ *
+ * Why this exists (finding TCBV2-03): users.email_verified is written ONLY by consuming a
+ * raw token that arrives by email, and the only producer of a mailable link is the
+ * 'email.verification' outbox job. config.outbox.maxAttempts bounds the worker's retry
+ * budget, so a provider outage longer than that budget DEAD-LETTERS the job — and without a
+ * way to ask for another one the account could never be verified, which (FR-09/NFR-06)
+ * refuses POST /api/bookings and POST /api/listings for that user forever. A bounced or
+ * mistyped-but-real mailbox produces the same dead end.
+ *
+ * Behaviour (all four cases are indistinguishable to the caller — the route always answers
+ * 202, AB-05 anti-enumeration):
+ *   - unknown address, soft-deleted account, or already-verified account → nothing is
+ *     enqueued (an already-verified account has nothing to verify, and mailing strangers on
+ *     request would make this an open relay for harassment);
+ *   - active unverified account → a FRESH single-use token and its 'email.verification'
+ *     outbox row commit in ONE transaction, exactly as register() does (ADR-001/003: no dual
+ *     writes, payload carries IDs only, and no adapter is touched on this request path —
+ *     the worker delivers).
+ *
+ * The new job's dedupeKey derives from the NEW token digest, so it is independent of the
+ * original job: a dead-lettered predecessor cannot suppress it, and the worker mints the
+ * mailable link at delivery time as always (createVerificationLink).
+ *
+ * @param {{email: string, ip?: string}} input  validated body + req.ip (throttle key)
+ * @param {{log?: object}} [ctx]
+ * @returns {Promise<{enqueued: boolean}>} for logging/tests; the ROUTE must not vary its
+ *   response on this value.
+ * @throws {RateLimitError} when the resend throttle is engaged (its own counter — never the
+ *   login lockout, so this endpoint cannot be used to lock anyone out of login)
+ */
+async function resendVerificationEmail({ email, ip }, { log = logger } = {}) {
+  const attempt = { email, ip: ip || 'unknown' };
+
+  const gate = await rateLimit.checkResend(attempt);
+  if (gate.limited) {
+    audit(log, { event: 'user.verification_resent', outcome: 'failure', reason: 'rate_limited' });
+    throw new RateLimitError('Too many verification requests — try again later', {
+      code: 'VERIFICATION_RESEND_RATE_LIMITED',
+      details: { retryAfterSeconds: gate.retryAfterSeconds },
+    });
+  }
+  // Counted BEFORE the account lookup so an existing and a non-existent address consume the
+  // budget identically (AB-05).
+  await rateLimit.recordResend(attempt);
+
+  const user = await usersRepo.findByEmail(email);
+  if (!user || user.deleted_at !== null || user.email_verified) {
+    // NFR-08: the audit trail records what really happened (IDs only); the CLIENT still gets
+    // the same 202 it gets for a successful re-queue.
+    audit(log, {
+      event: 'user.verification_resent',
+      outcome: 'noop',
+      reason: !user || user.deleted_at !== null ? 'no_active_account' : 'already_verified',
+      actorUserId: user ? user.id : undefined,
+    });
+    return { enqueued: false };
+  }
+
+  await withTransaction(async (client) => {
+    // FR-10: a fresh single-use token (digest only in PostgreSQL) …
+    const token = await tokens.createEmailVerificationToken(client, user.id);
+    // … and its delivery job, on the SAME client (ADR-001/003 — IDs only, no dual writes).
+    await outbox.enqueue(client, {
+      type: EMAIL_VERIFICATION_JOB_TYPE,
+      payload: { userId: user.id, tokenHash: token.hash },
+      dedupeKey: `${EMAIL_VERIFICATION_JOB_TYPE}:${token.hash}`,
+    });
+  });
+
+  audit(log, {
+    event: 'user.verification_resent',
+    outcome: 'success',
+    actorUserId: user.id,
+    entityType: 'user',
+    entityId: user.id,
+  });
+  return { enqueued: true };
 }
 
 /**
@@ -295,6 +381,7 @@ module.exports = {
   login,
   logout,
   verifyEmail,
+  resendVerificationEmail,
   createVerificationLink,
   EMAIL_VERIFICATION_JOB_TYPE,
   VERIFY_EMAIL_PATH,

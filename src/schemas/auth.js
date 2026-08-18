@@ -51,6 +51,12 @@ const login = z.object({
   password: z.string().min(1, 'is required').max(72, 'must be at most 72 characters'),
 });
 
+/** POST /api/auth/resend-verification (FR-10 recovery path). The address is the ONLY input:
+ *  an account that never received its first verification email can prove nothing else yet.
+ *  The route always answers 202, so this shape must not become a way to probe which
+ *  addresses exist (AB-05 anti-enumeration). */
+const resendVerification = z.object({ email });
+
 /** POST /api/auth/verify-email — token in the body (FR-10). */
 const verifyEmailBody = z.object({ token: verificationToken });
 
@@ -99,6 +105,7 @@ const noInput = z.object({});
 module.exports = {
   register,
   login,
+  resendVerification,
   verifyEmailBody,
   verifyEmailQuery,
   profileUpdate,

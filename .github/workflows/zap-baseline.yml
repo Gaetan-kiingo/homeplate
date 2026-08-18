@@ -9,10 +9,18 @@
 #   * manually here (Actions -> "ZAP baseline (AB-06)" -> Run workflow), and
 #   * locally with `npm run scan:zap` against `npm run dev`.
 #
-# Both paths run the SAME npm scripts, so the procedure cannot drift between CI and a laptop.
+# Both paths run the SAME npm scripts and the SAME scan definition
+# (.github/zap/baseline-plan.yaml), so the procedure cannot drift between CI and a laptop.
 # Wave 7 (U7-PERF-SEC) closes AB-06 by committing the produced report and its alert table under
 # docs/results/ next to the IT-03 and LT-01/LT-02 results, with the run date and commit SHA.
 # Full procedure, prerequisites and the self-signed-certificate caveat: .github/SECURITY-SCANS.md
+#
+# COVERAGE, NOT JUST ALERT COUNT (verification finding STS-R2-03). Homeplate is a JSON API with
+# no HTML at `/`, so a spider-driven baseline crawls exactly one 404 and then reports "no
+# high-risk alerts" having tested nothing. The plan therefore drives an explicit `requestor`
+# job over the wave-0..3 route registry, exports every URL it actually requested, and the gate
+# step below fails when that count falls under ZAP_MIN_URLS. A green job here means the scan
+# reached the API — not merely that it ran.
 #
 # No secrets are used: the instance boots from .env.example with mock adapters only
 # (ADR-007 mock LLM, ADR-011 mock notification transport), so nothing here calls a third party.
@@ -74,12 +82,15 @@ jobs:
           exit 1
 
       - name: OWASP ZAP baseline scan
-        # The scan itself must not decide the job: zap-baseline.py exits non-zero for WARN-level
-        # findings too. The next step is the AB-06 gate and fails only on HIGH-risk alerts.
+        # The scan itself must not decide the job: the automation plan exits non-zero for
+        # WARN-level passive findings and for the spider's expected 404 on `/` as well. The
+        # next step is the AB-06 gate and it is the only thing that may fail this job.
         continue-on-error: true
         run: npm run scan:zap:run
 
-      - name: AB-06 gate — no high-risk alerts
+      - name: AB-06 gate — no high-risk alerts, over a real URL surface
+        # Fails on any High-risk alert AND on a scan that reached fewer than ZAP_MIN_URLS
+        # distinct URLs (STS-R2-03: a one-URL crawl is not evidence about the API).
         run: npm run scan:zap:report
 
       - name: Stop the app
@@ -93,6 +104,6 @@ jobs:
         with:
           name: zap-baseline
           path: |
-            docs/results/zap-baseline.*
+            docs/results/zap-baseline*
             zap-dev-server.log
           if-no-files-found: warn

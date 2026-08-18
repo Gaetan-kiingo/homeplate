@@ -96,11 +96,32 @@ async function approve(listingId) {
   await dbh.query(`UPDATE listings SET moderation_status = 'approved' WHERE id = $1`, [listingId]);
 }
 
-beforeAll(() => {
+// Watermark for the ADR-003 payload audit below. The suite shares ONE database across 60
+// serially-run suite files and outbox_jobs is only reset in globalSetup, so a whole-table scan
+// audits OTHER files' rows as if this file's production paths had written them:
+// tests/rt-lt-resilience/rt02-outbox.test.js leaves `rt02.concurrent {"n":0..5}` and
+// `rt02.crash/{rt02.retry} {"entityId":"rt02-crash-1"}` behind for good, and other files exercise
+// invalid-payload paths that write and then delete a row of a PRODUCTION type (e.g. a
+// `listing.geocode {"listingId":"not-a-uuid"}`). Whether those files run before or after this one
+// is decided by Jest's timing-cache sequencer, which is why the audit failed in some full-suite
+// runs and passed in others (RTLT-04 / ADRC2-01). jest.config maxWorkers=1 runs suite files
+// serially and simultaneous `npm test` runs are serialised by the globalSetup advisory lock, so
+// every outbox_jobs row with created_at >= this watermark was caused by THIS file — and this file
+// never inserts a synthetic outbox row itself (its only direct enqueue calls are the two that
+// must REJECT, at "(b) outbox.enqueue REFUSES the pool"). Scoping the strict audit to that
+// watermark therefore audits exactly this file's production-written rows and nothing else, with
+// no OR clause re-opening the scan to global table state. It is also strictly WIDER than filtering
+// by registered handler type: it keeps auditing production rows whose handler ships later, such as
+// the `moderation.scan` row the listing create path already writes (wave-4 handler).
+let outboxWatermark;
+
+beforeAll(async () => {
   const { createApp } = require('../../src/app');
   app = createApp();
   config = require('../../src/config');
   sessions = require('../../src/modules/auth/sessions');
+  const { rows } = await dbh.query('SELECT now() AS ts');
+  outboxWatermark = rows[0].ts;
 });
 
 afterAll(async () => {
@@ -375,9 +396,28 @@ describe('(b) ADR-001/003 — one transaction, proven at the row level', () => {
 // (c) ADR-003 — outbox payloads carry IDs only
 // ============================================================================================
 describe('(c) ADR-003 — persisted outbox payloads are IDs only', () => {
-  test('every payload key/value in the whole outbox table is an id, enum or digest', async () => {
-    const { rows } = await dbh.query('SELECT id, type, payload, dedupe_key FROM outbox_jobs');
+  test('every payload key/value written by production code is an id, enum or digest', async () => {
+    // Every outbox row this file's production paths wrote, and only those (see outboxWatermark).
+    // No `OR type = ANY(...)` here: that half re-globalised the scan to every row of a production
+    // type written by any of the other 60 suites in the run, which is what made this assertion
+    // order-dependent and intermittently red (RTLT-04).
+    const { rows } = await dbh.query(
+      `SELECT id, type, payload, dedupe_key FROM outbox_jobs WHERE created_at >= $1`,
+      [outboxWatermark]
+    );
+    // Non-vacuity, in two parts: the window must hold rows at all, and at least one must be of a
+    // REGISTERED production handler type — read from the handler modules themselves, so a wave-4
+    // handler counts automatically. If the flows above ever stop enqueueing, this fails loudly
+    // instead of auditing an empty set and reporting a green ADR-003 invariant.
+    const productionTypes = fs
+      .readdirSync(path.join(SRC, 'outbox', 'handlers'))
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => require(path.join(SRC, 'outbox', 'handlers', f)).type)
+      .filter(Boolean);
+    expect(productionTypes.length).toBeGreaterThan(0);
     expect(rows.length).toBeGreaterThan(0);
+    const auditedTypes = new Set(rows.map((r) => r.type));
+    expect(productionTypes.filter((t) => auditedTypes.has(t)).length).toBeGreaterThan(0);
     const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const SHA256 = /^[0-9a-f]{64}$/i;
     const ENUMISH = /^[a-z][a-z0-9_.]{0,60}$/;
@@ -892,7 +932,11 @@ describe('(j) ADR-010 — progressive address disclosure across every read surfa
     });
   });
 
-  test('WAVE-4 SURFACES (messaging / moderation views) are not mounted — nothing to leak yet', async () => {
+  // NOTE (round 2): repair round 1 mounted src/modules/safety/routes.js, which owns basePath
+  // '/api' and adds the FIRST moderation view in the tree — GET /api/moderation/alerts. That
+  // surface IS audited, in tests/adr-conformance/reverify-round2-adr.test.js. What remains
+  // unmounted (and therefore has nothing to leak) is listed below.
+  test('the still-unbuilt wave-4 surfaces are not mounted — nothing to leak yet', async () => {
     const guest = await makeEligibleGuest();
     const cookie = await cookieFor(guest);
     for (const p of [
@@ -905,6 +949,9 @@ describe('(j) ADR-010 — progressive address disclosure across every read surfa
       const res = await request(app).get(p).set('Cookie', cookie);
       expect(res.status).toBe(404);
     }
+    // …and the one wave-4-shaped view that DOES exist answers only to a moderator.
+    const denied = await request(app).get('/api/moderation/alerts').set('Cookie', cookie);
+    expect(denied.status).toBe(403);
   });
 });
 
@@ -1161,7 +1208,15 @@ describe('(k) ADR-011 — notification channel policy', () => {
     const dispatch = require('../../src/outbox/dispatch');
     const registry = dispatch.loadHandlers();
     const quiet = { info: () => {}, warn: () => {}, error: () => {}, child: () => quiet };
-    for (let i = 0; i < 5; i += 1) await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
+    // DETERMINISM (verification-report F-01): drain until the queue is empty, not for a fixed number of
+    // passes. pollOnce claims oldest-first across the WHOLE outbox table, so a fixed pass count
+    // silently makes this assertion depend on how many rows sibling suites left behind. The
+    // 5000 is a runaway guard; the `claimed === 0` break is what ends the loop.
+    for (let i = 0; i < 5000; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      const stats = await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
+      if (!stats || stats.claimed === 0) break;
+    }
 
     const { rows } = await dbh.query(
       `SELECT recipient_user_id, channel, status FROM notification_attempts

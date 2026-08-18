@@ -4,8 +4,10 @@
 // Requirement / decision traceability (SRS Appendix B):
 //   FR-10 (TC-10) — POST /register (201 unverified account; the verification token is NEVER
 //                   in the response — inbox ownership is the whole point), GET/POST
-//                   /verify-email (single-use token → email_verified=true; wrong/used/
-//                   expired → 400).
+//                   /verify-email (single-use token → email_verified=true;
+//                   wrong/used/expired → 400), POST /resend-verification (recovery path: a
+//                   dead-lettered or lost delivery must not strand an account forever —
+//                   always 202, throttled on its own counter).
 //   NFR-05 (ST-03) — a rate-limited login answers 429 WITH a Retry-After header.
 //   NFR-11 / AB-06 — every route declares its zod schema through the shared U1-VALID
 //                   middleware; hostile input arrives as 422 or inert data, never a 500.
@@ -60,6 +62,46 @@ router.get(
   '/verify-email',
   validate({ query: authSchemas.verifyEmailQuery }),
   verifyEmailHandler((req) => req.query.token)
+);
+
+// POST /api/auth/resend-verification — FR-10 recovery path (NFR-09 "deferred, never
+// dropped"): re-queue a verification email when the first one never arrived — the outbox job
+// exhausted config.outbox.maxAttempts during a provider outage and dead-lettered, the mailbox
+// bounced, or the message was lost. Without this route users.email_verified could never
+// become true for that account and the FR-09 eligibility policy would refuse POST /api/bookings
+// and POST /api/listings forever.
+//
+// Deliberately session-OPTIONAL and keyed on the address: an account that has not proved
+// inbox ownership yet may have no live session, and requiring one would leave exactly the
+// stranded users this route exists for with no way out.
+//
+// AB-05 anti-enumeration: the answer is ALWAYS 202 — unknown address, soft-deleted account,
+// already-verified account and freshly re-queued job are indistinguishable to the caller.
+// NFR-05 discipline: throttled on its OWN counter (auth/rateLimit.checkResend), never the
+// login lockout counter, so nobody can lock an account out of login by requesting
+// verification emails; the throttle counts unknown addresses too, so even the 429 boundary
+// reveals nothing. The 429 carries Retry-After exactly as login does (ST-03).
+//
+// ADR-001/003: this handler enqueues an outbox row and returns — it touches no adapter; the
+// worker delivers the mail.
+router.post(
+  '/resend-verification',
+  validate({ body: authSchemas.resendVerification }),
+  async (req, res, next) => {
+    try {
+      await authService.resendVerificationEmail(
+        { email: req.body.email, ip: req.ip },
+        { log: req.log }
+      );
+      // The result is deliberately NOT reflected in the response (see AB-05 above).
+      res.status(202).json({ accepted: true });
+    } catch (err) {
+      if (err instanceof RateLimitError && err.details && err.details.retryAfterSeconds) {
+        res.set('Retry-After', String(err.details.retryAfterSeconds));
+      }
+      next(err);
+    }
+  }
 );
 
 // POST /api/auth/login — NFR-05/AB-05: rate-limited credential check, opaque session cookie.

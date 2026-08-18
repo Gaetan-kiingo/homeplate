@@ -1,0 +1,285 @@
+--- # AB-06 / NFR-11 / ST-04 — OWASP ZAP baseline plan for Homeplate.
+#
+# WHY THIS FILE EXISTS
+# The stock `zap-baseline.py` is spider-driven: it fetches the target root and follows links.
+# Homeplate v1.0 is a JSON API — `/` is a 404 and `client/` does not ship until waves 5–6
+# (SRS §2.1.2) — so the spider has nothing to follow and the whole passive rule set ends up
+# running against ONE 404 response. A report like that says "no high-risk alerts" while having
+# touched none of the API, which is exactly the misreading a recorded AB-06 result must not
+# invite (verification finding STS-R2-03).
+#
+# This plan replaces the crawl with an explicit `requestor` job that walks the wave-0..3 route
+# registry (src/routes/index.js + each src/modules/<name>/routes.js), so the passive rules see
+# real API responses: real security headers, the real 401/404/405 error envelopes, the real
+# `Set-Cookie` on the login path, the real `Retry-After` on a throttled path. The spider job is
+# kept after it so that the moment the React client lands (waves 5–6) the crawl resumes adding
+# pages on top of this floor, with no change to this plan.
+#
+# The `export` job writes every URL ZAP actually requested to zap-baseline-urls.txt. That file
+# is the coverage evidence: `npm run scan:zap:report` counts the distinct URLs in it and refuses
+# to report an AB-06 pass when the scan barely reached the app (ZAP_MIN_URLS).
+#
+# NOTHING HERE ATTACKS. There is no activeScan job: a baseline is passive by definition, and
+# firing payloads is the in-suite ST-04 lane's job (tests/st-security/), which can authenticate,
+# reserve a seat and post a review. Requests below are ordinary, unauthenticated calls.
+#
+# Run it via `npm run scan:zap` — see .github/SECURITY-SCANS.md for the full procedure.
+# ${ZAP_TARGET_URL} is substituted from the environment by the ZAP automation framework; the
+# npm script passes it into the container.
+
+env:
+  contexts:
+    - name: homeplate
+      urls:
+        - ${ZAP_TARGET_URL}
+      includePaths:
+        - ${ZAP_TARGET_URL}.*
+  parameters:
+    # The plan must always reach its report jobs: a single unreachable endpoint or an
+    # unexpected status code is information to record, not a reason to produce no report.
+    # The AB-06 verdict is `npm run scan:zap:report`, never this file's exit code.
+    failOnError: false
+    failOnWarning: false
+    continueOnFailure: true
+    progressToStdout: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      # Alerts are per-rule-per-URL; leaving this unlimited is what makes the URL coverage
+      # visible in the report rather than truncated after the first endpoint.
+      maxAlertsPerRule: 0
+      scanOnlyInScope: true
+
+  # ---------------------------------------------------------------------------------------
+  # The API surface. One entry per wave-0..3 route in the registry, using the method that
+  # route registers. Unauthenticated on purpose: an anonymous caller is the threat model a
+  # baseline scan represents, and the 401 envelope is itself a response worth passive-scanning.
+  # `responseCode` is an assertion — a mismatch is logged as a plan error and shows up in the
+  # run output, which is how a silently moved or unmounted route gets noticed.
+  # ---------------------------------------------------------------------------------------
+  - type: requestor
+    requests:
+      # -- liveness / infrastructure (src/app.js) --
+      - name: health
+        url: ${ZAP_TARGET_URL}/health
+        method: GET
+        responseCode: 200
+      - name: health-method-not-allowed
+        url: ${ZAP_TARGET_URL}/health
+        method: POST
+        responseCode: 405
+      - name: unknown-path-404
+        url: ${ZAP_TARGET_URL}/this-path-does-not-exist
+        method: GET
+        responseCode: 404
+      - name: robots-txt
+        url: ${ZAP_TARGET_URL}/robots.txt
+        method: GET
+        responseCode: 404
+
+      # -- auth (src/modules/auth/routes.js) — FR-08/FR-10, AB-05 --
+      # register/login/resend are the only routes whose *bodies* are sent, because their
+      # responses carry the security-relevant headers a passive scan exists to check:
+      # Set-Cookie flags on login, Retry-After on a throttle, the anti-enumeration 202.
+      - name: auth-register
+        url: ${ZAP_TARGET_URL}/api/auth/register
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{"email":"zap-baseline@homeplate.invalid","password":"Zap-Baseline-Scan-9271","displayName":"ZAP Baseline"}'
+      - name: auth-login-bad-credentials
+        url: ${ZAP_TARGET_URL}/api/auth/login
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{"email":"zap-baseline@homeplate.invalid","password":"not-the-password"}'
+      - name: auth-login-empty-body-422
+        url: ${ZAP_TARGET_URL}/api/auth/login
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 422
+      - name: auth-resend-verification
+        url: ${ZAP_TARGET_URL}/api/auth/resend-verification
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{"email":"zap-baseline@homeplate.invalid"}'
+        responseCode: 202
+      - name: auth-verify-email-get
+        url: ${ZAP_TARGET_URL}/api/auth/verify-email?token=zapbaselinescannotarealtoken
+        method: GET
+      - name: auth-logout
+        url: ${ZAP_TARGET_URL}/api/auth/logout
+        method: POST
+        responseCode: 401
+
+      # -- users (src/modules/users/routes.js) — FR-09 --
+      - name: users-me
+        url: ${ZAP_TARGET_URL}/api/users/me
+        method: GET
+        responseCode: 401
+      - name: users-me-patch
+        url: ${ZAP_TARGET_URL}/api/users/me
+        method: PATCH
+        headers:
+          - 'Content-Type: application/json'
+        data: '{"displayName":"ZAP Baseline"}'
+        responseCode: 401
+
+      # -- listings (src/modules/listings/routes.js) — FR-03/FR-11, ADR-009/010 --
+      - name: listings-create
+        url: ${ZAP_TARGET_URL}/api/listings
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: listings-detail
+        url: ${ZAP_TARGET_URL}/api/listings/00000000-0000-4000-8000-000000000000
+        method: GET
+        responseCode: 401
+      - name: listings-update
+        url: ${ZAP_TARGET_URL}/api/listings/00000000-0000-4000-8000-000000000000
+        method: PATCH
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: listings-cancel
+        url: ${ZAP_TARGET_URL}/api/listings/00000000-0000-4000-8000-000000000000/cancel
+        method: POST
+        responseCode: 401
+
+      # -- search (src/modules/search/routes.js, mounted at /api/listings) — FR-01 --
+      - name: listings-search
+        url: ${ZAP_TARGET_URL}/api/listings/search?lat=32.8801&lng=-117.2340&radiusKm=5
+        method: GET
+        responseCode: 401
+
+      # -- hosts (src/modules/hosts/routes.js) — FR-02, ADR-010 --
+      - name: host-profile
+        url: ${ZAP_TARGET_URL}/api/hosts/00000000-0000-4000-8000-000000000000
+        method: GET
+        responseCode: 401
+      - name: host-reviews
+        url: ${ZAP_TARGET_URL}/api/hosts/00000000-0000-4000-8000-000000000000/reviews
+        method: GET
+        responseCode: 401
+
+      # -- bookings (src/modules/bookings/routes.js) — FR-04/FR-05/FR-12 --
+      - name: bookings-create
+        url: ${ZAP_TARGET_URL}/api/bookings
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: bookings-list
+        url: ${ZAP_TARGET_URL}/api/bookings
+        method: GET
+        responseCode: 401
+      - name: bookings-detail
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000
+        method: GET
+        responseCode: 401
+      - name: bookings-cancel
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/cancel
+        method: POST
+        responseCode: 401
+      - name: bookings-confirm-completion
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/confirm-completion
+        method: POST
+        responseCode: 401
+
+      # -- media (src/modules/media/routes.js) — ADR-004 --
+      - name: media-upload-ticket
+        url: ${ZAP_TARGET_URL}/api/media/uploads
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: media-attach
+        url: ${ZAP_TARGET_URL}/api/media
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: media-delete
+        url: ${ZAP_TARGET_URL}/api/media/00000000-0000-4000-8000-000000000000
+        method: DELETE
+        responseCode: 401
+
+      # -- safety (src/modules/safety/routes.js, mounted at /api) — FR-07 --
+      - name: safety-alert-create
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/safety-alerts
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: moderation-alert-queue
+        url: ${ZAP_TARGET_URL}/api/moderation/alerts
+        method: GET
+        responseCode: 401
+
+  # Kept deliberately: today it adds nothing (no HTML to follow), but it costs a minute and
+  # it is what starts producing coverage on top of the requestor floor once the React client
+  # ships in waves 5–6. Do not delete it when reading a wave-3 run's "0 URLs added".
+  #
+  # maxDuration is a literal, not ${...}: the automation framework substitutes environment
+  # variables into STRING values only and rejects the plan outright ("should be an integer")
+  # when an int field holds one. Raise this number here, in the plan, once there are pages to
+  # walk — do not reintroduce an env var for it.
+  - type: spider
+    parameters:
+      context: homeplate
+      url: ${ZAP_TARGET_URL}
+      maxDuration: 1
+
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 5
+
+  # Coverage evidence for the gate: every URL ZAP actually requested, one per line.
+  - type: export
+    parameters:
+      context: homeplate
+      type: url
+      source: history
+      fileName: /zap/wrk/zap-baseline-urls.txt
+
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk
+      reportFile: zap-baseline
+      reportTitle: Homeplate AB-06 ZAP baseline
+      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk
+      reportFile: zap-baseline
+      reportTitle: Homeplate AB-06 ZAP baseline
+      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+
+  - type: report
+    parameters:
+      template: traditional-md
+      reportDir: /zap/wrk
+      reportFile: zap-baseline
+      reportTitle: Homeplate AB-06 ZAP baseline
+      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+
+  # Reproduces the FAIL-NEW / WARN-NEW / PASS line the packaged zap-baseline.py printed, so the
+  # recorded run notes stay comparable across the switch to this plan.
+  - type: outputSummary
+    parameters:
+      format: Long
+      summaryFile: /zap/wrk/zap-baseline-summary.json

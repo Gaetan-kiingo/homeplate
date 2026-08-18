@@ -360,14 +360,317 @@ describe('SendGrid adapter — live only when configured (ADR-011)', () => {
     ).rejects.toMatchObject({ code: 'SENDGRID_NOT_CONFIGURED', retryable: false });
   });
 
-  test('renderEmail produces a subject and an IDs-only body for known and unknown templates', () => {
-    const known = sendgrid.renderEmail('email-verification', { tokenId: 'tok-1' });
+  // Finding RTLT-05: this test used to assert `known.text` contained 'tokenId: tok-1' — i.e. it
+  // PINNED the wholesale `Object.entries(params)` echo that shipped userId and the FR-10 token's
+  // SHA-256 digest into real mailboxes. The contract is now an explicit per-template allow-list
+  // (DEFAULT DENY), so the assertions below pin the new rule instead: the verification body is a
+  // sentence and a link, the booking/safety bodies carry their one quotable handle, and NO body
+  // ever contains a credential digest.
+  test('renderEmail produces a subject and an allow-listed body for known and unknown templates', () => {
+    const known = sendgrid.renderEmail(
+      'email-verification',
+      { userId: 'u-1', tokenHash: 'a'.repeat(64) },
+      { verificationUrl: 'https://homeplate.test/api/auth/verify-email?token=raw-token-value' }
+    );
     expect(known.subject).toBe('Verify your Homeplate email address');
-    expect(known.text).toContain('tokenId: tok-1');
+    // What the recipient acts on is there…
+    expect(known.text).toContain(
+      'https://homeplate.test/api/auth/verify-email?token=raw-token-value'
+    );
+    // …and the internal ids are not: no Reference block at all for FR-10.
+    expect(known.text).not.toContain('Reference:');
+    expect(known.text).not.toContain('u-1');
+    expect(known.text).not.toContain('tokenHash');
+    expect(sendgrid.referenceFieldsFor('email-verification')).toEqual([]);
+    expect(sendgrid.referenceFieldsFor('email.verification')).toEqual([]);
 
-    const unknown = sendgrid.renderEmail('some-future-template', {});
+    // Templates that DO publish a handle still render it, and only it: `event` is not allow-listed.
+    const booking = sendgrid.renderEmail('booking.created', {
+      bookingId: 'bk-7',
+      event: 'created',
+    });
+    expect(booking.text).toContain('bookingId: bk-7');
+    expect(booking.text).not.toContain('event:');
+
+    // An unregistered template publishes nothing — a new flow cannot leak a payload by omission.
+    const unknown = sendgrid.renderEmail('some-future-template', { internalRef: 'leak-me' });
     expect(unknown.subject).toContain('some-future-template');
     expect(unknown.text).toContain('Notification type: some-future-template');
+    expect(unknown.text).not.toContain('leak-me');
+  });
+
+  test('RTLT-05: no rendered body ever contains a 64-hex credential digest', () => {
+    const digest = 'd05563a52f524bb51fd81e3d87aa48649a180f7c7cb9a12cc8939b45d24fecea';
+    const sha256Anywhere = /[0-9a-f]{64}/i;
+    const templates = [
+      ...Object.values(sendgrid.TEMPLATE_IDS),
+      ...sendgrid.BOOKING_EVENTS.map(sendgrid.templateForBookingEvent),
+      ...Object.keys(sendgrid.EMAIL_SUBJECTS),
+      'some-future-template',
+    ];
+    for (const template of [...new Set(templates)]) {
+      // Every allow-listed key is deliberately fed a digest, plus the real FR-10 payload shape.
+      const params = { userId: 'u-1', tokenHash: digest, bookingId: digest, alertId: digest };
+      const { text } = sendgrid.renderEmail(template, params, {
+        verificationUrl: 'https://homeplate.test/api/auth/verify-email?token=raw-token-value',
+        expiresAt: '2026-01-01T00:00:00.000Z',
+      });
+      expect(text).not.toMatch(sha256Anywhere);
+      expect(text).not.toContain(digest);
+    }
+  });
+
+  // Finding COV-08: isVerificationTemplate / subjectFor / VERIFICATION_TEMPLATE_IDS are part of
+  // this module's published surface (they were exported so the FR-10 and TCB-W3-04 rules could
+  // be asserted from outside), so they get pinned here — an export with no consumer and no test
+  // is an unenforced contract.
+  test('the exported template vocabulary is a pinned contract (FR-10, TCB-W3-04)', () => {
+    // FR-10: BOTH spellings name the one template whose body must carry the single-use link —
+    // the dotted job type the outbox handler emits and the legacy hyphenated one.
+    expect(sendgrid.VERIFICATION_TEMPLATE_IDS).toEqual([
+      'email.verification',
+      'email-verification',
+    ]);
+    expect(Object.isFrozen(sendgrid.VERIFICATION_TEMPLATE_IDS)).toBe(true);
+    expect(sendgrid.isVerificationTemplate('email.verification')).toBe(true);
+    expect(sendgrid.isVerificationTemplate('email-verification')).toBe(true);
+    // and nothing else is: a booking mail must not be forced to carry a credential.
+    expect(sendgrid.isVerificationTemplate(sendgrid.TEMPLATE_IDS.bookingCreated)).toBe(false);
+    expect(sendgrid.isVerificationTemplate('some-future-template')).toBe(false);
+
+    // TCB-W3-04: every id the v1.0 flows actually emit resolves to a real subject, never the
+    // neutral "Homeplate notification (…)" fallback that shipped to guests before the repair.
+    for (const id of Object.values(sendgrid.TEMPLATE_IDS)) {
+      expect(sendgrid.subjectFor(id)).toBe(sendgrid.EMAIL_SUBJECTS[id]);
+      expect(sendgrid.subjectFor(id)).not.toMatch(/^Homeplate notification \(/);
+    }
+    for (const event of sendgrid.BOOKING_EVENTS) {
+      const id = sendgrid.templateForBookingEvent(event);
+      expect(sendgrid.hasSubject(id)).toBe(true);
+      expect(sendgrid.subjectFor(id)).not.toMatch(/^Homeplate notification \(/);
+    }
+    // An unregistered id still renders rather than crashing delivery.
+    expect(sendgrid.subjectFor('some-future-template')).toBe(
+      'Homeplate notification (some-future-template)'
+    );
+
+    // RTLT-05 (same COV-08 rule, applied to the reference registry): every emitted id carries an
+    // EXPLICIT reference decision — default-deny, so a future flow cannot inherit "print whatever
+    // the payload holds" — and the FR-10 verification templates publish nothing at all, because
+    // their params are a user id and the token DIGEST the recipient cannot act on.
+    for (const id of Object.values(sendgrid.TEMPLATE_IDS)) {
+      expect(Object.prototype.hasOwnProperty.call(sendgrid.REFERENCE_FIELDS, id)).toBe(true);
+      expect(sendgrid.referenceFieldsFor(id)).toBe(sendgrid.REFERENCE_FIELDS[id]);
+    }
+    for (const id of sendgrid.VERIFICATION_TEMPLATE_IDS) {
+      expect(sendgrid.referenceFieldsFor(id)).toEqual([]);
+    }
+    // Unregistered templates render no reference block at all (default deny).
+    expect(sendgrid.referenceFieldsFor('some-future-template')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Finding COV-06 residual: liveProviderRefusedInTest() — the ADR-011/ADR-007 fail-closed guard
+// that stands between `npm test` and a third-party API call — had never executed in any run, in
+// EITHER comms adapter. These tests execute it directly, with no network of any kind: the
+// provider SDK is replaced inside an isolated jest registry, once WITHOUT the harness
+// substitution marker (what the real module looks like to the adapter, so the guard must fire)
+// and once WITH it (positive control, so the guard cannot be a blanket refusal that would pass
+// the first assertion while breaking production).
+
+/** Provider SDK names doMock'ed by loadAdapterWithSdk and released after each test. */
+const pendingIsolatedMocks = new Set();
+
+function releaseIsolatedMocks() {
+  for (const name of pendingIsolatedMocks) jest.dontMock(name);
+  pendingIsolatedMocks.clear();
+  // dontMock drops the FACTORY but leaves the built double in the registry cache; reset the
+  // registry so the next load cannot silently reuse the previous test's SDK. Every module this
+  // file uses is already held by reference at the top, so nothing here is re-required.
+  jest.resetModules();
+}
+
+/**
+ * Loads one adapter in an isolated jest registry with `env` applied and its provider SDK
+ * replaced by `sdkFactory`, then restores the ambient environment. The doMock must be
+ * registered BEFORE isolateModules opens the fresh registry, and must stay registered until
+ * the test has awaited deliver() — both adapters require their SDK lazily, at send time.
+ * The returned module keeps working after isolateModules returns; releaseIsolatedMocks() in
+ * afterEach tears the substitution down.
+ */
+function loadAdapterWithSdk({ env = {}, sdkName, sdkFactory, modulePath }) {
+  releaseIsolatedMocks(); // never inherit a previous load's cached double
+  const saved = {};
+  for (const [key, value] of Object.entries(env)) {
+    saved[key] = process.env[key];
+    process.env[key] = value;
+  }
+  jest.doMock(sdkName, sdkFactory);
+  pendingIsolatedMocks.add(sdkName);
+  let loaded;
+  try {
+    jest.isolateModules(() => {
+      // eslint-disable-next-line global-require
+      loaded = require(modulePath);
+    });
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+  return loaded;
+}
+
+describe('ADR-011 fail-closed guard — a non-substituted provider SDK is refused under NODE_ENV=test', () => {
+  afterEach(() => releaseIsolatedMocks());
+
+  test('SendGrid: an UNMARKED @sendgrid/mail is refused permanently and never receives the key', async () => {
+    const calls = { setApiKey: 0, send: 0 };
+    const sg = loadAdapterWithSdk({
+      env: {
+        // Exactly the accident the guard exists for: a stray key left in the environment.
+        SENDGRID_API_KEY: 'SG.stray-key-left-in-the-environment',
+        SENDGRID_FROM_EMAIL: 'no-reply@homeplate.test',
+      },
+      sdkName: '@sendgrid/mail',
+      sdkFactory: () => ({
+        setApiKey: () => {
+          calls.setApiKey += 1;
+        },
+        send: async () => {
+          calls.send += 1;
+          return [{ headers: { 'x-message-id': 'must-never-happen' } }];
+        },
+      }),
+      modulePath: '../../src/adapters/sendgrid',
+    });
+
+    const err = await sg.adapter
+      .deliver({
+        userId: '00000000-0000-4000-8000-000000000001',
+        recipientEmail: 'guest@example.test',
+        template: 'safety-alert-emergency',
+        params: { alertId: 'alert-cov06r' },
+      })
+      .catch((e) => e);
+
+    expect(err.code).toBe('LIVE_PROVIDER_REFUSED_IN_TEST');
+    expect(err.retryable).toBe(false); // configuration fault — retrying cannot help (NFR-09)
+    expect(err.message).toMatch(/NODE_ENV=test/);
+    // The refusal happens BEFORE the SDK is configured or called: no key handed over, no send.
+    expect(calls).toEqual({ setApiKey: 0, send: 0 });
+    expect(err.message).not.toContain('guest@example.test'); // NFR-08 PII register
+    expect(err.message).not.toContain('SG.stray-key-left-in-the-environment');
+  });
+
+  test('SendGrid positive control: the same load with a MARKED double delivers normally', async () => {
+    const sent = [];
+    const sg = loadAdapterWithSdk({
+      env: {
+        SENDGRID_API_KEY: 'SG.test-injected',
+        SENDGRID_FROM_EMAIL: 'no-reply@homeplate.test',
+      },
+      sdkName: '@sendgrid/mail',
+      sdkFactory: () => ({
+        __fake: true, // the harness substitution marker the real module never carries
+        setApiKey: () => {},
+        send: async (msg) => {
+          sent.push(msg);
+          return [{ headers: { 'x-message-id': 'msg-cov06r-1' } }];
+        },
+      }),
+      modulePath: '../../src/adapters/sendgrid',
+    });
+
+    const result = await sg.adapter.deliver({
+      userId: '00000000-0000-4000-8000-000000000001',
+      recipientEmail: 'guest@example.test',
+      template: sendgrid.TEMPLATE_IDS.bookingCreated,
+      params: { bookingId: 'b-cov06r' },
+    });
+    expect(result).toEqual({ providerMessageId: 'msg-cov06r-1' });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toBe(sendgrid.EMAIL_SUBJECTS[sendgrid.TEMPLATE_IDS.bookingCreated]);
+    // ADR-011: the ambient suite process is untouched — still on the mock transport, no key.
+    expect(config.notifications.transport).toBe('mock');
+    expect(config.notifications.sendgridApiKey).toBeUndefined();
+  });
+
+  test('FCM: an UNMARKED firebase-admin is refused even with the push gate open and credentials present', async () => {
+    const calls = { initializeApp: 0, send: 0 };
+    const fcmIsolated = loadAdapterWithSdk({
+      env: {
+        NOTIFICATIONS_PUSH_ENABLED: 'true',
+        FCM_SERVICE_ACCOUNT_JSON: '{"project_id":"homeplate-test"}',
+      },
+      sdkName: 'firebase-admin',
+      sdkFactory: () => ({
+        credential: { cert: () => ({}) },
+        initializeApp: () => {
+          calls.initializeApp += 1;
+          return {};
+        },
+        messaging: () => ({
+          send: async () => {
+            calls.send += 1;
+            return 'must-never-happen';
+          },
+        }),
+      }),
+      modulePath: '../../src/adapters/fcm',
+    });
+
+    const err = await fcmIsolated.adapter
+      .deliver({
+        userId: '00000000-0000-4000-8000-0000000000ab',
+        template: sendgrid.TEMPLATE_IDS.bookingCreated,
+        params: { bookingId: 'b-cov06r' },
+      })
+      .catch((e) => e);
+
+    expect(err.code).toBe('LIVE_PROVIDER_REFUSED_IN_TEST');
+    expect(err.retryable).toBe(false);
+    expect(err.message).toMatch(/NODE_ENV=test/);
+    // Refused before any credential was parsed, any app initialised or any message sent.
+    expect(calls).toEqual({ initializeApp: 0, send: 0 });
+    // ADR-011: the ambient process still has push OFF — the gate was opened only in isolation.
+    expect(config.notifications.push.enabled).toBe(false);
+    expect(process.env.NOTIFICATIONS_PUSH_ENABLED).toBe('false');
+  });
+
+  test('FCM positive control: the same load with a MARKED double reaches the per-user topic', async () => {
+    const sends = [];
+    const fcmIsolated = loadAdapterWithSdk({
+      env: {
+        NOTIFICATIONS_PUSH_ENABLED: 'true',
+        FCM_SERVICE_ACCOUNT_JSON: '{"project_id":"homeplate-test"}',
+      },
+      sdkName: 'firebase-admin',
+      sdkFactory: () => ({
+        __fake: true,
+        credential: { cert: () => ({}) },
+        initializeApp: () => ({}),
+        messaging: () => ({
+          send: async (message) => {
+            sends.push(message);
+            return 'projects/homeplate-test/messages/cov06r';
+          },
+        }),
+      }),
+      modulePath: '../../src/adapters/fcm',
+    });
+
+    const userId = '00000000-0000-4000-8000-0000000000ab';
+    const result = await fcmIsolated.adapter.deliver({
+      userId,
+      template: sendgrid.TEMPLATE_IDS.bookingCreated,
+      params: { bookingId: 'b-cov06r' },
+    });
+    expect(result.providerMessageId).toBe('projects/homeplate-test/messages/cov06r');
+    expect(sends[0].topic).toBe(`user-${userId}`); // IDs only (§3.4 PII register, ADR-003)
+    expect(config.notifications.push.enabled).toBe(false);
   });
 });
 

@@ -49,6 +49,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   mockTransport.reset();
+  // ADRC2-01: this file's synthetic job types must not outlive it. outbox_jobs is shared by every
+  // suite file in the run and is only reset in globalSetup, so the `rt02.*` rows left here —
+  // {"entityId":"rt02-crash-1"}, {"entityId":"rt02-retry-1"} and six {"n":0..5} — were still in
+  // the table when a later lane audited it, and non-id payloads are exactly what the ADR-003
+  // audit reports as violations. Clean up after ourselves, as tests/unit/outbox.test.js already
+  // does for its `test.*` rows.
+  await dbh.query(`DELETE FROM outbox_jobs WHERE type LIKE 'rt02.%'`);
   await dbh.closeDb();
   await rh.closeTestRedis();
 });

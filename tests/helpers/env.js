@@ -9,8 +9,11 @@
 //  - Redis uses a dedicated, non-zero DB index so flushing test state cannot clear dev
 //    sessions (DB 0 is the developer's own; an index of 0 throws here).
 //  - A LANE OWNS ITS RESOURCES AS A SET. The database name is the lane identity, and the Redis
-//    DB index and the media bucket are DERIVED from it whenever they are not given explicitly —
-//    a lane cannot half-isolate (own database, shared Redis) by forgetting an override.
+//    DB index, the media bucket and the throwaway volume-seed database are DERIVED from it
+//    whenever they are not given explicitly — a lane cannot half-isolate (own database, shared
+//    Redis) by forgetting an override. Anything a test creates or destroys on the shared host
+//    belongs in one of these derivations; a hardcoded name escapes the claim registry below
+//    entirely (IT2-F1: a fixed volume-database name dropped WITH (FORCE) killed sibling lanes).
 //  - All external adapters run in mock mode: the suite asserts on persisted rows
 //    (e.g. NOTIFICATION_ATTEMPT), never on a third party's behaviour (ADR-005/007/011). The
 //    modes are PINNED here (not soft defaults) and src/config/schema.js refuses a non-mock
@@ -119,6 +122,43 @@ function laneMediaBucket(dbName) {
 }
 
 /**
+ * Throwaway database name for a lane's pristine-database tests — the migrations + volume-seed
+ * acceptance run in tests/unit/db.test.js (NFR-02), which needs a database with NO schema at all
+ * and therefore cannot use the lane's own (already migrated and seeded) one.
+ *
+ * DERIVED from the lane identity for exactly the same reason the Redis index and the bucket are,
+ * and more urgently: those tests DROP this database `WITH (FORCE)`, which TERMINATES every other
+ * backend connected to it. The original fixed name ('homeplate_dbunit_volume_test') was identical
+ * in every lane no matter what TEST_DATABASE_URL / TEST_REDIS_URL / OBJECT_STORAGE_BUCKET said, so
+ * it was invisible to claimLaneResources() below — globalSetup claims the lane's database, Redis
+ * index and bucket, and nothing claimed that fourth, shared one. Two concurrent lanes then killed
+ * each other mid-seed: "Connection terminated unexpectedly" / "terminating connection due to
+ * administrator command" (verification finding IT2-F1). Deriving the name here, next to the other
+ * lane resources, is what stops a future test from reintroducing a shared-resource name.
+ * @param {string} dbName the lane's (guarded, *_test) database name
+ * @returns {string}
+ */
+function laneVolumeDatabase(dbName) {
+  const name = `${dbName}_volume`;
+  // PostgreSQL identifiers are capped at 63 bytes. Blind truncation could map two lanes onto one
+  // name — the very bug this function exists to prevent — so fold the full name into a hash.
+  return name.length <= 63 ? name : `${name.slice(0, 54)}_${hash32(dbName).toString(16)}`;
+}
+
+/**
+ * Connection URL for laneVolumeDatabase(), on the same PostgreSQL server as the lane's test
+ * database. Two runs of the SAME lane are already serialized by the suite advisory lock, so this
+ * database has exactly one writer at a time.
+ * @param {string} [databaseUrl] defaults to the lane's DATABASE_URL
+ * @returns {string}
+ */
+function laneVolumeDatabaseUrl(databaseUrl = process.env.DATABASE_URL) {
+  const url = new URL(databaseUrl);
+  url.pathname = `/${laneVolumeDatabase(url.pathname.replace(/^\//, ''))}`;
+  return url.toString();
+}
+
+/**
  * @param {string} redisUrl
  * @returns {number} the DB index the URL selects (0 when it names none)
  */
@@ -141,6 +181,129 @@ if (!Number.isInteger(TEST_REDIS_DB_INDEX) || TEST_REDIS_DB_INDEX < 1) {
       'the suite FLUSHDBs its index on every run, and DB 0 is the development database. ' +
       'Give TEST_REDIS_URL an explicit non-zero index, e.g. redis://localhost:6379/2.'
   );
+}
+
+// -- Loopback binding rule: ONE address for every test listener (finding STS-R2-01) --------------
+// Symptom this removes: intermittent, unreproducible-in-isolation failures anywhere in the suite —
+// ERR_SSL_PACKET_LENGTH_TOO_LONG from a TLS test (ST-01/NFR-03), `read ECONNRESET` (AB-08), a 200
+// whose body is missing the field the route always sets, a POST that creates no row, or a mounted
+// route answering 404 (which a mounted route cannot do — a FOREIGN server can).
+//
+// Cause: supertest's `request(app)` calls `app.listen(0)` internally and src/server.js's start()
+// calls `server.listen(config.server.port)` — both WITHOUT a host, so Node binds the WILDCARD
+// address ('::', dual-stack) — and then the client dials 127.0.0.1. The loopback ephemeral-port
+// space is machine-global and, on BSD/macOS, a SPECIFIC 127.0.0.1 bind on a port already held by a
+// WILDCARD socket is ACCEPTED (only a second wildcard bind gets EADDRINUSE); BSD routing then hands
+// every 127.0.0.1:<port> connection to the specific socket. So a test's own client can be answered
+// by a completely different process. Reproduced deterministically on this host:
+//   ours  = http.createServer(...).listen(0)          -> {"address":"::","port":57104}
+//   squat = net.createServer(...).listen({port:57104, host:'127.0.0.1'})  -> SUCCEEDS
+//   client -> 127.0.0.1:57104  ==> ECONNRESET (the squatter)   client -> ::1:57104 ==> 401 (ours)
+// Processes that can squat exist on a normal dev host: `lsof -nP -iTCP -sTCP:LISTEN` shows editor,
+// IDE and model-server helpers bound specifically to 127.0.0.1 in the ephemeral range, and a
+// sibling verifier lane's own listeners (tests/rt-lt-resilience/lt01-*) bind 127.0.0.1 deliberately.
+//
+// Fix: bind the SPECIFIC loopback address instead of the wildcard. The port is then unshadowable —
+// a second 127.0.0.1 bind on it gets EADDRINUSE, so the kernel never hands one port to two owners.
+// Patching net.Server.prototype.listen here (env.js is a Jest setupFile, so it runs in every worker
+// before any test, and is also required by globalSetup and the standalone lane harnesses) gives the
+// repo ONE binding rule and covers all ~60 test files — including the listeners supertest creates
+// internally, which no test file can reach. http.Server / https.Server / tls.Server all inherit
+// this method, so all of them are covered.
+//
+// Deliberately NOT done: retries, sleeps or port-probing. Those would hide a genuine cross-process
+// resource collision instead of removing it, and the collision is silent when it corrupts a result
+// rather than erroring.
+//
+// Explicit hosts are always respected — a test that asks for a particular address, including the
+// wildcard, still gets it — as are IPC/path and pre-bound handle/fd listeners, which have no
+// TCP address to shadow.
+const net = require('net');
+const TEST_LISTEN_HOST = '127.0.0.1';
+
+/** Node treats a string as a port (not a pipe name) exactly when Number(s) >= 0. */
+function isPortLike(value) {
+  return Number(value) >= 0;
+}
+
+/**
+ * Rewrite the arguments of a net.Server#listen call so a hostless TCP bind becomes a loopback bind.
+ * @param {unknown[]} args the original listen() arguments
+ * @returns {unknown[]} the same array when nothing should change, otherwise a rewritten copy
+ */
+function toLoopbackListenArgs(args) {
+  const first = args[0];
+
+  // listen(options[, callback])
+  if (first !== null && typeof first === 'object') {
+    if (first.path !== undefined || first.fd !== undefined || first.handle !== undefined)
+      return args;
+    if (first.host !== undefined) return args;
+    if (first.port === undefined) return args; // a handle-like object, not a TCP bind
+    return [{ ...first, host: TEST_LISTEN_HOST }, ...args.slice(1)];
+  }
+
+  // listen(path[, backlog][, callback]) — a Unix socket has no address to shadow.
+  if (typeof first === 'string' && !isPortLike(first)) return args;
+
+  // listen([port][, host][, backlog][, callback]) — a string second argument IS the host.
+  if (typeof args[1] === 'string') return args;
+  if (typeof first === 'function' || first === undefined) {
+    // listen(cb) / listen() — Node picks an ephemeral port on the wildcard address.
+    return [0, TEST_LISTEN_HOST, ...args];
+  }
+  return [first, TEST_LISTEN_HOST, ...args.slice(1)];
+}
+
+// Adding a host must NOT make the bind asynchronous. `listen(port)` binds synchronously — the
+// handle exists and `server.address()` is populated before listen() returns — but `listen(port,
+// host)` routes through net.js's lookupAndListen(), which defers the bind into a dns.lookup()
+// callback even for a literal IP, so address() is null on return. Supertest depends on the
+// synchronous contract: its Test constructor does `this._server = app.listen(0)` and then reads
+// `app.address().port` on the very next line (node_modules/supertest/lib/test.js:67), which would
+// throw "Cannot read properties of null" in every one of the ~60 files that call request(app).
+//
+// So the resolution is made synchronous for the one call we rewrite: dns.lookup is swapped for a
+// shim ONLY across originalListen's synchronous execution, and the shim short-circuits only
+// literal IPs (net.isIP), delegating anything else to the real, asynchronous lookup. The window is
+// one synchronous call — the shim uninstalls itself on first use and the finally block restores it
+// unconditionally — so no other consumer of dns.lookup (pg, ioredis, the object-storage client)
+// can observe a resolver that calls back synchronously.
+const dns = require('dns');
+
+/** dns.lookup's own answer for a literal IP, delivered synchronously. */
+function lookupLiteralSync(hostname, options, callback) {
+  const cb = typeof options === 'function' ? options : callback;
+  const opts = typeof options === 'function' ? {} : options || {};
+  const family = net.isIP(hostname);
+  if (opts.all) cb(null, [{ address: hostname, family }]);
+  else cb(null, hostname, family);
+}
+
+const originalListen = net.Server.prototype.listen;
+
+/** net.Server#listen, with a hostless TCP bind redirected to the loopback address. */
+function listenOnLoopback(...args) {
+  const rewritten = toLoopbackListenArgs(args);
+  if (rewritten === args) return originalListen.apply(this, args);
+  const realLookup = dns.lookup;
+  dns.lookup = function synchronousForLiterals(hostname, options, callback) {
+    dns.lookup = realLookup; // one call only; never left installed
+    if (net.isIP(hostname)) return lookupLiteralSync(hostname, options, callback);
+    return realLookup.call(this, hostname, options, callback);
+  };
+  try {
+    return originalListen.apply(this, rewritten);
+  } finally {
+    dns.lookup = realLookup;
+  }
+}
+listenOnLoopback.homeplateLoopbackBinding = true;
+
+// Idempotent: env.js is evaluated by globalSetup, by every Jest worker and by the standalone lane
+// harnesses, but 'net' is a real core module shared across the process, so the wrapper installs once.
+if (!net.Server.prototype.listen.homeplateLoopbackBinding) {
+  net.Server.prototype.listen = listenOnLoopback;
 }
 
 // -- Config requirements (values are test-only, never real secrets) ------------------------------
@@ -191,11 +354,16 @@ const LANE = Object.freeze({
   redisUrl: process.env.REDIS_URL,
   redisDbIndex: TEST_REDIS_DB_INDEX,
   bucket: process.env.OBJECT_STORAGE_BUCKET,
+  // Created and dropped WITH (FORCE) by tests/unit/db.test.js; owned by this lane alone (IT2-F1).
+  volumeDatabase: laneVolumeDatabase(TEST_DB_NAME),
 });
 
 /** One-line, log-friendly rendering of the lane's coordinates (printed by globalSetup). */
 function describeLane() {
-  return `lane "${LANE.database}" (redis db ${LANE.redisDbIndex}, bucket ${LANE.bucket})`;
+  return (
+    `lane "${LANE.database}" (redis db ${LANE.redisDbIndex}, bucket ${LANE.bucket}, ` +
+    `volume db ${LANE.volumeDatabase})`
+  );
 }
 
 // -- Suite advisory lock (single source of truth — see CONCURRENCY RULE above) -------------------
@@ -359,4 +527,14 @@ async function acquireSuiteLock({
   };
 }
 
-module.exports = { SUITE_LOCK_NAME, LANE, describeLane, acquireSuiteLock, claimLaneResources };
+module.exports = {
+  SUITE_LOCK_NAME,
+  TEST_LISTEN_HOST,
+  toLoopbackListenArgs,
+  LANE,
+  describeLane,
+  acquireSuiteLock,
+  claimLaneResources,
+  laneVolumeDatabase,
+  laneVolumeDatabaseUrl,
+};

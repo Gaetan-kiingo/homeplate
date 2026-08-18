@@ -19,12 +19,33 @@
 //   FR-04 (TC-04) — the dual-confirmation transition under CONCURRENT confirmations completes
 //                   exactly once; a guest holding a DIFFERENT booking on the same listing is
 //                   not a participant of this one (403).
+//
+// DETERMINISM (finding MTUT-RV-03, NFR-08). Every fixture below is created by this file and
+// referenced by its own primary key or by a value carrying the per-run RUN token, so no
+// assertion here reads a row, a Redis key or an aggregate that another suite can influence.
+// The one exception has been removed: the TC-01 cache test used to begin with
+// flushNamespace('cache'), which wiped every OTHER suite's cached pages as a side effect; it
+// now diffs the maps-cache keyspace instead (see the comment on that test).
+//
+// Two mechanisms proposed for MTUT-RV-03 were checked and do NOT apply to this repository, so
+// do not reintroduce them as explanations without re-checking the config first:
+//   - jest.config.js pins maxWorkers: 1, and @jest/core testSchedulerHelper.shouldRunInBand()
+//     returns true whenever maxWorkers <= 1 (and unconditionally under --detectOpenHandles).
+//     Jest therefore executes every test FILE sequentially in its own main process; two suites
+//     are never live at the same time.
+//   - all six `DELETE FROM users WHERE email LIKE '%@dbunit.homeplate.invalid'` statements and
+//     the whole-database dbh.reseedBase() in tests/unit/search.test.js sit in afterAll hooks,
+//     i.e. they run after their own file's last test and before the next file's first line.
+// A fixture row of this file can therefore not vanish mid-file. Failures observed here in a
+// contended run (20 concurrent jest processes and a 200-VU k6 load test on the same host) are
+// host contention, not shared-fixture interference — re-measure on an idle, isolated lane
+// (TEST_DATABASE_URL + TEST_REDIS_URL + OBJECT_STORAGE_BUCKET set together) before filing.
 'use strict';
 
 const { createApp } = require('../../src/app');
 const { createLogger } = require('../../src/lib/logger');
 const dbh = require('../helpers/db');
-const { redis, closeTestRedis, flushNamespace } = require('../helpers/redis');
+const { redis, closeTestRedis } = require('../helpers/redis');
 const support = require('./support');
 
 const sink = { write() {} };
@@ -55,8 +76,30 @@ describe('TC-01 / FR-01 — resolved coordinates cached with a TTL; paging contr
     viewerCookie = await support.cookieFor(await dbh.makeUser());
   });
 
+  /** Every 'hp:cache:maps:*' key currently in this lane's Redis index (SCAN, never KEYS). */
+  async function mapsCacheKeys() {
+    let cursor = '0';
+    const keys = [];
+    do {
+      const [next, batch] = await redis.scan(cursor, 'MATCH', 'hp:cache:maps:*', 'COUNT', 500);
+      cursor = next;
+      keys.push(...batch);
+    } while (cursor !== '0');
+    return keys;
+  }
+
   test('a location query writes the RESOLVED COORDINATES to Redis with a TTL, at public precision only', async () => {
-    await flushNamespace('cache');
+    // Determinism (finding MTUT-RV-03): this test used to open with flushNamespace('cache'),
+    // which deletes EVERY 'hp:cache:*' key in the lane — every other suite's cached search
+    // pages and geocodes, not just this one's. It was the only cross-suite mutation this file
+    // performed, and it is unnecessary: GAP_LOCATION carries the per-run RUN token, so no
+    // earlier suite (or earlier run) can have cached it and the ADR-005 adapter is guaranteed
+    // to be called. Scoping replaces flushing: snapshot the maps-cache keyspace, fire the
+    // query, and assert on the keys THIS query added. That is strictly stronger than the old
+    // form — after a flush the surviving keys were this test's by construction, so the old
+    // sweep proved only "some key exists", while the diff proves this query wrote one.
+    const before = new Set(await mapsCacheKeys());
+
     const res = await support.get(
       app,
       `/api/listings/search?location=${encodeURIComponent(GAP_LOCATION)}&radiusKm=5`,
@@ -65,21 +108,22 @@ describe('TC-01 / FR-01 — resolved coordinates cached with a TTL; paging contr
     expect(res.status).toBe(200);
 
     // The ADR-005 adapter's own geocode cache — separate from the result-page cache.
-    let cursor = '0';
-    const geoKeys = [];
-    do {
-      const [next, keys] = await redis.scan(cursor, 'MATCH', 'hp:cache:maps:*', 'COUNT', 500);
-      cursor = next;
-      geoKeys.push(...keys);
-    } while (cursor !== '0');
+    const allKeys = await mapsCacheKeys();
+    const geoKeys = allKeys.filter((k) => !before.has(k));
     expect(geoKeys.length).toBeGreaterThan(0);
 
     for (const key of geoKeys) {
       expect(await redis.ttl(key)).toBeGreaterThan(0); // TTL, never a permanent entry
-      // ADR-010: a raw location string (possibly a street address) never appears in a key.
-      expect(key).not.toMatch(/tcgap/i);
       const value = await redis.get(key);
       expect(value).not.toMatch(/addressLine1|postalCode/);
+    }
+
+    // ADR-010 is a safety property of the WHOLE keyspace, not just of the keys this query
+    // added: a raw location string (possibly a street address) must never appear in any maps
+    // cache key. GAP_LOCATION is unique to this run, so only this file can put it there —
+    // scanning every key costs nothing in determinism and catches a leak written anywhere.
+    for (const key of allKeys) {
+      expect(key).not.toMatch(/tcgap/i);
     }
   });
 

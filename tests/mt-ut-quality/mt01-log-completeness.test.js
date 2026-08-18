@@ -126,7 +126,12 @@ describe('MT-01 / NFR-08 — registration audit record', () => {
     // with a bounded batch — so poll until THIS user's email.verification job has left
     // 'pending' (bounded so a regression cannot loop forever).
     let totalClaimed = 0;
-    for (let i = 0; i < 25; i += 1) {
+    // DETERMINISM (verification-report F-01): a RUNAWAY GUARD, not a budget. pollOnce claims from the
+    // whole outbox table oldest-first, ten rows a pass, so the passes this job needs depend
+    // on how many rows sibling suites left behind — state this test does not own. The loop
+    // is ended by the `stats.claimed === 0` break below (jobs that back off take a future
+    // available_at and drop out of the claim), never by this number.
+    for (let i = 0; i < 5000; i += 1) {
       const stats = await pollOnce({ registry, log: recLogger });
       totalClaimed += stats.claimed;
       const { rows } = await query(

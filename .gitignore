@@ -16,3 +16,6 @@ client/dist/
 # Logs and OS noise
 *.log
 .DS_Store
+
+# Editor / R session noise
+.Rhistory

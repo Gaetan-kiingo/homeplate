@@ -1,10 +1,14 @@
 // tests/rt-lt-resilience/lt01-run.js — the LT-01/LT-02 load scenario (SRS §4.4; NFR-01,
 // NFR-02). Lane-owned harness, NOT a Jest file.
 //
-// k6 is not installed on this machine (`which k6` → not found), so this is the largest honest
-// approximation available: a Node VU loop driving the REAL Express app over REAL loopback TCP
-// (http.createServer on 127.0.0.1, keep-alive agent, one in-flight request per VU — the k6
-// closed model). The endpoint mix is the NFR-01 core-operation set the acceptance names:
+// This is the IN-SUITE gate, not the acceptance measurement. The NFR-01/NFR-02 acceptance run
+// is `npm run test:load` (tests/load/smoke.js under k6 — the instrument SRS §4.4 names); k6 is
+// installed on this host and the recorded 200-VU / 5-minute result lives in
+// docs/results/lt01-k6-summary.json (finding RTLT-02, closed 2026-08-17). What runs here is a
+// Node VU loop driving the REAL Express app over REAL loopback TCP (http.createServer on
+// 127.0.0.1, keep-alive agent, one in-flight request per VU — the k6 closed model), so a
+// latency regression is caught by `npm test` without needing an out-of-process load generator
+// or a separately started server. The endpoint mix is the NFR-01 core-operation set:
 //   40%  GET /api/listings/search   (rotating cuisine/time-window/location/page queries)
 //   25%  GET /api/listings/:id      (random volume listing)
 //   20%  GET /api/hosts/:id         (random volume host page)
@@ -168,6 +172,11 @@ async function runLoadScenario({ vus = 200, durationMs = 60000, log = console } 
 
   const app = createApp({ logger: quietLogger() });
   const server = http.createServer(app);
+  // The repo's ONE binding rule (finding STS-R2-01): bind the SPECIFIC loopback address, never
+  // the wildcard — a wildcard bind leaves 127.0.0.1:<same port> free for another process, whose
+  // specific socket then wins the route for our own 127.0.0.1 client. tests/helpers/env.js applies
+  // the same rewrite to hostless listeners; this file states it directly because it also runs as a
+  // standalone CLI harness.
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port;
   const agent = new http.Agent({ keepAlive: true, maxSockets: vus });
@@ -234,8 +243,9 @@ async function runLoadScenario({ vus = 200, durationMs = 60000, log = console } 
   return {
     scenario: 'LT-01 core-operation mix (search/listing-detail/host-page/host-reviews)',
     harness:
-      'node in-process VU loop over real loopback HTTP (k6 unavailable on this host); ' +
-      'closed model, 1 in-flight request per VU',
+      'node in-process VU loop over real loopback HTTP (in-suite regression gate; the NFR-01 ' +
+      'acceptance measurement is the k6 run in tests/load/smoke.js); closed model, ' +
+      '1 in-flight request per VU',
     vus,
     requestedDurationMs: durationMs,
     wallMs,

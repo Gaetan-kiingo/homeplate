@@ -107,10 +107,46 @@ clear. **PostgreSQL, the object store and Redis must therefore run on an encrypt
 same §3.4 PII as the live volume, so backups must sit on encrypted storage **and** expire on the
 NFR-12 clock: **retention is capped at 30 days** (ST-05). A backup that outlives the 30-day erasure
 deadline silently reintroduces data the user asked to have erased, which defeats NFR-12 no matter
-how correct the erasure job is. Restoring a backup that predates an erasure run therefore requires
-re-running the lifecycle sweep before the restored system serves traffic. `FIELD_ENCRYPTION_KEY`
-is never stored inside a backup image — a backup that contains both the ciphertext and its key is
-plaintext.
+how correct the erasure job is.
+
+> **Status of this clause — documented-only, not enforced (ST-05; finding STS-R2-04).** Nothing in
+> this repository creates, expires or even observes a backup. There is no backup job, no dump
+> artifact, no `scripts/retention.js`, and no retention variable in the configuration schema;
+> `config.privacy.erasureDays` (`PRIVACY_ERASURE_DAYS=30`) is the erasure *job's* due date and does
+> not govern backup lifetime. The paragraph above is therefore a **deployment procedure the
+> operator must carry out**, verified by inspecting the deployment — no test, config guard or CI
+> step can detect a deployment that keeps backups forever. **A reviewer must record ST-05's
+> backup-expiry clause as documented-only, never as met.** A retention sweeper landed ahead of a
+> backup producer would scan an empty directory and exit zero every time: that is worse than the
+> honest gap, because it reads as enforcement while enforcing nothing.
+
+**What the operator must configure today.** This list is the entire control until the wave-4 work
+below lands. Each item is checked by inspecting the running deployment:
+
+1. **PostgreSQL dumps/snapshots.** Set the retention window to 30 days or fewer wherever they are
+   produced — the provider's automated-backup retention setting on a managed PostgreSQL, or a
+   lifecycle rule on the bucket (or an age-based sweep on the host) for a cron'd `pg_dump`.
+2. **Object-store copies.** Apply an S3/MinIO lifecycle **expiration** rule of 30 days to any bucket
+   holding replicas, snapshots or versioned copies of `OBJECT_STORAGE_BUCKET`, **including
+   noncurrent-version expiration** — with versioning on, a deleted object is retained as a
+   noncurrent version, which quietly defeats the ADR-004 per-object deletion that NFR-12 depends on.
+3. **Redis persistence.** RDB/AOF files hold session and cached data; either disable persistence or
+   bring those files inside the same 30-day window.
+4. **Keys never travel with the data.** `FIELD_ENCRYPTION_KEY` is never stored inside a backup image
+   — a backup containing both the ciphertext and its key is plaintext.
+5. **Restores re-materialize erased rows.** Restoring a backup that predates an erasure run requires
+   re-running the lifecycle sweep before the restored system serves traffic.
+
+**Wave-4 deliverable (U4-PRIVACY) that turns this into something executable.** A validated retention
+setting in `src/config/` — refused under `NODE_ENV=production` when it exceeds 30 days, the same
+fail-closed style the config layer already applies to `ENFORCE_HTTPS` and the sample secrets — plus
+a `scripts/retention.js` that lists and expires artifacts older than that window and exits non-zero
+if any survive. It lands **with** the erasure job (`DELETE /api/users/me` + the outbox erasure
+handler), so ST-05 has one reviewable subject rather than a config key with nothing behind it. The
+two assertions that today pin the *absence* of that surface — "no backup-retention script or
+documented backup policy artifact exists yet" in `tests/st-security/st-security-verify.test.js` and
+"backup-expiry is a documented 30-day config policy" in `tests/st-security/st-security.test.js` —
+invert into its acceptance criteria in the same change.
 
 Encryption in transit is a separate control (TLS 1.2+, NFR-03, `src/middleware/security.js`);
 neither substitutes for the other.

@@ -67,8 +67,18 @@ beforeAll(() => {
 });
 
 afterAll(async () => {
-  await dbh.closeDb();
-  await closeTestRedis();
+  try {
+    // This suite owns exactly the rows on its own fixture domain, so it cleans up after
+    // itself instead of relying on some other suite's domain-wide sweep (see FIXTURE_DOMAIN).
+    // ON DELETE CASCADE carries the host_profiles, listings, bookings and media_objects rows
+    // away with the users; the nullable references (safety_alerts.raised_by,
+    // access_log.actor_user_id/subject_user_id) go to NULL, which is the NFR-12 anonymize
+    // direction the schema already documents.
+    await dbh.query(`DELETE FROM users WHERE email LIKE $1`, [`%@${FIXTURE_DOMAIN}`]);
+  } finally {
+    await dbh.closeDb();
+    await closeTestRedis();
+  }
 });
 
 function parsedAuditLines() {
@@ -85,6 +95,48 @@ function parsedAuditLines() {
 
 // ---- fixtures --------------------------------------------------------------------------------
 
+// SUITE-PRIVATE FIXTURE NAMESPACE (finding ADRC2-04).
+//
+// dbh.makeUser() defaults to the SHARED '@dbunit.homeplate.invalid' domain, and six other
+// suites clean up with a blanket `DELETE FROM users WHERE email LIKE '%@dbunit.homeplate.invalid'`
+// that is scoped to the domain, not to the rows those suites created. listings.host_id,
+// bookings.guest_id, media_objects.owner_user_id and host_profiles.user_id are all
+// `REFERENCES users(id) ON DELETE CASCADE`, so one of those statements running against this
+// lane's database DELETES THIS SUITE'S LISTINGS. requireSession reads Redis only (ADR-006), so
+// the host's cookie still authenticates afterwards and the next request 404s on a listing that
+// existed a moment earlier — exactly the ADRC2-04 symptom: the FR-11 idempotent re-cancel
+// answering 404 instead of 200, unreproducible in isolation.
+//
+// Reproduced deterministically by interleaving that blanket delete between the two cancels:
+//   create -> 201 | cancel #1 -> 200 | DELETE ... LIKE '%@dbunit.homeplate.invalid' (37 users)
+//   -> listing gone -> cancel #2 -> 404.  With the fixture domain below: 0 users deleted,
+//   listing survives, cancel #2 -> 200.
+// It is NOT a bug in cancelListing's idempotent branch: repo.findByIdForUpdate has no status
+// predicate, so an already-cancelled row is found and returns 200 — a 404 there can only mean
+// the row is gone.
+//
+// Within one Jest run suites are serial (jest.config.js maxWorkers: 1), so the cross-suite
+// window is an afterAll of an ORPHANED run — the ones the coordinator's operational note warns
+// survive an interrupted invocation and keep executing against the shared lane. Owning a
+// private domain removes the coupling either way, and is what the other suites' cleanups
+// should converge on (their files belong to other lanes).
+const FIXTURE_DOMAIN = 'u3listings.homeplate.invalid';
+let fixtureSeq = 0;
+
+/**
+ * dbh.makeUser() on this suite's OWN email domain. Every user this file creates goes through
+ * here so no sibling suite's domain-wide cleanup can cascade our fixtures away mid-test.
+ * @param {Record<string, unknown>} [overrides] forwarded to dbh.makeUser (email included: an
+ *   explicit email still wins, but no call site needs one)
+ */
+async function makeUser(overrides = {}) {
+  fixtureSeq += 1;
+  return dbh.makeUser({
+    email: `u3listings.${fixtureSeq}.${process.pid}.${Date.now()}@${FIXTURE_DOMAIN}`,
+    ...overrides,
+  });
+}
+
 async function cookieFor(user) {
   const { token } = await sessions.createSession({ id: user.id, roles: user.roles });
   return `${config.auth.sessionCookieName}=${token}`;
@@ -92,7 +144,7 @@ async function cookieFor(user) {
 
 /** Fully canPublishListing-eligible host (NFR-06: email+name+phone+profile+agreement). */
 async function makeEligibleHost() {
-  const host = await dbh.makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:fixture' });
+  const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:fixture' });
   await dbh.makeHostProfile({ user_id: host.id });
   return host;
 }
@@ -344,7 +396,7 @@ describe('POST /api/listings — FR-11 create', () => {
   });
 
   test('FR-09: ineligible host is 403 with reason codes; eligibility fixes make the identical request succeed', async () => {
-    const host = await dbh.makeUser({ phone_enc: 'enc:v1:fixture' }); // no host profile yet
+    const host = await makeUser({ phone_enc: 'enc:v1:fixture' }); // no host profile yet
     const cookie = await cookieFor(host);
     const body = listingBody();
     const denied = await request(app).post('/api/listings').set('Cookie', cookie).send(body);
@@ -427,7 +479,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
     expect(ownerView.body.listing.moderationStatus).toBe('pending');
     expect(ownerView.body.listing.addressLine1).toBe('4076 Test Kitchen Way');
 
-    const stranger = await dbh.makeUser();
+    const stranger = await makeUser();
     const strangerView = await request(app)
       .get(`/api/listings/${listingId}`)
       .set('Cookie', await cookieFor(stranger));
@@ -451,7 +503,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
 
   test('approved listing: public payload is the EXACT key allowlist — coarse location only (AB-08)', async () => {
     const { listingId, storageKey } = await approvedListingFixture();
-    const viewer = await dbh.makeUser();
+    const viewer = await makeUser();
     const res = await request(app)
       .get(`/api/listings/${listingId}`)
       .set('Cookie', await cookieFor(viewer));
@@ -494,7 +546,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
 
   test('ADR-010: pending/in-progress guest sees the exact address; cancelled guest reverts to public', async () => {
     const { host, listingId } = await approvedListingFixture();
-    const guest = await dbh.makeUser();
+    const guest = await makeUser();
     await dbh.makeBooking({ listing_id: listingId, guest_id: guest.id, status: 'pending' });
     const guestView = await request(app)
       .get(`/api/listings/${listingId}`)
@@ -504,7 +556,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
     expect(typeof guestView.body.listing.lat).toBe('number'); // precise, from the geocode job
     expect(guestView.body.listing.hostId).toBe(host.id);
 
-    const pastGuest = await dbh.makeUser();
+    const pastGuest = await makeUser();
     await dbh.makeBooking({
       listing_id: listingId,
       guest_id: pastGuest.id,
@@ -521,7 +573,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
 
   test('ADR-010: moderator sees the address ONLY with an FR-07 alert on the listing — and the read is access-logged', async () => {
     const { host, listingId } = await approvedListingFixture();
-    const moderator = await dbh.makeUser({ roles: ['user', 'moderator'] });
+    const moderator = await makeUser({ roles: ['user', 'moderator'] });
     const moderatorCookie = await cookieFor(moderator);
 
     // No safety alert yet → public projection, no access_log row.
@@ -532,7 +584,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
     expect(before.body.listing).not.toHaveProperty('addressLine1');
 
     // FR-07 alert on one of the listing's bookings opens the disclosure window.
-    const guest = await dbh.makeUser();
+    const guest = await makeUser();
     const booking = await dbh.makeBooking({
       listing_id: listingId,
       guest_id: guest.id,
@@ -560,7 +612,7 @@ describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
   });
 
   test('the :id route is UUID-constrained: /api/listings/search falls through (404 until U3-SEARCH mounts)', async () => {
-    const viewer = await dbh.makeUser();
+    const viewer = await makeUser();
     const res = await request(app)
       .get('/api/listings/search')
       .set('Cookie', await cookieFor(viewer));
@@ -582,7 +634,7 @@ describe('PATCH /api/listings/:id — FR-11 update', () => {
     const hostCookie = await cookieFor(host);
     const listingId = (await createVia(hostCookie)).body.listing.id;
 
-    const stranger = await dbh.makeUser();
+    const stranger = await makeUser();
     const denied = await request(app)
       .patch(`/api/listings/${listingId}`)
       .set('Cookie', await cookieFor(stranger))
@@ -687,8 +739,8 @@ describe('POST /api/listings/:id/cancel — FR-11 cancel', () => {
     const listingId = created.body.listing.id;
     await approve(listingId);
 
-    const guestA = await dbh.makeUser();
-    const guestB = await dbh.makeUser();
+    const guestA = await makeUser();
+    const guestB = await makeUser();
     const bookingA = await dbh.makeBooking({
       listing_id: listingId,
       guest_id: guestA.id,
@@ -699,7 +751,7 @@ describe('POST /api/listings/:id/cancel — FR-11 cancel', () => {
       guest_id: guestB.id,
       status: 'in_progress',
     });
-    const doneGuest = await dbh.makeUser();
+    const doneGuest = await makeUser();
     await dbh.makeBooking({
       listing_id: listingId,
       guest_id: doneGuest.id,
@@ -708,7 +760,7 @@ describe('POST /api/listings/:id/cancel — FR-11 cancel', () => {
       guest_confirmed_completion: true,
     });
 
-    const stranger = await dbh.makeUser();
+    const stranger = await makeUser();
     const denied = await request(app)
       .post(`/api/listings/${listingId}/cancel`)
       .set('Cookie', await cookieFor(stranger));

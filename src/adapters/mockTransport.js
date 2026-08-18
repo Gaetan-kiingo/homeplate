@@ -16,7 +16,14 @@
 // never import this module — only src/outbox/handlers/* and worker code may.
 'use strict';
 
+const config = require('../config');
+const { logger } = require('../lib/logger');
 const { UpstreamServiceError } = require('../lib/errors');
+
+// TRUE only in `npm run dev` — never under NODE_ENV=test, never in production (where the mock
+// transport is refused outright by config validation). See the requiresRenderContext note on
+// the adapter below.
+const IS_DEV_LOOP = config.env === 'development';
 
 const state = {
   deliveries: [], // successful mock "sends", in order
@@ -54,10 +61,41 @@ const adapter = {
       attempt: input.attempt ?? 1,
       deliveredAt: new Date(),
     };
+    // DEV LOOP ONLY (finding TCBV2-03). A real adapter composes a body; the mock does not, so
+    // in `npm run dev` the FR-10 verification link went nowhere and a developer could not
+    // finish registration through the product at all. Here — and only here — the resolved
+    // render context is kept on the IN-MEMORY record and printed once, so the link is
+    // clickable from the dev console. It still never reaches the NOTIFICATION_ATTEMPT row or
+    // the outbox payload (transport.js keeps renderContext out of everything it persists),
+    // and under NODE_ENV=test neither branch runs: what the suite observes is byte-identical
+    // to before, so the ADR-003 "IDs only in rows" assertions stay exactly as strict.
+    if (IS_DEV_LOOP && input.renderContext) {
+      record.renderContext = input.renderContext;
+      logger.info(
+        {
+          event: 'mock_transport_delivery',
+          recipientUserId: input.userId,
+          template: input.template,
+          renderContext: input.renderContext,
+        },
+        'mock transport: no email was sent — use the link below to continue locally'
+      );
+    }
     state.deliveries.push(record);
     return { providerMessageId: `mock-${state.deliveries.length}` };
   },
 };
+
+// ADR-011 / FR-10 — dev loop only. Declaring this makes src/modules/notifications/transport.js
+// resolve the per-send render context (the single-use verification link) exactly as it does
+// for SendGrid, which is the only way a developer running the mock transport can complete
+// registration locally. The property is ABSENT under NODE_ENV=test (and in production, where
+// this adapter is never selected), so the automated suite keeps its stronger property: on the
+// mock path no credential is minted at all unless a test explicitly opts in by setting this
+// flag itself.
+if (IS_DEV_LOOP) {
+  adapter.requiresRenderContext = true;
+}
 
 /**
  * Queue `count` injected provider failures: the next `count` deliver() calls throw a

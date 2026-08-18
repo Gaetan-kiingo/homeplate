@@ -52,6 +52,30 @@ function quietLogger() {
 
 const app = createApp({ config: baseConfig, logger: quietLogger() });
 
+// ---------------------------------------------------------------------------------------------
+// DETERMINISM HARNESS (verification round 2 — finding STS-R2-01)
+// Supertest's default `request(expressApp)` binds a throwaway server to the WILDCARD address
+// ('::') and then connects to 127.0.0.1. The loopback ephemeral-port space is machine-global, and a
+// SPECIFIC 127.0.0.1 bind shadows a wildcard one for 127.0.0.1 clients, so whenever any other
+// process on the host already holds 127.0.0.1:<the port jest was handed> — a sibling verifier
+// lane, tests/rt-lt-resilience/lt01-race.test.js / lt01-run.js (both bind '127.0.0.1'), an
+// editor helper, a local model server — the request silently lands on THAT server. Observed in
+// this lane on unchanged code: `read ECONNRESET`, a 200 whose body has no `user`, and a
+// registration that created no row. Binding the specific loopback address ourselves is
+// unshadowable (a second 127.0.0.1 bind gets EADDRINUSE, so the port is never handed out twice),
+// so every request in this file goes over a socket that can only reach OUR app.
+const boundServers = [];
+function bind(target) {
+  const server = require('http').createServer(target).listen(0, '127.0.0.1');
+  boundServers.push(server);
+  return server;
+}
+afterAll(async () => {
+  for (const s of boundServers) await new Promise((resolve) => s.close(resolve));
+});
+const listener = bind(app);
+const api = () => request(listener);
+
 let uniq = 0;
 function newEmail() {
   uniq += 1;
@@ -93,6 +117,18 @@ afterAll(async () => {
 describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', () => {
   let server;
   let port;
+  // DETERMINISM (verification round 2 — see finding STS-R2-01). src/server.js binds the
+  // WILDCARD address (`server.listen(config.server.port)` -> '::' dual-stack). The loopback
+  // ephemeral-port space is machine-global: any sibling process — another verifier lane's jest
+  // run, tests/rt-lt-resilience/lt01-race.test.js and lt01-run.js both do exactly this — may
+  // legally bind a PLAINTEXT server to the SPECIFIC address 127.0.0.1 on the same port number
+  // while we hold it on '::' (proven: the specific bind succeeds, the wildcard one gets
+  // EADDRINUSE). BSD routing then sends every connection to 127.0.0.1:<port> to the sibling, so
+  // `tls.connect('127.0.0.1')` speaks TLS to a cleartext server and dies with
+  // ERR_SSL_PACKET_LENGTH_TOO_LONG — a red TLS test with nothing wrong in the TLS code.
+  // Cause-level fix: address the server on the address family it actually bound, which a
+  // specific-address sibling cannot shadow.
+  let host;
 
   beforeAll(async () => {
     // The production posture: transport enforcement ON. start() builds the same app factory
@@ -105,7 +141,9 @@ describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', (
     };
     server = start({ config, logger: quietLogger() });
     await once(server, 'listening');
-    port = server.address().port;
+    const addr = server.address();
+    port = addr.port;
+    host = addr.family === 'IPv6' ? '::1' : '127.0.0.1';
   });
 
   afterAll(async () => {
@@ -116,7 +154,7 @@ describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', (
   });
 
   test('plain-HTTP bytes on the TLS port are never answered with application content', async () => {
-    const socket = net.connect(port, '127.0.0.1');
+    const socket = net.connect(port, host);
     await once(socket, 'connect');
     socket.write('GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
     const chunks = [];
@@ -134,7 +172,7 @@ describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', (
         const s = tls.connect(
           {
             port,
-            host: '127.0.0.1',
+            host,
             rejectUnauthorized: false,
             minVersion: version,
             maxVersion: version,
@@ -163,7 +201,7 @@ describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', (
       const req = https.request(
         {
           port,
-          host: '127.0.0.1',
+          host,
           path: '/api/users/me',
           method: 'GET',
           rejectUnauthorized: false,
@@ -200,7 +238,7 @@ describe('ST-01 live server: TLS 1.2+ only, plain HTTP never served (NFR-03)', (
       },
       logger: quietLogger(),
     });
-    const res = await request(strictApp).get('/health');
+    const res = await request(bind(strictApp)).get('/health');
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('HTTPS_REQUIRED');
     expect(res.body.status).toBeUndefined(); // never served the liveness content
@@ -249,9 +287,7 @@ describe('ST-02 no plaintext-password path exists (NFR-04)', () => {
 
   test('the validation layer redacts password values from 422 field errors (executed)', async () => {
     const bad = 'short'; // violates the 8-char minimum -> zod issue under the `password` key
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email: newEmail(), password: bad });
+    const res = await api().post('/api/auth/register').send({ email: newEmail(), password: bad });
     expect(res.status).toBe(422);
     const flat = JSON.stringify(res.body);
     expect(flat).not.toContain(bad);
@@ -287,7 +323,7 @@ describe('ST-02 no plaintext-password path exists (NFR-04)', () => {
   test('the registered plaintext appears nowhere in the users table at all', async () => {
     const email = newEmail();
     const password = 'RepoWideCanary-77bXq';
-    const reg = await request(app).post('/api/auth/register').send({ email, password });
+    const reg = await api().post('/api/auth/register').send({ email, password });
     expect(reg.status).toBe(201);
     const { rows } = await db.query(
       `SELECT count(*)::int c FROM users WHERE (users.*)::text LIKE $1`,
@@ -304,17 +340,17 @@ describe('ST-03 source-IP lockout and window semantics (NFR-05)', () => {
   test('the account window TTL starts at loginWindowSeconds and is NOT extended by later failures', async () => {
     const email = newEmail();
     const password = 'WindowSemantics-1';
-    await request(app).post('/api/auth/register').send({ email, password });
+    await api().post('/api/auth/register').send({ email, password });
     await clearRateLimit(email);
     try {
-      await request(app).post('/api/auth/login').send({ email, password: 'nope' });
+      await api().post('/api/auth/login').send({ email, password: 'nope' });
       const ttl1 = await redis.ttl(rateLimit.accountKey(email));
       expect(ttl1).toBeGreaterThan(0);
       expect(ttl1).toBeLessThanOrEqual(baseConfig.auth.loginWindowSeconds);
       expect(ttl1).toBeGreaterThan(baseConfig.auth.loginWindowSeconds - 5);
       // Shrink the TTL, then fail again: a sliding-reset bug would push it back to 600.
       await redis.expire(rateLimit.accountKey(email), 60);
-      await request(app).post('/api/auth/login').send({ email, password: 'nope' });
+      await api().post('/api/auth/login').send({ email, password: 'nope' });
       const ttl2 = await redis.ttl(rateLimit.accountKey(email));
       expect(ttl2).toBeLessThanOrEqual(60);
     } finally {
@@ -332,7 +368,7 @@ describe('ST-03 source-IP lockout and window semantics (NFR-05)', () => {
       for (let i = 0; i < threshold; i += 1) {
         const email = newEmail();
         victims.push(email);
-        const res = await request(app).post('/api/auth/login').send({ email, password: 'bad' });
+        const res = await api().post('/api/auth/login').send({ email, password: 'bad' });
         expect(res.status).toBe(401);
       }
       const ipCounts = await Promise.all(LOOPBACK_KEYS.map((ip) => redis.get(rateLimit.ipKey(ip))));
@@ -343,9 +379,9 @@ describe('ST-03 source-IP lockout and window semantics (NFR-05)', () => {
       // A brand-new account from the same IP — never failed once — is now locked out.
       const fresh = newEmail();
       const password = 'CleanAccount-9';
-      await request(app).post('/api/auth/register').send({ email: fresh, password });
+      await api().post('/api/auth/register').send({ email: fresh, password });
       victims.push(fresh);
-      const blocked = await request(app).post('/api/auth/login').send({ email: fresh, password });
+      const blocked = await api().post('/api/auth/login').send({ email: fresh, password });
       expect(blocked.status).toBe(429);
       expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
     } finally {
@@ -356,14 +392,12 @@ describe('ST-03 source-IP lockout and window semantics (NFR-05)', () => {
   test('lockout responses never reveal whether the account exists (AB-05 enumeration)', async () => {
     const known = newEmail();
     const password = 'Enumerate-1';
-    await request(app).post('/api/auth/register').send({ email: known, password });
+    await api().post('/api/auth/register').send({ email: known, password });
     const unknown = newEmail();
     await clearRateLimit(known, unknown);
     try {
-      const a = await request(app).post('/api/auth/login').send({ email: known, password: 'bad' });
-      const b = await request(app)
-        .post('/api/auth/login')
-        .send({ email: unknown, password: 'bad' });
+      const a = await api().post('/api/auth/login').send({ email: known, password: 'bad' });
+      const b = await api().post('/api/auth/login').send({ email: unknown, password: 'bad' });
       expect(a.status).toBe(b.status);
       expect(a.body.error.code).toBe(b.body.error.code);
       expect(a.body.error.message).toBe(b.body.error.message);
@@ -398,7 +432,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
   test('PATCH /api/users/me stores fullName / emergency name / bio ESCAPED and reads them back inert', async () => {
     const usersBefore = await db.countRows('users');
     for (const p of XSS) {
-      const res = await request(app)
+      const res = await api()
         .patch('/api/users/me')
         .set('Cookie', cookie)
         .send({
@@ -417,7 +451,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
       expect(hp[0].bio).not.toContain('<');
 
       // Second-order: reading it back through the API is inert too.
-      const me = await request(app).get('/api/users/me').set('Cookie', cookie);
+      const me = await api().get('/api/users/me').set('Cookie', cookie);
       expect(me.status).toBe(200);
       const flat = JSON.stringify(me.body);
       expect(flat).not.toContain('<script');
@@ -430,10 +464,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
   test('SQLi in profile fields is inert data — users and host_profiles survive', async () => {
     const before = await db.countRows('users');
     for (const p of SQLI) {
-      const res = await request(app)
-        .patch('/api/users/me')
-        .set('Cookie', cookie)
-        .send({ fullName: p });
+      const res = await api().patch('/api/users/me').set('Cookie', cookie).send({ fullName: p });
       expect(res.status).not.toBe(500);
       expect([200, 422]).toContain(res.status);
     }
@@ -443,10 +474,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
 
   test('SQLi in POST /api/bookings listingId is a 422/404 — never a query, never a 500', async () => {
     for (const p of SQLI) {
-      const res = await request(app)
-        .post('/api/bookings')
-        .set('Cookie', cookie)
-        .send({ listingId: p });
+      const res = await api().post('/api/bookings').set('Cookie', cookie).send({ listingId: p });
       expect(res.status).not.toBe(500);
       expect([403, 404, 422]).toContain(res.status);
     }
@@ -455,7 +483,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
 
   test('SQLi/XSS in the search `location` string (Maps adapter input) never 500s and comes back inert', async () => {
     for (const p of [...SQLI, ...XSS]) {
-      const res = await request(app)
+      const res = await api()
         .get('/api/listings/search')
         .set('Cookie', cookie)
         .query({ location: p, radiusKm: 5, pageSize: 4 });
@@ -469,19 +497,35 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
   });
 
   test('SQLi in media contentType / kind is a 422, never a 500 or a stored row', async () => {
-    const before = await db.countRows('media_objects');
+    // DETERMINISM (verification round 2): this assertion used to be
+    // `countRows('media_objects') === before`, a WHOLE-TABLE count. media_objects is shared
+    // state written by many sibling suites (unit/hosts-media, tc-core, coverage, adr-conformance)
+    // against the same database, so the count is not a property of this test at all and any
+    // interleaving or late-settling sibling write turned a passing security check red.
+    // Scope the claim to rows THIS test could have produced: an injected value must never reach
+    // media_objects at all — as this caller's row, or anywhere as a stored content type / kind.
     for (const p of SQLI) {
-      const res = await request(app)
+      const res = await api()
         .post('/api/media/uploads')
         .set('Cookie', cookie)
         .send({ kind: p, contentType: p, sizeBytes: 10 });
       expect(res.status).toBe(422);
     }
-    expect(await db.countRows('media_objects')).toBe(before);
+    const { rows: mine } = await db.query(
+      `SELECT count(*)::int c FROM media_objects WHERE owner_user_id = $1`,
+      [user.id]
+    );
+    expect(mine[0].c).toBe(0); // the caller stored nothing at all
+    const { rows: poisoned } = await db.query(
+      `SELECT count(*)::int c FROM media_objects
+        WHERE content_type = ANY($1::text[]) OR storage_key = ANY($1::text[])`,
+      [SQLI]
+    );
+    expect(poisoned[0].c).toBe(0); // no payload persisted anywhere, by any caller
   });
 
   test('an oversized JSON body is refused at the boundary, not by a crash (NFR-11)', async () => {
-    const res = await request(app)
+    const res = await api()
       .patch('/api/users/me')
       .set('Cookie', cookie)
       .set('Content-Type', 'application/json')
@@ -491,7 +535,7 @@ describe('ST-04 injection: profile, booking, location and media boundaries', () 
   });
 
   test('malformed JSON is a structured 4xx, never an HTML error page or a stack trace', async () => {
-    const res = await request(app)
+    const res = await api()
       .post('/api/auth/login')
       .set('Content-Type', 'application/json')
       .send('{"email": "a@b.c", "password": ');
@@ -509,9 +553,9 @@ describe('ST-05 erasure surface (NFR-12) — wave-4 scope, measured not assumed'
   test('no account-deletion endpoint is mounted on any verb of /api/users/me', async () => {
     const user = await db.makeUser({});
     const cookie = await cookieFor(user);
-    const del = await request(app).delete('/api/users/me').set('Cookie', cookie);
+    const del = await api().delete('/api/users/me').set('Cookie', cookie);
     expect([404, 405]).toContain(del.status);
-    const post = await request(app).post('/api/users/me').set('Cookie', cookie).send({});
+    const post = await api().post('/api/users/me').set('Cookie', cookie).send({});
     expect([404, 405]).toContain(post.status);
   });
 
@@ -582,28 +626,53 @@ describe('ST-05 erasure surface (NFR-12) — wave-4 scope, measured not assumed'
     expect(rows[0].c).toBe(0);
   });
 
-  test('STS-W3-01 reproduction: a non-canonical *_enc column fails CLOSED on the owner profile read', async () => {
-    // Concrete state: a users row whose phone_enc is not a canonical fieldCrypto ciphertext
-    // (key rotation, a partially migrated row, or the lane's own `enc:v1:fixture` placeholder).
-    // repo.serializeUser() decrypts unconditionally, so GET /api/users/me throws.
-    // The SECURITY property asserted here (and the one that must survive any fix): the failure
-    // never leaks the stored ciphertext, the stack, or any internal message.
-    const broken = await db.makeUser({ phone_enc: 'enc:v1:fixture' });
-    const cookie = await cookieFor(broken);
-    const res = await request(app).get('/api/users/me').set('Cookie', cookie);
-    const flat = JSON.stringify(res.body);
-    expect(flat).not.toContain('enc:v1:');
-    expect(flat).not.toMatch(/at .*\.js:\d+/);
-    expect(flat).not.toMatch(/fieldCrypto/);
-    if (res.status === 500) {
-      // Current observed behaviour — recorded as finding STS-W3-01 (availability, minor).
-      expect(res.body.error.code).toBe('INTERNAL_ERROR');
-      expect(res.body.error.message).toBe('Internal server error');
-      expect(res.body.error.correlationId).toBeTruthy();
-    } else {
-      // After the proposed fix the owner still gets their profile (phone rendered null).
-      expect(res.status).toBe(200);
+  test('STS-W3-01 (FIXED, round 2): a non-canonical *_enc column degrades to null, never a 500', async () => {
+    // Round-2 re-verification. The finding's original failure was: one non-canonical *_enc
+    // column made GET *and* PATCH /api/users/me a permanent 500 for that account, so the owner
+    // could neither read nor repair their own profile, and a FIELD_ENCRYPTION_KEY rotation would
+    // lock out every user at once. src/modules/users/repo.js decryptForOwner() now renders null.
+    // Three states are exercised: the lane placeholder, a REAL ciphertext under a DIFFERENT key
+    // (an actual GCM auth failure = key rotation), and a healthy control.
+    const rotated = (() => {
+      // A canonical-looking ciphertext this process cannot authenticate.
+      const crypto = require('crypto');
+      const key = crypto.randomBytes(32);
+      const iv = crypto.randomBytes(12);
+      const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+      const ct = Buffer.concat([c.update('+14155559999', 'utf8'), c.final()]);
+      return `enc:v1:${Buffer.concat([iv, ct, c.getAuthTag()]).toString('base64')}`;
+    })();
+    for (const bad of ['enc:v1:fixture', rotated]) {
+      const broken = await db.makeUser({
+        phone_enc: bad,
+        emergency_contact_name_enc: bad,
+        emergency_contact_phone_enc: bad,
+        emergency_contact_email_enc: bad,
+      });
+      const brokenCookie = await cookieFor(broken);
+      const get = await api().get('/api/users/me').set('Cookie', brokenCookie);
+      expect(get.status).toBe(200);
+      expect(get.body.user.phone).toBeNull();
+      expect(get.body.user.emergencyContact).toEqual({ name: null, phone: null, email: null });
+      const patch = await api()
+        .patch('/api/users/me')
+        .set('Cookie', brokenCookie)
+        .send({ fullName: 'Plain Name' });
+      expect(patch.status).toBe(200);
+      // The security property that had to survive the fix: no ciphertext, stack or internal
+      // message ever reaches the client.
+      const flat = JSON.stringify(get.body) + JSON.stringify(patch.body);
+      expect(flat).not.toContain('enc:v1:');
+      expect(flat).not.toMatch(/at .*\.js:\d+/);
+      expect(flat).not.toMatch(/fieldCrypto/);
     }
+    // Positive control: a healthy row still round-trips its real plaintext.
+    const healthy = await db.makeUser({ phone_enc: fieldCrypto.encrypt('+14155550142') });
+    const ok = await api()
+      .get('/api/users/me')
+      .set('Cookie', await cookieFor(healthy));
+    expect(ok.status).toBe(200);
+    expect(ok.body.user.phone).toBe('+14155550142');
   });
 });
 
@@ -711,7 +780,7 @@ describe('ST-06 data protection register and export (NFR-13)', () => {
   test('emergency contact is exactly {name, phone, email} — a fourth attribute is rejected', async () => {
     const user = await db.makeUser({});
     const cookie = await cookieFor(user);
-    const res = await request(app)
+    const res = await api()
       .patch('/api/users/me')
       .set('Cookie', cookie)
       .send({
@@ -735,35 +804,36 @@ describe('ST-06 data protection register and export (NFR-13)', () => {
     const user = await db.makeUser({});
     const cookie = await cookieFor(user);
     for (const verb of ['post', 'get']) {
-      const res = await request(app)[verb]('/api/users/me/export').set('Cookie', cookie);
+      const res = await api()[verb]('/api/users/me/export').set('Cookie', cookie);
       expect([404, 405]).toContain(res.status);
     }
   });
 
-  test('no repository artifact records the ADR-007 free-tier data-use finding (open action)', () => {
-    const searched = [path.join(ROOT, 'docs')];
-    let found = false;
-    const walk = (dir) => {
-      if (!fs.existsSync(dir)) return;
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (/\.(md|txt)$/.test(entry.name) && !/^(SRS|SPMP)\.txt$/.test(entry.name)) {
-          const text = fs.readFileSync(full, 'utf8');
-          // A recorded FINDING would state the reviewed terms + a date, not merely restate
-          // the ADR's open action.
-          if (
-            /free-tier data-use terms[\s\S]{0,400}(reviewed|finding recorded|as of \d{4})/i.test(
-              text
-            )
-          ) {
-            found = true;
-          }
-        }
-      }
-    };
-    searched.forEach(walk);
-    expect(found).toBe(false); // documents the gap; wave-7 close-out must flip this
+  test('STS-W3-05 (round 2): the ADR-007 data-use finding is RECORDED but NOT human-signed', () => {
+    // Round-2 re-verification of STS-W3-05 clause 1. The finding was "no artifact records the
+    // free-tier data-use finding"; docs/adr007-data-use-review.md now exists and carries the
+    // terms URL, the effective date and verbatim quotes. What it does NOT carry is a human
+    // sign-off, and ST-06 asks the TEAM to record the finding — so this test pins BOTH halves:
+    // the evidence exists (was missing), and the ratification is still open (must not be read
+    // as closed). Same discipline as ADR-008's label sign-off rule.
+    const review = path.join(ROOT, 'docs', 'adr007-data-use-review.md');
+    expect(fs.existsSync(review)).toBe(true);
+    const text = fs.readFileSync(review, 'utf8');
+    expect(text).toMatch(/https:\/\/ai\.google\.dev\/gemini-api\/terms/);
+    expect(text).toMatch(/effective\s+\d{4}-\d{2}-\d{2}/i);
+    // Unsigned: the conservative default (no real user content to the live provider) governs.
+    expect(text).toMatch(/Reviewer \(name\)\s*\|\s*_unsigned_/);
+    expect(text).toMatch(/Review date\s*\|\s*_unsigned_/);
+    // And the tree still cannot send real content anywhere: no moderation module exists.
+    expect(fs.existsSync(path.join(ROOT, 'src', 'modules', 'moderation'))).toBe(false);
+  });
+
+  test('STS-W3-05 (round 2): the README deployment note documents volume/disk encryption', () => {
+    const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    expect(readme).toMatch(/Deployment — data at rest/);
+    expect(readme).toMatch(/encrypted volume/i);
+    expect(readme).toMatch(/backup/i);
+    expect(readme).toMatch(/30 days/);
   });
 
   test('personal-data access logging has exactly one writer and records actor/subject/purpose', async () => {

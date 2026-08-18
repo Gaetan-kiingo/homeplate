@@ -7,26 +7,51 @@ output:
 
 Derived from **SRS v3.2** (frozen baseline), **SPMP v1.0**, and **ADR-001…011**.
 Companion artifact: `requirements-inventory.json` — all 14 FR + 13 NFR + 8 AB with executable
-acceptance criteria, now carrying a per-requirement `statusAt_f7f954c` field.
+acceptance criteria, now carrying per-requirement `statusAt_f7f954c`, `statusAt_bc27199` and
+`reverification` fields.
 
-**Revision 2026-08-15 rev C — the wave-3 CLOSE-OUT plan.** Supersedes rev B (2026-08-14).
-What changed:
+**Revision 2026-08-17 rev D — wave-3 CLOSE-OUT, determinism first.** Supersedes rev C
+(2026-08-15), which is otherwise intact below. What changed:
 
-1. **Baseline moved to `f7f954c`** (clean tree). `3136b91` built wave 3; `f7f954c` is
-   verification **repair round 1**. Fixer-measured gates: `npm test` → 60 suites / 1182 tests,
-   91 s; `npm run lint` clean; `npm run build` clean.
-2. **Nothing in repair round 1 has been independently re-verified.** Round 1 ran 8 lanes /
+1. **THE SUITE IS NONDETERMINISTIC, and that outranks everything else in this run.** Measured on
+   unchanged code: full-suite run A = **5 failures**, run B = **1182/1182 pass**, and the same
+   failing files pass **130/130 in 4.5 s** when run alone. Separately, jest **does not exit** after
+   printing results (leaked handle), so every automated invocation looks hung — one run was killed
+   at 8 m 20 s although the tests had finished in 91 s. A nondeterministic suite makes every other
+   pass claim in this repository worthless, so wave **3R-0** (§4) now runs *before* any
+   re-verification, and no unit downstream may report a pass until 3R-0's gate holds.
+   Note for whoever fixes it: the hypothesis "jest runs 60 suites in parallel workers" does **not**
+   survive contact with `jest.config.js`, which pins `maxWorkers: 1`. The mechanisms that do
+   survive are (a) assertions over **global** state — a whole-table `SELECT` (e.g.
+   `verify-adr-wave0-3.test.js:379`) or a whole-table row count (`st-security-verify.test.js:472`)
+   — which see rows written by *earlier suites in the same run*, since the schema is reset once in
+   `globalSetup` and never between suites; and (b) work that **outlives** the suite that started it
+   (an unawaited request, a worker tick, an open pool or Redis client) mutating shared state during
+   a later suite — which is very likely the same leak that keeps the process alive at the end.
+   Confirm (b) with `--detectOpenHandles` before choosing a fix.
+   **Re-measured by this coordinator on 2026-08-17 at `bc27199` — see §8.5.1 for the full table.**
+   Two consecutive runs on one isolated lane failed *differently*: run 1 on the FR-12 40-concurrent
+   probe (`refused` = 36, not 37 — one response was neither 201 nor 409 and its status was
+   discarded), run 2 on TC-14 booking cancel with **`read ECONNRESET`**, a sixth mode not in the
+   handoff's list of five. Both hung after printing results and had to be killed (`exit=143`).
+   So the picture is worse than "run A vs run B": three different pictures of one commit now exist,
+   and `.github/workflows/ci.yml` has no step timeout, so a push today hangs a runner for 6 hours.
+2. **Baseline is `bc27199`** (clean tree; `.gitignore` modified only). `3136b91` built wave 3,
+   `f7f954c` is verification repair round 1, `bc27199` added docs/tests only.
+3. **CI has never run wave 3.** `origin/main` still ends at `af1a91a` (waves 0–2). Nothing is
+   pushed until the suite is deterministic and exits on its own — that is unit **W3-CI-PUSH**.
+4. **Nothing in repair round 1 has been independently re-verified.** Round 1 ran 8 lanes /
    264 checks and produced **40 findings** (3 blockers). Fixers claim **30 resolved**; that is a
    claim plus a green suite, and *the suite was green before those 40 findings were found* —
-   including the FR-10 production blocker. Confirming those 30 is the primary work of this run
-   and is scheduled as **wave 3R** (§4).
-3. **Two things landed in `f7f954c` that are not wave-3 scope** and must be recorded as such:
+   including the FR-10 production blocker. Confirming those 30 is wave **3R-1**.
+5. **Two things landed in `f7f954c` that are not wave-3 scope** and must be recorded as such:
    the FR-07 safety module (`src/modules/safety/**`, `src/outbox/handlers/safetyAlert.js`) and
    the ADR-008 evaluation set (`tests/fixtures/moderation-eval/v1/`, 224 synthetic items).
-   Wave 4's unit definitions in §5 are adjusted accordingly.
-4. **The 10 never-repaired findings are classified, not re-opened** (§6). Four are out of scope
+6. **The 10 never-repaired findings are classified, not re-opened** (§8.1). Four are out of scope
    for this run by construction — two are wave-4 work, one is a spec question only the team may
-   settle, one is a host prerequisite.
+   settle, one is a host prerequisite. **COV-01 appears already fixed on disk** (the canary is now
+   leaf-scoped in `tests/st-security/st-security-wave3.test.js`); it is therefore a
+   confirm-or-reopen item, not a build item.
 
 ---
 
@@ -114,6 +139,8 @@ docs/                     verification-report.md, wave3-verification-handoff.md,
 | Load / a11y | `npm run test:load` (k6 — **not installed on this host**) · `npm run test:a11y` (fails on purpose until `client/` exists) |
 | Security scan | `npm run scan:zap` (Docker OWASP ZAP baseline; never yet run) |
 | Worker only | `npm run worker` |
+| Determinism gate (3R-0) | `for i in 1 2 3 4 5; do npm test 2>&1 \| tail -25; done` on ONE isolated lane — 5 identical results, each exiting on its own |
+| Open-handle hunt | `npx jest <path> --detectOpenHandles` (never `--forceExit`: it hides the leak instead of closing it) |
 
 **Parallel lanes.** `npm test` takes the `homeplate_test_suite` PostgreSQL advisory lock in
 `tests/helpers/globalSetup.js`, so concurrent runs queue rather than corrupt each other. For real
@@ -141,35 +168,112 @@ Status per requirement is in `requirements-inventory.json` (`statusAt_f7f954c`).
 
 ---
 
-## 4. Wave 3R — CLOSE-OUT (this run). 9 units, exclusive file ownership
+## 4. Wave 3R — CLOSE-OUT (this run). 4 ordered sub-waves, 17 units, exclusive file ownership
 
 Everything here assumes waves 0–3. **No unit in this wave may implement wave 4.** A requirement
 with no wave-3 implementing code is reported `not_implemented` — never as a pass, and never as a
-reason to start building.
+reason to start building. Sub-waves are strictly ordered: 3R-0 → gate → 3R-1 → 3R-2 → 3R-3.
+Units inside one sub-wave share no file and may run in parallel.
+
+**Ownership check (coordinator, 2026-08-17).** Every file path below was extracted and diffed for
+collisions. Within any single sub-wave there is **no** shared path. Four paths are claimed by two
+units in *different, strictly ordered* sub-waves, which is safe and intentional — the later unit
+inherits the earlier one's tree: `src/adapters/sendgrid.js` and `src/adapters/fcm.js`
+(3R-1 W3-RV-BOOKING → 3R-2 W3-COV-ADAPTERS), `src/modules/listings/service.js`
+(3R-1 W3-RV-OBS-SAFETY → 3R-2 W3-FIX-REVIEWPAGE) and `src/outbox/handlers/safetyAlert.js`
+(3R-1 W3-RV-OBS-SAFETY → wave 4 U4-SAFETY-COMPLETE). No unit may start before its predecessor
+sub-wave has reported.
+
+### 4.1 Wave 3R-0 — Suite determinism and clean exit (PRIORITY 0; blocks everything)
+
+The binding rule for all four units: **fix the cause.** Scope each assertion to the rows and keys
+the test itself created, or make a globally-scanning test run exclusively; close the leaked handle.
+Deleting or weakening an assertion is not a fix, and neither is a retry, a `sleep`, a longer
+timeout or a `--runInBand` workaround that hides the shared-state bug instead of removing it.
+
+**Coordinator correction to the diagnosis, measured 2026-08-17 (binding on these units).**
+The suite does **not** run suites in parallel workers: `jest.config.js` has carried
+`maxWorkers: 1` since `3136b91` (verified with `git show 3136b91:jest.config.js`), so all 60
+suites execute serially in one worker against the one lane database. The shared-state bleed is
+therefore **serial accumulation**, not concurrency: `globalSetup` resets the schema exactly once
+per run, so by the time a late suite runs a whole-table `SELECT`, the table holds every row that
+every earlier suite wrote. What varies between runs is the **suite order** — Jest orders test files
+by its cached per-file timings, so run B can execute the same files in a different sequence from
+run A and a global-scan assertion then observes a different population. That is sufficient to
+explain intermittent failures on unchanged code without any parallelism. Two consequences:
+(a) do **not** "fix" this by pinning `--runInBand`/a custom sequencer — the ordering is legitimate
+and the assertion is what is wrong; (b) a second simultaneous `npm test` on the **same lane** is a
+real and separate hazard — the coordinator observed two concurrent runs contending on this lane,
+and a subset run logged `postgres pool: idle client error … terminating connection due to
+administrator command`, i.e. one run's bootstrap tearing down another's live connections. Always
+give each lane its own `TEST_DATABASE_URL` and check `ps -eo pid,command | grep "[j]est"` first.
+
+**Binding rule for the ADR-003 whole-table audit specifically.** "Every outbox payload is IDs
+only" is a genuine *global* production invariant, and an intermittent failure of it may be a real
+defect rather than a test-scoping bug. Before scoping the query, the unit MUST first capture the
+actual offender string the assertion printed (`type#id: key="value"`). If a **production** handler
+or service wrote that row, the fix belongs to the producer and the global assertion stays global.
+Only if the offending row was fabricated by another test (e.g. a negative-path probe that enqueues
+junk deliberately) may the audit be scoped — and then it must still assert over *every* row the
+audit's own test produced, never a sample.
 
 | Unit | Goal | Requirements | Exclusive files |
 |---|---|---|---|
-| **U3R-FR10-PROOF** *(highest priority)* | Prove FR-10 end to end **from the delivered email**: register → drain the outbox → read the ADR-011 mock transport's recorded delivery → extract the verification URL/token from *that* → verify → `email_verified=true` and `canReserveSeat` true. Also assert no persisted row/log carries the usable raw token (ADR-003), and that a retry/redelivery neither mints an unmailed credential nor invalidates a mailed link. If the original TCB-W3-01 scenario still reproduces, this unit owns the fix. | FR-10, NFR-06, ADR-003, ADR-011 | `tests/tc-booking/fr10-delivered-email-e2e.test.js`, `src/outbox/handlers/emailVerification.js`, `src/modules/auth/service.js`, `src/modules/notifications/transport.js` |
-| **U3R-REVERIFY-CORE** | Re-execute the original failure scenarios of the claimed-fixed core-flow findings — TCC-01, TCC-02, TCC-03, TCC-05, TCB-W3-02, TCB-W3-03, TCB-W3-04, TCB-W3-06, TCB-W3-07 — in new files. Any claim that cannot be reproduced-as-fixed is reported as still open. | FR-01, FR-02, FR-03, FR-04, FR-11, FR-13, FR-14, NFR-08 | `tests/tc-core/w3r-core-reverify.test.js`, `tests/tc-booking/w3r-booking-reverify.test.js` |
-| **U3R-REVERIFY-PLATFORM** | Same, for the platform/ADR findings — STS-W3-01, STS-W3-02, STS-W3-04, STS-W3-05, W3-ADR-01, W3-ADR-02, W3-ADR-05, IT-F2, IT-F3, IT-F4 — plus an independent confirmation of **W3-ADR-03** (maps-cache shape assertion order-independence), which was fixed in-lane and never re-checked. FR-07 (IT-F2) is re-verified as far as wave-3 allows: persist → worker → email attempt → retry/dead-letter; the moderator-queue clause is reported PARTIAL because that route is wave 4. | FR-07, NFR-03, NFR-04, NFR-09, NFR-11, NFR-13, AB-05, AB-06, ADR-001/002/007/010/011 | `tests/st-security/w3r-security-reverify.test.js`, `tests/adr-conformance/w3r-adr-reverify.test.js`, `tests/it-adapters/w3r-adapters-reverify.test.js` |
-| **U3R-REVERIFY-OPS** | Same, for the ops/observability/coverage findings — RTLT-01, RTLT-03, MTUT-W3-01, MTUT-W3-02, MTUT-W3-03, COV-02, COV-03, COV-04, COV-05, COV-08. Also: identify the test leaking the handle behind the single `Jest did not exit` warning if it can be done cheaply, and report it. | NFR-01, NFR-02, NFR-08, NFR-09, ADR-003/005/010 | `tests/rt-lt-resilience/w3r-ops-reverify.test.js`, `tests/mt-ut-quality/w3r-observability-reverify.test.js`, `tests/coverage/w3r-coverage-reverify.test.js` |
-| **U3R-FIX-CANARY** | **COV-01** — the AB-08 leak canary asserts `not.toContain('742')`, a bare street-number substring that matches by chance inside random UUIDs (~1 run in 100 reddens CI). Make the assertion address-shaped and deterministic without weakening what it detects. **Verify before changing**: the working tree already contains an address-shaped `\b742\s` form; if the original scenario no longer reproduces, confirm and report — do not churn. | AB-08, NFR-13, ADR-010 | `tests/st-security/st-security-wave3.test.js` |
-| **U3R-FIX-FR02-REVIEWS** | **TCC-04** — FR-02 detail truncates the host's approved reviews to 5 with no total and no cursor, so a client cannot tell a 5-review host from a 500-review host and the rest are unreachable from that payload. Emit a total (and a documented paging route) so the preview is honestly labelled. Same rule: reproduce first — the tree shows a `reviewCount` + `GET /api/hosts/:id/reviews?page=N` shape that may already close it. | FR-02, FR-03, FR-05 (read side), NFR-01 | `src/modules/listings/service.js`, `src/modules/listings/serializers.js`, `src/modules/hosts/repo.js`, `src/modules/hosts/routes.js`, `src/modules/hosts/serializers.js`, `tests/tc-core/tc02-listing-detail.test.js` |
-| **U3R-FIX-MEDIA-REPO** | **W3-ADR-04 + COV-07 (one defect)** — `src/modules/media/routes.js` runs its own `SELECT author_id FROM reviews WHERE id = $1`, putting DB access in the route layer. Move it behind `src/modules/media/repo.js` (the statement stays parameterized — NFR-11). The reviews module does not exist yet; that is *why* it lives in the media repo now, and U4-REVIEWS takes it over later. | NFR-11, ADR-001 | `src/modules/media/routes.js`, `src/modules/media/repo.js`, `tests/unit/hosts-media.test.js` |
-| **U3R-COV-ADAPTERS** | **COV-06** — the two production notification adapters' delivery bodies are never executed (sendgrid.js 58 %, fcm.js 40 % statements), so the code that would run in a live send is unexercised. Cover them by injecting a fake client/transport seam. **Never make a live provider call** — ADR-011 keeps dev and the whole suite on the mock transport, and every attempt must still write a NOTIFICATION_ATTEMPT row. | FR-13, FR-07, NFR-09, ADR-011 | `src/adapters/sendgrid.js`, `src/adapters/fcm.js`, `tests/unit/adapters-comms.test.js` |
-| **U3R-DEFERRED-EVIDENCE** | Turn the four out-of-scope open items into *evidence*, not assertions: executable absence proofs (structured-404 probes / module-absence checks) for **IT-F1** (NFR-10) and **STS-W3-03** (NFR-12 erasure, NFR-13 export); a written statement of **TCB-W3-05** as an ADR-009 open sub-decision awaiting CDR ratification, presenting *both* readings and choosing neither; and **RTLT-02** recorded untestable (k6 absent — do not vendor k6). | NFR-10, NFR-12, NFR-13, FR-08, FR-11 | `tests/coverage/w3r-deferred-classification.test.js`, `docs/results/wave3-closeout-open-items.md` |
-| **U3R-REPORT** | Regenerate `docs/verification-report.md` for **waves 0–3** — the file on disk is a pre-repair draft and is overwritten, not amended. Must state per requirement: met (with the test that proves it), partial (with the missing clause), not implemented (with the absence proof), or unverifiable here (with why). Must carry the **FR-10 lesson** explicitly. Depends on every unit above. | all | `docs/verification-report.md`, `docs/_generated/verification-findings-wave3-round2.json`, `docs/wave3-verification-handoff.md` |
+| **W3-DET-GLOBALSTATE** | The two assertions that scan **global** state must observe only what the test wrote. `verify-adr-wave0-3.test.js:379` selects the WHOLE `outbox_jobs` table for the ADR-003 IDs-only audit; `st-security-verify.test.js:472/480` counts the WHOLE `media_objects` table around the ST-04 SQLi probe. Scope both to rows this test created (tag by dedupe key / owner id / a run-scoped marker) — the ADR-003 property must still be asserted over *every* row the test produced, not a sample. | NFR-11, AB-08, ADR-003 | `tests/adr-conformance/verify-adr-wave0-3.test.js`, `tests/st-security/st-security-verify.test.js` |
+| **W3-DET-CONCURRENCY** | `FR-12 seats_remaining=3, 40 concurrent distinct guests → 3×201, 37×409` must give the same answer on 5 consecutive full-suite runs. 40 simultaneous supertest requests against a `max: 10` pg pool is the first thing to measure: a pool-timeout 500 counts as neither 201 nor 409 and would fail the assertion without any capacity bug. Make the observation robust (assert on the outcome distribution *and* on `seats_remaining`, and treat a non-201/409 status as a hard failure with the body printed) without loosening the never-overbook invariant. **Measured 2026-08-17 (§8.5.1):** the failure is `created`=3 ✔, `refused`=**36**, i.e. exactly one of the 40 responses was neither 201 nor 409 and its status was discarded. Print it first; if it is a 5xx, that is a real NFR-09/AB-06 defect and this unit escalates rather than adjusting the test. This unit also owns the sixth, previously unrecorded mode found the same day: `tc12-tc14-booking-schema.test.js` → *FR-14/TC-14 guest cancels before start* failing with **`read ECONNRESET`** — a transport-level reset, to be diagnosed jointly with W3-DET-HANDLES. | FR-12, FR-14, AB-02, AB-06, NFR-09 | `tests/tc-booking/tcb-w3-reverify.test.js`, `tests/tc-booking/tc12-tc14-booking-schema.test.js` |
+| **W3-DET-WORKERPATHS** | The two `IT3-F1 live dedupe` / `IT3-F1 spent dedupe` probes are timing-sensitive and read outbox state that other suites also write. Make them deterministic by construction — drive the worker step explicitly rather than waiting, and scope every query to the booking/dedupe key the probe created. | FR-13, FR-04, NFR-09, ADR-003 | `tests/it-adapters/it01-wave3-worker-paths.test.js`, `tests/rt-lt-resilience/rt02-it3f1-promote-selfdedupe.test.js` |
+| **W3-DET-HANDLES** | Find and close the leaked handle behind `Jest did not exit one second after…`. Run `npx jest --detectOpenHandles` per lane to name it (open pg pool, ioredis client, worker timer, https server). Every suite must release what it opened; if a shared client is the design, `globalTeardown` must close it. Record what the handle actually was — it is the leading suspect for the cross-suite state bleed the other three units are patching. **Coordinator lead (2026-08-17, measured):** the shared clients are almost certainly it. `tests/helpers/redis.js` exports a module-scope ioredis client plus `closeTestRedis`, and `tests/helpers/db.js` exports `closeDb` — but **no `.test.js` file calls `closeTestRedis`** and 9 suites (`tests/unit/{validation,adapter-maps,bootstrap,config,observability,app}.test.js`, `tests/coverage/{migrate-cli,cov-verify-probes}.test.js`, `tests/fixtures/moderation-eval/set-integrity.test.js`) never call `closeDb`; `src/db/redis.js`'s app singleton is never quit by any suite either. An open ioredis socket keeps the process alive on its own. Prefer ONE `setupFilesAfterEnv` module holding a global `afterAll` that closes the shared pool and every Redis client, over 60 hand-written `afterAll`s — but confirm by naming the handle with `--detectOpenHandles` before changing anything. | NFR-08 (substrate) | `tests/helpers/db.js`, `tests/helpers/redis.js`, `tests/helpers/globalSetup.js`, `tests/helpers/globalTeardown.js`, `jest.config.js`, `src/db/pool.js`, `src/db/redis.js` |
+
+### 4.2 Wave 3R-0-GATE — the determinism gate (one unit, blocks 3R-1)
+
+| Unit | Goal | Requirements | Exclusive files |
+|---|---|---|---|
+| **W3-DET-GATE** | Run the full suite **5 consecutive times** on one isolated lane and record every run: suite count, test count, failures, wall time, and whether the process exited on its own without `--forceExit`. The gate passes only when all 5 runs are identical and all 5 exit unaided. Start the results file from the coordinator's 2-run baseline in §8.5.1 (both runs failed, differently, and neither exited) so the before/after is on the record. **A gate run must first check `ps -eo pid,command \| grep "[j]est"` is empty** — the coordinator observed two concurrent runs contending on one lane, which invalidates the measurement. If runs still differ, the gate FAILS and the numbers are published anyway — the report must state the disagreement honestly rather than quoting the best run. | all (precondition) | `docs/results/suite-determinism.md` |
+
+### 4.3 Wave 3R-1 — Re-verification of the 30 claimed resolutions (PRIORITY 1)
+
+A claim plus a green suite is **not** confirmation. Each unit re-executes the *original*
+`failureScenario` from `verification-findings-wave3.json` in a **new file it owns**, never by
+re-reading the fixer's own test. Anything that cannot be reproduced-as-fixed is reported as **still
+open**. Each unit also verifies its normal lane scope against the current tree using
+`git diff 3136b91..bc27199` rather than re-deriving everything.
+
+| Unit | Goal | Findings re-executed | Requirements | Exclusive files |
+|---|---|---|---|---|
+| **W3-RV-FR10** *(highest priority)* | Prove FR-10 end to end **from the delivered email**: register → drain the outbox → read the ADR-011 mock transport's recorded delivery → extract the verification URL/token from *that* → verify → `email_verified=true` → `canReserveSeat` true. Assert no persisted artefact (outbox payload, NOTIFICATION_ATTEMPT row, users row, log line) carries the usable raw token, and that a redelivery neither mints an unmailed credential nor invalidates a mailed link. If TCB-W3-01 still reproduces, this unit owns the fix. **There is no third outcome: FR-10 is proven from the delivered email, or FR-10 is reported not met.** | TCB-W3-01 | FR-10, FR-09, NFR-06, ADR-003, ADR-011 | `tests/tc-booking/w3rv-fr10-delivered-email.test.js`, `tests/tc-booking/fr10-verification-link.test.js`, `src/modules/auth/service.js`, `src/outbox/handlers/emailVerification.js`, `src/adapters/mockTransport.js` |
+| **W3-RV-BOOKING** | Booking/notification claims: promote reschedules when a listing moves **earlier**; `pending → in_progress` enqueues a notification; every template id an outbox handler emits exists in the SendGrid subject registry (assert the registry lookup, not just that a send happened); neither notification adapter can reach a live provider under `NODE_ENV=test`; `lifecycle.isLivePendingJob`'s decisive branch is actually executed. | TCB-W3-02, TCB-W3-03, TCB-W3-04, IT-F4, COV-03, MTUT-W3-02 | FR-04, FR-13, FR-14, NFR-09, ADR-011 | `tests/tc-booking/w3rv-booking-notifications.test.js`, `src/modules/bookings/lifecycle.js`, `src/adapters/sendgrid.js`, `src/adapters/fcm.js` |
+| **W3-RV-CORE** | Read-surface claims: a soft-deleted host's listings must not stay discoverable; the page-cache existence assertion must survive >512 keys in the index (full SCAN cursor loop or `EXISTS`, never single-pass SCAN); the corrected TCC-03 three-case degraded contract; the host-summary fallback; the ADR-010 public serializer on search, detail and host page, including reading the cached value directly. | TCC-01, TCC-02, TCC-03, TCC-05, COV-02 | FR-01, FR-02, FR-03, NFR-09, AB-01, AB-08, ADR-005, ADR-010 | `tests/tc-core/w3rv-core-detail-search.test.js`, `src/modules/search/repo.js`, `src/modules/search/service.js`, `src/modules/listings/serializers.js` |
+| **W3-RV-SEC-CONFIG** | Security/config claims: production config must refuse the committed sample `FIELD_ENCRYPTION_KEY` and the `minioadmin` credentials; `NODE_ENV=test` must pin the LLM and Maps adapters to mock (`LLM_MODERATION_MODE=live` must not be honourable); `serializeUser` must not 500 the owner on a non-canonical `*_enc` column; the two ST-06 documentation clauses. Re-execute ST-01/02/03 by execution against a real `https.Server`. | STS-W3-01, STS-W3-02, STS-W3-05, W3-ADR-02, COV-04 | NFR-03, NFR-04, NFR-05, NFR-13, AB-05, AB-06, ADR-006, ADR-007 | `tests/st-security/w3rv-security-config.test.js`, `src/config/schema.js`, `src/modules/users/repo.js`, `docs/adr007-data-use-review.md` |
+| **W3-RV-ADR-MEDIA** | ADR-001 claims: `POST /api/media` must not load the object-storage adapter or construct an S3 client on the request path (assert the loaded-module set after exercising the route, not before); the precise-location deny-by-default guards are executed; the maps-cache assertion is order-independent; no dead exports. | W3-ADR-01, IT-F3, W3-ADR-03, COV-08 | NFR-11, NFR-13, AB-08, ADR-001, ADR-004, ADR-010 | `tests/adr-conformance/w3rv-adr-round1.test.js`, `src/modules/media/service.js`, `src/lib/mediaUrls.js`, `src/modules/listings/access.js` |
+| **W3-RV-OBS-SAFETY** | Observability + FR-07 claims: the listing audit record carries the `YYYY-MM-DD` America/Los_Angeles calendar day, not a stringified JS `Date`; the worker-initiated `booking.promoted` record names an actor; MT-01's records, correlation-ID propagation and PII sweep; and the safety module that landed in `f7f954c` end to end (201 with no inline send → worker → emergency-contact email through the mock transport → NOTIFICATION_ATTEMPT rows → injected failure → retrying/backoff/dead-letter still visible → `no_channel`). FR-07 stays **partial**: the moderator-queue route is wave 4. | MTUT-W3-01, COV-05, TCB-W3-06, IT-F2, RTLT-01, TCB-W3-07, RTLT-03, MTUT-W3-03 | FR-07, FR-11, NFR-08, AB-03, AB-07, ADR-009, ADR-011 | `tests/mt-ut-quality/w3rv-audit-and-safety.test.js`, `tests/it-adapters/w3rv-safety-delivery.test.js`, `src/modules/listings/service.js`, `src/modules/safety/service.js`, `src/outbox/handlers/safetyAlert.js` |
+
+### 4.4 Wave 3R-2 — The four actionable never-repaired findings (PRIORITY 3)
+
+| Unit | Goal | Requirements | Exclusive files |
+|---|---|---|---|
+| **W3-FIX-REVIEWPAGE** | **TCC-04** — FR-02 detail truncates the host's approved reviews to 5 with no total and no cursor, so a client cannot tell a 5-review host from a 500-review host and the rest are unreachable from that payload. Emit a total and a documented paging route so the preview is honestly labelled. Reproduce first: the tree may already carry a `reviewCount` + `GET /api/hosts/:id/reviews?page=N` shape. | FR-02, FR-03, NFR-01 | `src/modules/listings/service.js`, `src/modules/hosts/repo.js`, `src/modules/hosts/routes.js`, `src/modules/hosts/serializers.js`, `tests/tc-core/tc02-listing-detail.test.js` |
+| **W3-FIX-MEDIASQL** | **W3-ADR-04 + COV-07 (one defect)** — `src/modules/media/routes.js:81` runs `SELECT author_id FROM reviews WHERE id = $1`, putting DB access in the route layer. Move it into **`src/modules/media/repo.js`** — deliberately *not* a new `src/modules/reviews/`, which would redden the live coverage-lane scope guard and collide with U4-REVIEWS. The statement stays parameterized (NFR-11); U4-REVIEWS takes it over later. | NFR-11, ADR-001 | `src/modules/media/routes.js`, `src/modules/media/repo.js`, `tests/unit/hosts-media.test.js` |
+| **W3-COV-ADAPTERS** | **COV-06** — the two production notification adapters' delivery bodies never execute (sendgrid.js 58 %, fcm.js 40 % statements), so the code that would run in a live send is unexercised, including the NFR-09 retryable/non-retryable classification. Cover them through an injected fake client seam. **Never make a live provider call** (ADR-011): dev and the whole suite stay on the mock transport and every attempt still writes a NOTIFICATION_ATTEMPT row. | FR-07, FR-13, NFR-09, ADR-011 | `src/adapters/sendgrid.js`, `src/adapters/fcm.js`, `tests/unit/adapters-comms.test.js` |
+| **W3-FIX-CANARY** | **COV-01** — the AB-08 leak canary used a bare `not.toContain('742')`, which matches by chance inside random UUIDs (~1 run in 100). The working tree already looks rewritten to leaf-scoped assertions. **Confirm by execution** (drive the documented UUID collision through the current assertion and show it does not redden), then close it — or reopen it with a reproduction. Do not churn a file that is already correct. | AB-08, NFR-13, ADR-010 | `tests/st-security/st-security-wave3.test.js` |
+
+### 4.5 Wave 3R-3 — CDR evidence and release readiness
+
+| Unit | Goal | Requirements | Exclusive files |
+|---|---|---|---|
+| **W3-DEFERRED-EVIDENCE** | Turn the four fenced-off items into *evidence*, not assertions: executable absence proofs (structured-404 probes, module-absence checks) for **IT-F1** (NFR-10) and **STS-W3-03** (NFR-12 erasure, NFR-13 export); a written statement of **TCB-W3-05** presenting *both* ADR-009 readings and choosing neither; **RTLT-02** recorded untestable (k6 absent — do not vendor k6). | NFR-10, NFR-12, NFR-13, NFR-01, NFR-02, FR-08, FR-11 | `tests/coverage/w3-deferred-classification.test.js`, `docs/results/wave3-closeout-open-items.md` |
+| **W3-REPORT** | Overwrite `docs/verification-report.md` with a **waves 0–3** report. The file on disk is a PRE-REPAIR DRAFT — do not trust or transcribe it. Per requirement: met (naming the test that proves it), partial (naming the missing clause), not implemented (naming the absence proof), or unverifiable here (naming why). Carries the **FR-10 lesson** (§8.4) explicitly and the **suite-determinism status** honestly — if runs still differ, the numbers go in. Updates the inventory statuses to `met` only where 3R-1 re-executed the scenario. Depends on every unit above. | all | `docs/verification-report.md`, `docs/_generated/verification-findings-wave3-round2.json`, `docs/_generated/requirements-inventory.json`, `docs/wave3-verification-handoff.md` |
+| **W3-CI-PUSH** | CI has never run wave 3 (`origin/main` ends at `af1a91a`). Make the workflow replay exactly what 3R-0-GATE proved locally — same invocation, same isolation, no `--forceExit` masking a leak — and record the readiness state. **Measured 2026-08-17:** `.github/workflows/ci.yml` step 47 runs `npm test -- --coverage` with **no job or step timeout**, and both coordinator runs hung after printing results, so today a wave-3 push would occupy a runner until GitHub's 6-hour cap and report failure with a green-looking test summary in the log. Add an explicit step timeout so a future leak fails fast and visibly instead of hanging, and treat `--coverage` as its own risk: the pre-repair report recorded that coverage mode reorders suites and reddened an ADR assertion (W3-F1). **Do not `git commit` or `git push`**: the human team pushes. The deliverable is a workflow that would pass plus a written statement of what has and has not been proven about CI. | NFR-08 (substrate), all (gate) | `.github/workflows/ci.yml`, `docs/results/ci-readiness.md` |
 
 **Wave-3R acceptance (the wave is done when all of these hold):**
 
-1. Every one of the 30 claimed-resolved findings has either a re-executed reproduction showing it
+1. Five consecutive full-suite runs are identical and the process exits without `--forceExit`;
+   the numbers are published in `docs/results/suite-determinism.md`. If they are not identical,
+   that is stated as the headline finding of the run.
+2. Every one of the 30 claimed-resolved findings has either a re-executed reproduction showing it
    no longer reproduces, or is reported **still open** with its scenario. No claim is accepted on
    a fixer's word.
-2. FR-10 is proven from the delivered email, or FR-10 is reported **not met**. There is no third
-   outcome.
-3. `npm test`, `npm run lint`, `npm run build` all clean on a clean tree, and the suite's green
-   state is stated as a *precondition*, never as evidence for any individual requirement.
-4. The four out-of-scope items are classified with evidence and **no wave-4 code was written**.
+3. FR-10 is proven from the delivered email, or FR-10 is reported **not met**.
+4. The four fenced-off items are classified with evidence and **no wave-4 code was written**.
 5. `docs/verification-report.md` covers waves 0–3 and is accurate enough to hand a reviewer at CDR
    without a verbal correction.
 
@@ -200,7 +304,7 @@ live provider receives **synthetic content only** until the team signs that revi
 |---|---|
 | 5 — Client foundation | **U5-SHELL** (`client/{package.json,vite.config.js,index.html}`, `client/src/{main,App,routes}.jsx`, `client/src/layout/**`) · **U5-API-CLIENT** (`client/src/api/**`, `client/src/session/**`) · **U5-UI-KIT** (`client/src/ui/**`, `client/src/styles/**`) |
 | 6 — Client features | **U6-DISCOVERY** (`client/src/features/discovery/**`, FR-01/02/03) · **U6-BOOKING** (`client/src/features/booking/**`, FR-04/12/13/14) · **U6-COMMUNITY** (`client/src/features/community/**`, FR-05/06/07) · **U6-ACCOUNT-MOD** (`client/src/features/{account,moderation}/**`, FR-08/09/10, NFR-12/13) |
-| 7 — Measurement close-out | **U7-MODERATION-MEASURE** (IT-03 live run + **human label sign-off**, `tests/fixtures/moderation-eval/v1/RESULTS.md`) · **U7-PERF-SEC** (LT-01/02 under k6, ST-01 TLS scan, ST-04 ZAP baseline, `tests/load/{lt01,lt02}.js`, `docs/results/**`) · **U7-A11Y-UX** (axe-core + 5-participant study, `client/tests/a11y/**`) |
+| 7 — Measurement close-out | **U7-MODERATION-MEASURE** (IT-03 live run + **human label sign-off**, `tests/fixtures/moderation-eval/v1/RESULTS.md`) · **U7-PERF-SEC** (LT-01/02 under k6, ST-01 TLS scan, ST-04 ZAP baseline, `tests/load/{lt01,lt02}.js`, `docs/results/**`) · **U7-A11Y-UX** (axe-core audit of the seven NFR-07 interfaces + the 5-participant study, spec under `tests/mt-ut-quality/` driving the Vite preview build; see **§8.6** for the two dated actions) |
 
 Wave 7 exists because IT-03, LT-01/02 under k6, the ZAP baseline and UT-01 are **work items with
 host prerequisites**, not by-products of writing code. None of them can be closed by an agent
@@ -246,7 +350,7 @@ participants.
   with no handler the worker retries then dead-letters, so content **stays pending** — FR-08's
   required failure direction. U4-MODERATION's acceptance includes requeueing those dead letters.
 - **8.2.3 The review-authorship SELECT** in `src/modules/media/routes.js` is now scheduled
-  (U3R-FIX-MEDIA-REPO) rather than carried, and U4-REVIEWS takes it over afterwards.
+  (W3-FIX-MEDIASQL) rather than carried, and U4-REVIEWS takes it over afterwards.
 
 ### 8.3 Open questions for the team (none blocking)
 
@@ -264,7 +368,10 @@ participants.
 4. **ADR-009 cap values** are the team's reading of AB 626 and are due a documented CDR re-check.
 5. **k6, ZAP and axe** are host prerequisites. `npm run test:load` needs k6; `npm run scan:zap`
    needs Docker and a running dev server; `npm run test:a11y` fails on purpose until `client/`
-   exists. All three are wave-7 work items with owners, not silent gaps.
+   exists. All three are wave-7 work items with owners, not silent gaps. For axe/UT-01 the gap is
+   larger than tooling — there is no interface to audit and no study booked: see **§8.6**, which
+   carries the probe evidence and the two dated actions (A-NFR07-1, A-NFR07-2) NFR-07 stays open
+   against.
 6. **ADR-007…011 ratification** is still recorded as pending team sign-off at a stand-up.
 
 ### 8.4 The FR-10 lesson (carry it into the report)
@@ -276,18 +383,111 @@ to book or publish. The suite was green throughout, because the tests took the t
 adopts: *verify a user-facing outcome at the boundary the user actually observes.* A test that
 observes an internal value proves the internal value, nothing more.
 
+### 8.5 Suite determinism — the second lesson of this run
+
+The FR-10 lesson says a green test can prove the wrong thing. This one says a green *suite* can
+prove nothing at all. On unchanged code the same command produced 5 failures and then 1182/1182,
+and the failing files passed in isolation — so on any given day a reviewer could be shown either
+picture and neither would be a lie. Two structural causes, both worth carrying into wave 4:
+
+1. **Assertions over global state.** A whole-table `SELECT` or `count(*)` is a statement about the
+   entire database, and the database accumulates rows from every suite that ran before it in the
+   same process (the schema is reset once, in `globalSetup`). An invariant worth asserting globally
+   — e.g. ADR-003's "every outbox payload is IDs-only" — must still be *scoped to rows this test
+   produced*, or the test is measuring its neighbours.
+2. **Work that outlives its suite.** An unawaited request, a worker tick or an unclosed client
+   keeps mutating shared state after the suite that started it reported green, and keeps the
+   process alive at the end. `--forceExit` would hide both symptoms and fix neither.
+
+Standing rule adopted here: **a test owns the rows and keys it creates and asserts on nothing
+else, and every suite closes what it opened.**
+
+### 8.5.1 Coordinator baseline, measured 2026-08-17 (the numbers 3R-0 must beat)
+
+Two consecutive full-suite runs, same command, same isolated lane
+(`TEST_DATABASE_URL=postgres://…/homeplate_coord_test`, Redis db 13, bucket
+`homeplate-media-homeplate-coord-test`), unchanged tree at `bc27199`, nothing else running:
+
+| Run | Suites | Tests | Failure | Wall | Exited on its own? |
+|---|---|---|---|---|---|
+| 1 | 1 failed / 59 passed / 60 | 1 failed / 1181 passed / 1182 | `tcb-w3-reverify.test.js` — *FR-12 seats_remaining=3, 40 concurrent guests*: `created` = 3 ✔ but `refused` = **36, expected 37** | 91.07 s | **No** — killed after ~110 s idle |
+| 2 | 1 failed / 59 passed / 60 | 1 failed / 1181 passed / 1182 | `tc12-tc14-booking-schema.test.js` — *FR-14 / TC-14 guest cancels before start*: **`read ECONNRESET`** | 90.31 s | **No** — killed |
+
+**The two runs did not reproduce each other's failure, and neither matched the five modes recorded
+in the handoff. Determinism status: FAILING. Three separate pictures of the same commit now exist.**
+
+Three things this baseline pins down that the earlier diagnosis did not:
+
+1. **FR-12's capacity invariant was never violated.** 3 bookings were created and `seats_remaining`
+   reached 0; the arithmetic that broke is `3 + 36 = 39 ≠ 40` — **one response was neither 201 nor
+   409**. The test throws away that response's status and body, so the run says nothing about what
+   it was. W3-DET-CONCURRENCY's first job is to print it. If it is a 500 (pg pool `max: 10`
+   exhausted by 40 simultaneous requests is the leading candidate) that is a genuine NFR-09 /
+   AB-06 "no unhandled 5xx" defect hiding behind a flaky-test label, not a test bug.
+2. **`read ECONNRESET` is a sixth failure mode, previously unrecorded.** A socket reset inside
+   supertest is transport-level, not assertion-level: something reset a connection under a request
+   that a booking test was making. That is the signature of state outliving its suite, which makes
+   the leaked handle a *correctness* problem, not only an untidy exit. W3-DET-HANDLES and
+   W3-DET-CONCURRENCY should be run by people who talk to each other.
+3. **The hang is total and reproducible.** Both runs printed `Jest did not exit one second after
+   the test run has completed` and then sat at 0 % CPU indefinitely; both had to be killed
+   (`exit=143`). `.github/workflows/ci.yml` runs `npm test -- --coverage` with no job timeout, so
+   **CI would hang on the runner's default 6-hour limit on the first wave-3 push.** Nothing may be
+   pushed until this is closed.
+
+Corroborating prior evidence: the pre-repair `docs/verification-report.md` already recorded that
+"under `--coverage` jest reorders suites and one ADR-conformance assertion fails (W3-F1)" — the
+same order-sensitivity, seen at `3136b91`, before repair round 1. This has been mis-filed as a
+coverage-mode quirk once already.
+
+### 8.6 NFR-07 / UT-01 cannot be closed at CDR — finding MTUT-RV-04
+
+**Status: NOT IMPLEMENTED.** This is scope, not a defect: NFR-07 (Must) is delivered by waves 5–6
+plus wave-7 unit **U7-A11Y-UX**. It is recorded here, and must be stated plainly in
+`docs/verification-report.md`, so a Must-priority requirement is never left silently unmentioned at
+CDR.
+
+**Evidence — four probes, re-run 2026-08-17 on the clean tree at `bc27199`:**
+
+| Probe | Result |
+|---|---|
+| `ls -d client` | `ls: client: No such file or directory` |
+| `find . -name '*.jsx' -o -name '*.tsx' -o -name '*.html'` (excluding `node_modules/`, `coverage/`) | only `docs/results/zap-baseline.html`, a scanner report — **no application interface** |
+| `ls node_modules \| grep -iE 'axe\|playwright\|puppeteer\|jsdom'` | empty (exit 1) — no audit harness, no browser toolchain |
+| `curl -m 5 http://localhost:5173` | HTTP `000` — nothing serving a UI |
+| `npm run test:a11y` | exit **1** with the wave-5 message (MTUT-W3-03's fix) — an honest refusal, **not** coverage |
+
+So NFR-07's acceptance — zero `serious`/`critical` axe violations across the seven interfaces at
+`wcag2a`/`wcag2aa`, plus keyboard traversal with visible focus, alt text, labelled controls,
+`aria-live` error announcement and ≥ 4.5:1 body contrast — **has no measurable subject in this
+build**, and SRS §4.5's "Findings are triaged before the Critical Design Review" cannot be met for
+CDR on **2026-08-22**. Nothing in wave 3 changes that, and no wave-3 code change is proposed:
+adding `@axe-core/playwright` to `devDependencies` now would install a harness with nothing to
+audit.
+
+**Two dated team actions. NFR-07 stays OPEN until both artifacts exist.**
+
+| # | Action | Owner | Dates |
+|---|---|---|---|
+| **A-NFR07-1** | **Harness.** In wave 5, add `@axe-core/playwright` **and a pinned browser package** to `devDependencies` in **one `npm install` that also regenerates `package-lock.json`** — never `npx --yes`, which resolves an unpinned ChromeDriver against whatever browser happens to be on the developer's machine (**that is the exact round-1 failure**). Then add a spec under `tests/mt-ut-quality/` that boots the Vite preview server, audits all seven NFR-07 interfaces (search/browse, listing detail, host profile, booking flow, signup/login, messaging, moderator queue) with `withTags(['wcag2a','wcag2aa'])`, **fails on any `serious` or `critical` violation**, and carries the keyboard-traversal assertions. It replaces `npm run test:a11y`'s placeholder script. | Client lead — **name assigned at the CDR stand-up, 2026-08-22** | Raised 2026-08-17. Due at wave-5 start; blocks wave-6 sign-off. |
+| **A-NFR07-2** | **Study.** Schedule the moderated usability study SRS §4.5 requires: **≥ 5 named participants covering both roles** (guest booking flow *and* host listing flow), a **fixed date**, and a written **triage record** of the findings. This is a human activity — no agent may run it, record it, or stand in for a participant. | QA lead — **name assigned at the CDR stand-up, 2026-08-22** | Raised 2026-08-17. Participants + date fixed **at CDR, 2026-08-22**; session run once wave 6 delivers the seven interfaces; triage record filed before NFR-07 is closed. |
+
+At CDR the honest statement is: *NFR-07 is a Must requirement with a known delivery wave, no
+harness, no subject and no scheduled study as of 2026-08-17; SRS §4.5's triage-before-CDR clause
+will not be satisfied on 2026-08-22, and the two actions above are how it gets closed.*
+
 ---
 
 ## 9. Mapping to the SPMP work activities
 
 | SPMP activity | Status |
 |---|---|
-| WA-1 Auth & eligibility | built (wave 2); re-verification in U3R-REVERIFY-PLATFORM / U3R-FR10-PROOF |
-| WA-2 Discovery/listing + Maps | built (waves 2–3); re-verification in U3R-REVERIFY-CORE |
-| WA-3 Booking — the never-cut core loop (SPMP §5.3.2) | built (wave 3); re-verification in U3R-REVERIFY-CORE |
+| WA-1 Auth & eligibility | built (wave 2); re-verification in W3-RV-SEC-CONFIG / W3-RV-FR10 |
+| WA-2 Discovery/listing + Maps | built (waves 2–3); re-verification in W3-RV-CORE |
+| WA-3 Booking — the never-cut core loop (SPMP §5.3.2) | built (wave 3); re-verification in W3-RV-BOOKING + W3-DET-CONCURRENCY |
 | WA-5 Safety alert | pre-landed in `f7f954c`; completed by U4-SAFETY-COMPLETE |
-| WA-8 Media storage | built (waves 2–3); U3R-FIX-MEDIA-REPO closes the last route-layer SQL |
-| WA-10 Worker/dispatcher + adapters | built; U3R-COV-ADAPTERS closes the untested delivery bodies |
+| WA-8 Media storage | built (waves 2–3); W3-FIX-MEDIASQL closes the last route-layer SQL |
+| WA-10 Worker/dispatcher + adapters | built; W3-COV-ADAPTERS closes the untested delivery bodies |
 | WA-4 Reviews & messaging | wave 4 (U4-REVIEWS, U4-MESSAGING) |
 | WA-6 Data lifecycle | wave 4 (U4-PRIVACY) |
 | WA-7 Moderation integration | wave 4 (U4-MODERATION) |

@@ -258,7 +258,12 @@ describe('MT-01 / NFR-08 — booking creation is audited end to end', () => {
     const registry = loadHandlers({ log: recLogger });
     // Drain until this booking's created-notifications are delivered (bounded; sibling
     // suites may have left their own due jobs in the shared test outbox).
-    for (let i = 0; i < 25; i += 1) {
+    // DETERMINISM (verification-report F-01): a RUNAWAY GUARD, not a budget. pollOnce claims from the
+    // whole outbox table oldest-first, ten rows a pass, so the passes this job needs depend
+    // on how many rows sibling suites left behind — state this test does not own. The loop
+    // is ended by the `stats.claimed === 0` break below (jobs that back off take a future
+    // available_at and drop out of the claim), never by this number.
+    for (let i = 0; i < 5000; i += 1) {
       const stats = await pollOnce({ registry, log: recLogger });
       const { rows } = await query(
         `SELECT count(*)::int AS n FROM outbox_jobs
