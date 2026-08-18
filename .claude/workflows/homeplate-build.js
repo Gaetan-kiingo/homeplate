@@ -469,7 +469,34 @@ function renderUnit(u) {
 phase('Plan')
 log(`mode=${MODE} · repo=${REPO} · ${LANES.length} verification lanes · ${MAX_REPAIR} repair round(s) max`)
 
-const plan = await agent(
+// The coordinator is a single point of failure: it reads the SRS/SPMP/ADRs in full, so it runs long
+// and a dropped connection kills the whole run before any lane starts (happened twice on 2026-08-17,
+// once after 12 min and once after 37 s). Retry it, then fall back — in verify mode its structured
+// output is only used for PLAN_BRIEF strings, while the durable plan artifacts the lanes actually
+// read already exist on disk under docs/_generated/.
+const FALLBACK_PLAN = {
+  stack: {
+    summary: 'Node.js 20 + Express + PostgreSQL + Redis + MinIO; Jest + Supertest (see docs/_generated/build-plan.md)',
+    layout: 'src/{config,db,lib,middleware,modules,adapters,outbox,routes,schemas}, tests/<lane>/, db/migrations/, scripts/',
+  },
+  commands: { install: 'npm ci', migrate: 'npm run migrate', build: 'npm run build', test: 'npm test', lint: 'npm run lint' },
+  requirements: [],
+  waves: [],
+  openQuestions: ['Coordinator unavailable this run — the plan and requirement inventory were read from the existing docs/_generated/ artifacts instead of being regenerated.'],
+  risks: [],
+}
+
+async function runCoordinator(prompt, opts) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const p = await agent(prompt, opts)
+    if (p && (p.commands || (p.requirements || []).length || (p.waves || []).length)) return p
+    log(`Coordinator attempt ${attempt}/3 returned nothing (transient API failure?) — ${attempt < 3 ? 'retrying' : 'falling back to the on-disk plan artifacts'}`)
+  }
+  if (MODE === 'verify') return FALLBACK_PLAN
+  return null // a build/implement run genuinely needs a fresh plan
+}
+
+const plan = await runCoordinator(
   `${CONTEXT}
 
 YOU ARE THE COORDINATOR. You plan; you do not write application code.
