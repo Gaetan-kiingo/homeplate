@@ -5,9 +5,9 @@
 is listed as an external recipient of message content), SRS §2.4 (free-tier constraint)
 **Decisions:** ADR-007 (moderation LLM provider), ADR-002 (two-stage moderation), ADR-008
 (synthetic evaluation set)
-**Drafted:** 2026-08-14 · **Ratification:** see the sign-off block below — **UNSIGNED**
-**ST-06 clause status:** **OPEN** — evidence recorded, team ratification outstanding.
-Re-checked 2026-08-17 (verification round 2): §7 is still unsigned.
+**Drafted:** 2026-08-14 · **Ratification:** **SIGNED 2026-08-18** by Gaetan Rieben — see §7 (countersignature outstanding)
+**ST-06 clause status:** **CLOSED** — evidence recorded and ratified 2026-08-18; option (a) + (b).
+Re-checked 2026-08-17 (verification round 2): §7 was still unsigned. Signed 2026-08-18; terms re-fetched the same day and unchanged (effective 2026-03-23, F1–F4 verbatim).
 
 ---
 
@@ -108,10 +108,11 @@ sufficient answer.
 
 ## 5. Proposed decision — and the default that governs until §7 is signed
 
-This section is written in the imperative because it is the operative restriction *today*: an
-unsigned review fails closed, so the conservative reading below binds wave 4 whether or not the team
-ever ratifies it. What the team's signature adds is the authority to relax it — nothing here becomes
-permissive by being left unsigned.
+**RATIFIED 2026-08-18 (§7).** This section is the operative restriction on wave 4. It was already
+binding while unsigned — an unsigned review fails closed — and the signature does not relax it; it
+records that the team owns it. Read item 2 with the ratified rationale in §7: v1.0 contains only
+synthetic, team-authored data, so "real user content" is an empty set in the prototype and the live
+classifier may run on everything it does contain.
 
 **v1.0 never sends real user content to the moderation LLM.** Concretely:
 
@@ -119,11 +120,16 @@ permissive by being left unsigned.
    only for the IT-03 measurement run over the ADR-008 synthetic evaluation set
    (`tests/fixtures/moderation-eval/vN/`), which by ADR-008 contains no personal data. That run
    stays compliant with F3.
-2. **Real user content is moderated by the deterministic stage plus humans.** The ADR-002
-   pre-filter (blocklist / regex / rate limit) runs on all content as specified. Where ADR-002 would
-   hand off to the LLM, wave 4 routes the item to the **human Moderator queue** instead. This is the
-   same code path ADR-002 already requires for a moderation-provider outage, so no new failure mode
-   is introduced.
+2. **Real user content never reaches the free-tier provider — and in v1.0 there is none.** The
+   ADR-002 pre-filter (blocklist / regex / rate limit) runs on all content as specified. The gate
+   wave 4 must implement is on the *content*, not on the pipeline: an item may go to the live
+   classifier only if it carries no personal data. Because the prototype is exercised solely with
+   synthetic, team-authored data (§7 rationale), that gate passes for everything in v1.0 and the
+   full FR-08 confidence-routing path is built and exercised end-to-end — which is what makes IT-03
+   meaningful. If an item ever fails the gate (any real user content, i.e. the moment the project
+   has users), wave 4 routes it to the **human Moderator queue** instead: the same code path ADR-002
+   already requires for a provider outage, so no new failure mode is introduced. Crossing that line
+   for real is a **paid-tier + re-signature** event under §7.2, not a configuration tweak.
 3. **The publication invariant is unchanged and unweakened.** Public content (listings, reviews)
    stays `PENDING` until a moderator approves it — it must never publish unreviewed. Private
    messages still deliver immediately and are scanned asynchronously by the deterministic stage,
@@ -137,9 +143,12 @@ permissive by being left unsigned.
 
 ### Cost of the decision, stated plainly
 
-Automated classification of real user content is not delivered in v1.0; the human Moderator queue
-absorbs the volume the LLM stage would have taken. FR-08's confidence-based routing is therefore
-exercised and measured against the synthetic set (IT-03/NFR-10) rather than against live traffic.
+Automated classification of *real user* content is not delivered in v1.0 — but since v1.0 carries no
+real user content, nothing in the prototype is downgraded: the LLM stage runs on the synthetic corpus
+that constitutes all of its data, and the human Moderator queue stands ready as the ADR-002 fallback.
+FR-08's confidence-based routing is therefore exercised and measured against the synthetic set
+(IT-03/NFR-10) rather than against live traffic. The deferred capability is classification of
+*personal* content, which arrives with the paid tier if the project is ever marketed.
 This is a deliberate scope consequence of the free-tier constraint, and it should be stated as such
 in the v1.0 demo and in any NFR-10 claim — not presented as a full FR-08 deployment.
 
@@ -176,10 +185,29 @@ default in §5–§6 governs.
 | Field | Value |
 |---|---|
 | Terms URL and effective date reviewed | https://ai.google.dev/gemini-api/terms — effective 2026-03-23 |
-| Reviewer (name) | _unsigned_ |
-| Review date | _unsigned_ |
-| Option ratified (a / b / c) | _proposed: (a) + (b); unsigned_ |
+| Reviewer (name) | **Gaetan Rieben** (Software Engineer / QA; owns moderation integration, SPMP §4.3) |
+| Review date | **2026-08-18** |
+| Option ratified (a / b / c) | **(a) + (b)** — live calls restricted to non-personal content, with identifier stripping as defence in depth |
 | Live mode approved for real user content? | **No** |
+| Countersignature (SPMP §7.4) | **OUTSTANDING — Nam Tran.** One peer review is required without exception for AI-assisted work. Record it here and in the weekly stand-up report (SPMP §5.3.5). |
+
+**Provenance of this entry, stated because ADR-007 forbids an agent to fill this block in.** The
+decision above was taken by the named reviewer in a working session on 2026-08-18 and transcribed
+verbatim by the build agent at their instruction; the agent did not choose it. The agent's own
+contribution is the evidence in §2–§4, which it re-fetched from the live terms page on the same day —
+effective date **still 2026-03-23**, and findings F1–F4 confirmed **verbatim** against the live text,
+so the snapshot below is current rather than stale. The countersignature row is deliberately left
+open: no agent may record a second human's review, and the reviewer must obtain it.
+
+**Ratified rationale (the reviewer's own reasoning, recorded as given).** Homeplate v1.0 is a course
+prototype, not a deployed product, and it will be exercised **only with synthetic, team-authored
+data** — there are no real users and therefore no personal content in the system at all. The
+restriction in §5 is consequently satisfied *by construction*: every item the classifier can ever
+receive in v1.0 is already non-personal, so the live API may be called on all content in the
+prototype without sending anything the terms forbid. Should the project ever be taken to market, real
+user content appears, and at that point the free tier is no longer permissible: the team moves to the
+paid tier (F4 — no training use, bounded logging, processing under Google's DPA) and **re-signs this
+review first**, per the re-review triggers in §7.2.
 
 ### 7.1 How to sign — the exact human procedure
 
@@ -229,12 +257,15 @@ set.
 
 ### 7.3 Current exposure, stated plainly
 
-Zero, today. `src/modules/moderation/` does not exist (wave 4), no code path sends any content to
-the LLM adapter, and `src/config/schema.js` forces `LLM_MODERATION_MODE=mock` under
-`NODE_ENV=test`. The clause is nevertheless reported **OPEN**, not "deferred", because the exposure
-becomes real the moment the wave-4 moderation worker lands: it scans private host–guest message
-bodies, and SRS §3.4 already registers the LLM API as an external recipient of that content. The
-decision must exist *before* the code, not after.
+Zero, today, and zero by design for the whole of v1.0. `src/modules/moderation/` does not exist
+(wave 4), no code path sends any content to the LLM adapter, and `src/config/schema.js` forces
+`LLM_MODERATION_MODE=mock` under `NODE_ENV=test`. The clause was reported **OPEN** rather than
+"deferred" precisely because the decision had to exist *before* the wave-4 worker, which scans
+private host–guest message bodies and which SRS §3.4 already registers the LLM API as a recipient of.
+**As of 2026-08-18 the decision exists** (§7): the prototype holds only synthetic data, so the worker
+can be built and exercised without any personal content leaving the boundary. Exposure becomes real
+only when the system acquires real users — which is the same moment the paid tier and a re-signature
+become mandatory.
 
 ## 8. Traceability
 

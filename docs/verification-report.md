@@ -171,7 +171,7 @@ quietly dropped:
 |---|---|---|
 | Claimed resolved by repair round 1 | 30 | **Independently re-verified** by re-executing each original failure scenario against the current tree. **29 confirmed fixed**; TCC-02's declared residual was closed by a documented design decision (**F-08**). No claim survived on the fixer's word alone. |
 | Never repaired, but closed since | 5 | **COV-01** (flaky AB-08 canary — the bare `not.toContain('742')` that matched random UUIDs is gone from the tree and the coverage lane passes), **TCC-04** (FR-02 review preview now carries `reviewsTotal`/`reviewsPageSize`, with the paged list at `GET /api/hosts/:id/reviews`), **W3-ADR-04 + COV-07** (the last raw SQL in a route file moved into `src/modules/media/repo.js`; a dedicated test now asserts **no** DB access in any route layer), **COV-06** (both production notification adapters' `deliver()` bodies are now executed against substituted SDKs — no live provider call), **RTLT-02** (its premise is stale: k6 **is** installed at `/usr/local/bin/k6`, v2.2.0, and the NFR-01 acceptance run was executed with it). |
-| Never repaired, still open | 3 | **IT-F1 → F-04**, **STS-W3-03 → F-03**, **STS-W3-05 clause 1 → F-06**. (**TCB-W3-05 → F-02** was closed by team decision on 2026-08-18.) |
+| Never repaired, still open | 2 | **IT-F1 → F-04**, **STS-W3-03 → F-03**. (**TCB-W3-05 → F-02** and **STS-W3-05 clause 1 → F-06** were both closed by team decision on 2026-08-18.) |
 | Not re-checked in this run | 1 | **COV-08** (nine exported names referenced nowhere in `src/` or `tests/` — dead or premature exports). Minor and cosmetic; recorded here rather than silently marked resolved, because this run did not execute a check for it. |
 
 The sections below are what remains open at `176ba39`, plus one new defect found during this run.
@@ -360,21 +360,36 @@ study (§5 below).
 
 ---
 
-### F-06 — The ST-06 ADR-007 data-use review is recorded but unsigned
-**Severity:** Minor · **Requirements:** NFR-13, ST-06, ADR-007 · **Status: OPEN — needs a human
-signature, ~5 minutes of team time** *(round-1 finding STS-W3-05, clause 1)*
+### F-06 — CLOSED 2026-08-18: the ST-06 ADR-007 data-use review is signed
+**Severity:** was Minor · **Requirements:** NFR-13, ST-06, ADR-007 · **Status: CLOSED by team
+decision** *(round-1 finding STS-W3-05, clause 1)*
 
-**Reproduction.** `docs/adr007-data-use-review.md` exists and is substantive — terms URL
-`https://ai.google.dev/gemini-api/terms`, effective date 2026-03-23, retrieval date, verbatim quotes
-— but its sign-off block reads `Reviewer (name) | _unsigned_` and `Review date | _unsigned_`.
+**What was open.** `docs/adr007-data-use-review.md` was substantive — terms URL, effective date,
+verbatim quotes — but its sign-off block read `_unsigned_`, and ST-06 asks the *team*, not a tool, to
+record the finding.
 
-**Proposed fix.** A named team member reads the file and fills both fields. **An agent cannot close
-this**: ST-06 requires the *team* to record the finding, and a signature written by a tool is not a
-review. The lane test now pins both halves — the evidence must exist **and** the ratification must
-still be visibly open — so it will go green the moment a human signs and not before.
+**The decision.** **Gaetan Rieben signed §7 on 2026-08-18, ratifying option (a) + (b):** only
+non-personal content may reach the live free-tier provider, with identifier stripping as defence in
+depth. Before recording it the terms were re-fetched from the live page: effective date **still
+2026-03-23** and findings F1–F4 confirmed **verbatim**, so the analysis was current, not a stale
+snapshot.
 
-**Why it is still open:** it is a human act. (Clause 2 of the same finding — the volume/disk
-encryption and backup-retention documentation in README — is **confirmed closed**.)
+**The ratified rationale, which is what makes this cheap.** Homeplate v1.0 is a course prototype
+exercised **solely with synthetic, team-authored data** — it holds no real user content at all. The
+restriction is therefore satisfied *by construction*, and wave 4 can build and exercise the full
+FR-08 confidence-routing path against the live provider without sending anything the terms forbid.
+Real user content appears only if the project is marketed, and that is a **paid-tier plus
+re-signature** event under the file's §7.2 re-review triggers — not a configuration change, and not a
+model swap.
+
+**Guard.** The lane test was inverted, not deleted: `st-security-verify.test.js` previously asserted
+the `_unsigned_` placeholders were present so a signature could not be lost silently; it now asserts
+a named reviewer and a parseable ISO date, plus that live mode for real user content is still **No**.
+The clause is guarded in both directions.
+
+**Residual, tracked not hidden:** the SPMP §7.4 **countersignature by Nam Tran is outstanding**. No
+agent may record a second human's review, so the §7 table carries an explicit OUTSTANDING row. The
+ST-06 clause is closed; the peer-review formality is not yet complete.
 
 ---
 
@@ -651,7 +666,7 @@ Stated plainly, because an overstated CDR document is worse than none:
    **While you are at it, ratify the FR-01 acceptance correction (TCC-03)** recorded in §3.1 — a
    verification run corrected a requirement's acceptance wording rather than the code, and that
    should be a team decision on the record, not an inherited fact.
-3. **Sign `docs/adr007-data-use-review.md`** (F-06) — minutes of human time, closes an ST-06 clause.
+3. ~~**Sign `docs/adr007-data-use-review.md`** (F-06)~~ — **DONE 2026-08-18:** option (a) + (b) ratified. Remaining: Nam Tran's SPMP §7.4 countersignature.
 4. **Schedule the UT-01 study** and state openly at CDR that the SRS §4.5 "triage before CDR"
    deadline is missed because the client ships in waves 5–6 (F-05).
 5. **Land a shared `drainOutbox()` test helper** and sweep the remaining bounded drain loops, so

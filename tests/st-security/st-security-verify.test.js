@@ -809,21 +809,36 @@ describe('ST-06 data protection register and export (NFR-13)', () => {
     }
   });
 
-  test('STS-W3-05 (round 2): the ADR-007 data-use finding is RECORDED but NOT human-signed', () => {
-    // Round-2 re-verification of STS-W3-05 clause 1. The finding was "no artifact records the
-    // free-tier data-use finding"; docs/adr007-data-use-review.md now exists and carries the
-    // terms URL, the effective date and verbatim quotes. What it does NOT carry is a human
-    // sign-off, and ST-06 asks the TEAM to record the finding — so this test pins BOTH halves:
-    // the evidence exists (was missing), and the ratification is still open (must not be read
-    // as closed). Same discipline as ADR-008's label sign-off rule.
+  test('STS-W3-05 (round 3): the ADR-007 data-use finding is RECORDED and human-signed', () => {
+    // STS-W3-05 clause 1. Until 2026-08-18 this test asserted the OPPOSITE — that the sign-off
+    // block still read `_unsigned_` — so a signature could not be lost silently and the clause
+    // could not drift to "closed by assumption". The clause was ratified on 2026-08-18, so the
+    // assertion is inverted rather than deleted: it now pins that the evidence is still present
+    // AND that the signature is real, i.e. a named reviewer and an ISO date, matching §7.2's
+    // machine-checkable predicate (no `_unsigned_` token left in the sign-off TABLE). Deleting
+    // it would leave the clause unguarded in both directions. Same discipline as ADR-008's
+    // label sign-off rule.
     const review = path.join(ROOT, 'docs', 'adr007-data-use-review.md');
     expect(fs.existsSync(review)).toBe(true);
     const text = fs.readFileSync(review, 'utf8');
     expect(text).toMatch(/https:\/\/ai\.google\.dev\/gemini-api\/terms/);
     expect(text).toMatch(/effective\s+\d{4}-\d{2}-\d{2}/i);
-    // Unsigned: the conservative default (no real user content to the live provider) governs.
-    expect(text).toMatch(/Reviewer \(name\)\s*\|\s*_unsigned_/);
-    expect(text).toMatch(/Review date\s*\|\s*_unsigned_/);
+
+    // Signed: a named reviewer and an ISO review date, neither of them a placeholder.
+    const reviewer = text.match(/\|\s*Reviewer \(name\)\s*\|([^|]+)\|/);
+    const reviewed = text.match(/\|\s*Review date\s*\|([^|]+)\|/);
+    expect(reviewer).not.toBeNull();
+    expect(reviewed).not.toBeNull();
+    expect(reviewer[1]).not.toMatch(/_unsigned_/);
+    expect(reviewed[1]).not.toMatch(/_unsigned_/);
+    expect(reviewer[1].replace(/[*\s]/g, '').length).toBeGreaterThan(0);
+    const isoDate = reviewed[1].match(/\d{4}-\d{2}-\d{2}/);
+    expect(isoDate).not.toBeNull();
+    expect(Number.isNaN(Date.parse(isoDate[0]))).toBe(false);
+
+    // The ratified answer still refuses real user content on the free tier (option (a) + (b)).
+    expect(text).toMatch(/Live mode approved for real user content\?\s*\|\s*\*\*No\*\*/);
+
     // And the tree still cannot send real content anywhere: no moderation module exists.
     expect(fs.existsSync(path.join(ROOT, 'src', 'modules', 'moderation'))).toBe(false);
   });
