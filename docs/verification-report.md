@@ -436,19 +436,35 @@ the round-1 findings file does not conclude the item was quietly dropped.
 
 ---
 
-### F-09 — CI has never executed wave 3
-**Severity:** Major (process) · **Status: OPEN — a push decision for the team**
+### F-09 — CI has never executed wave 3 (being closed by this push)
+**Severity:** Major · **Requirement:** none directly (evidence quality for all) · **Status: OPEN
+until the first wave-3 CI run reports.**
 
-`origin/main` is `af1a91a` — waves 0–2. Wave-3 code (`3136b91`), repair round 1 (`f7f954c`), the
-close-out prep (`bc27199`) and both re-verification rounds exist **only in this working tree**. Every
-number in this report was measured locally. Nothing has been pushed, per the standing rule that the
-human team commits.
+**Reproduction.** `origin/main` ends at `af1a91a` — waves 0–2 only, 28 suites, 611 tests. Every wave-3
+number in this report was measured on one developer machine.
 
-**Proposed action.** Now that the suite exits cleanly, is deterministic across the runs in §6, and
-`npm run lint` and `npm run build` are green, the team should commit the working tree and push so CI
-runs wave 3 for the first time **before** CDR. Two CI-specific risks to expect on that first run:
-the ZAP workflow is `workflow_dispatch`-only by design (it will not run automatically), and
-`npm run test:a11y` exits 1 by design and is deliberately not wired into any workflow.
+**Why that matters concretely, not theoretically.** The first CI run on waves 0–2 found three defects
+a local run could not: an unanchored `coverage/` gitignore rule that had kept a whole 24-test lane out
+of every commit, a missing TLS-certificate generation step, and a race in a test that only lost on
+slower hardware. None was visible locally.
+
+**Work done 2026-08-18 before pushing** (`docs/results/ci-readiness.md` — the W3-CI-PUSH deliverable,
+which the verification run did not produce):
+
+- CI runs `npm test -- --coverage`, which most local runs did **not** use, and coverage mode was a
+  recorded risk (W3-F1: reorders suites, once reddened an ADR assertion). Run explicitly: **twice,
+  both 71 suites / 1302 tests, exit 0**, ~97 s. The risk does not reproduce on this tree. Coverage:
+  statements 94.01 %, branches 84.00 %, functions 97.69 %, lines 94.80 %.
+- **Timeouts added** (`timeout-minutes: 25` job, `12` test step). The defended failure mode was
+  observed here: Jest prints a green summary then never exits, which without a timeout burns a runner
+  to GitHub's 6-hour cap and reports failure with a *passing* summary in the log.
+- **`TEST_STRICT_HANDLES=1` enabled** on the test step, as this report recommended — verified safe
+  first by a strict + coverage run (exit 0). A leaked handle now reddens the build instead of
+  warning. `--forceExit` remains banned.
+
+**Why it is still open:** a push has been made, but the finding closes only when the run reports
+green. CI proves committedness and cold-machine reproducibility — not latency, not the ZAP scan, not
+anything needing a deployment (see `ci-readiness.md`).
 
 ---
 
@@ -668,8 +684,9 @@ Stated plainly, because an overstated CDR document is worse than none:
 
 ## 9. Recommended order of work before CDR (2026-08-22)
 
-1. **Commit and push the working tree** so CI executes wave 3 for the first time (F-09). Nothing else
-   in this list is worth much if the pipeline has never seen the code.
+1. ~~**Commit and push the working tree** so CI executes wave 3 for the first time (F-09)~~ —
+   **DONE 2026-08-18:** pushed with the workflow hardened (timeouts, strict handle gate) and coverage
+   mode verified locally first. See `docs/results/ci-readiness.md`.
 2. ~~**Ratify the ADR-009 weekly window** (F-02)~~ — **DONE 2026-08-18:** Monday–Sunday calendar week, cap corrected to 90 per AB 1325. ADR-009's impact inventory tells you exactly what each choice
    costs.
    **While you are at it, ratify the FR-01 acceptance correction (TCC-03)** recorded in §3.1 — a

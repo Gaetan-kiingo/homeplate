@@ -13,6 +13,11 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # A leaked handle used to make Jest print a green summary and then never exit, which without a
+    # timeout would occupy a runner until GitHub's 6-hour cap and report failure with a passing test
+    # summary in the log. The suite takes ~96 s locally; 25 minutes is generous for a cold runner and
+    # still fails fast and visibly if the hang returns.
+    timeout-minutes: 25
     env:
       # Dev-database URL for the migrate step; tests use their own guarded *_test database.
       DATABASE_URL: postgres://homeplate:homeplate@localhost:5432/homeplate
@@ -44,6 +49,15 @@ jobs:
         run: npm run build
 
       - name: Test (Jest + Supertest, seeded test DB, coverage)
+        # TEST_STRICT_HANDLES=1 turns globalTeardown's leaked-handle warning into a hard failure, so
+        # a suite that forgets to close a pool, a Redis client or a listener reddens the build
+        # instead of silently risking the hang above. Verified locally on this tree: the full suite
+        # passes under strict mode WITH coverage (71 suites / 1302 tests, exit 0).
+        # --forceExit stays banned: it kills the process before reporters and coverage finish,
+        # hiding a leak instead of naming it.
+        env:
+          TEST_STRICT_HANDLES: '1'
+        timeout-minutes: 12
         run: npm test -- --coverage
 
       - name: Upload coverage report
