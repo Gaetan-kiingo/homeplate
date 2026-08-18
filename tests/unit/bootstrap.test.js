@@ -172,7 +172,7 @@ describe('ADR-009 — MEHKO caps are configuration, evaluated in America/Los_Ang
     expect(locale.timezone).toBe('America/Los_Angeles');
     expect(locale.mehko.maxListingsPerHostPerDay).toBe(1);
     expect(locale.mehko.maxMealsPerHostPerDay).toBe(30);
-    expect(locale.mehko.maxMealsPerHostPerWeek).toBe(60);
+    expect(locale.mehko.maxMealsPerHostPerWeek).toBe(90);
     expect(Object.isFrozen(locale)).toBe(true);
     expect(Object.isFrozen(locale.mehko)).toBe(true);
   });

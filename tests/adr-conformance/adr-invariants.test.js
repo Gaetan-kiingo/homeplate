@@ -415,7 +415,7 @@ describe('ADR-009 — MEHKO caps in config; LA-day uniqueness backstop', () => {
     expect(config.mehko).toMatchObject({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
-      maxMealsPerWeek: 60,
+      maxMealsPerWeek: 90,
       timezone: 'America/Los_Angeles',
     });
   });

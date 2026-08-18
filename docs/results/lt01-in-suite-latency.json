@@ -15,14 +15,14 @@
     "everyEndpointP95": true,
     "errorRate": true
   },
-  "measuredAt": "2026-08-18T03:08:59.648Z",
-  "commit": "176ba399d2db93958ac640da4059627c680297d0",
+  "measuredAt": "2026-08-18T15:28:51.383Z",
+  "commit": "880711789dd51d33db17a9fa66e35a4fa79df3ad",
   "lane": "lane \"homeplate_test\" (redis db 1, bucket homeplate-media-test, volume db homeplate_test_volume)",
   "host": {
     "platform": "darwin 24.6.0",
     "cpus": 12,
     "totalMemGb": 24,
-    "loadavg1m": 13.44,
+    "loadavg1m": 8.84,
     "node": "v24.15.0"
   },
   "contention": {
@@ -43,53 +43,53 @@
     "harness": "node in-process VU loop over real loopback HTTP (in-suite regression gate; the NFR-01 acceptance measurement is the k6 run in tests/load/smoke.js); closed model, 1 in-flight request per VU",
     "vus": 200,
     "requestedDurationMs": 45000,
-    "wallMs": 45038,
+    "wallMs": 45039,
     "dataset": {
       "volumeListings": 1000,
       "approvedReviews": 1001,
       "users": 10000,
       "bookings": 1000
     },
-    "requests": 169104,
-    "throughputRps": 3754.7,
+    "requests": 152363,
+    "throughputRps": 3382.9,
     "errors": 0,
     "errorRate": 0,
     "errorKinds": {},
     "overall": {
-      "count": 169104,
-      "p50": 55.2,
-      "p95": 109.4,
-      "p99": 118.7,
-      "max": 271.7
+      "count": 152363,
+      "p50": 58.8,
+      "p95": 128.4,
+      "p99": 202.6,
+      "max": 476
     },
     "endpoints": {
       "hostReviews": {
-        "count": 25379,
-        "p50": 53.5,
-        "p95": 61.1,
-        "p99": 69,
-        "max": 203.5
+        "count": 22778,
+        "p50": 56.2,
+        "p95": 83.6,
+        "p99": 129.1,
+        "max": 363.1
       },
       "search": {
-        "count": 67629,
+        "count": 60973,
         "p50": 2.5,
-        "p95": 4,
-        "p99": 5.2,
-        "max": 199.5
+        "p95": 4.2,
+        "p99": 6.7,
+        "max": 173
       },
       "listingDetail": {
-        "count": 42311,
-        "p50": 88,
-        "p95": 97.7,
-        "p99": 140.8,
-        "max": 246.9
+        "count": 38187,
+        "p50": 92.2,
+        "p95": 140.5,
+        "p99": 281.3,
+        "max": 448.7
       },
       "hostPage": {
-        "count": 33785,
-        "p50": 105.3,
-        "p95": 115.8,
-        "p99": 194.4,
-        "max": 271.7
+        "count": 30425,
+        "p50": 110.4,
+        "p95": 166.5,
+        "p99": 301,
+        "max": 476
       }
     }
   }

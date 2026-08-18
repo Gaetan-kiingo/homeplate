@@ -602,7 +602,7 @@ describe('FR-11 — one listing per host per day and the AB 626 meal caps', () =
     expect(config.mehko).toEqual({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
-      maxMealsPerWeek: 60,
+      maxMealsPerWeek: 90,
       timezone: 'America/Los_Angeles',
     });
     expect(Object.isFrozen(config.mehko)).toBe(true);
@@ -643,32 +643,48 @@ describe('FR-11 — one listing per host per day and the AB 626 meal caps', () =
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
     const monday = futureMonday(900);
-    expect((await createListing(cookie, listingBody(monday, 30))).status).toBe(201);
-    expect((await createListing(cookie, listingBody(plusDays(monday, 1), 30))).status).toBe(201);
-    const third = await createListing(cookie, listingBody(plusDays(monday, 2), 1));
-    expect(third.status).toBe(422);
-    expect(third.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
+    const perDay = config.mehko.maxMealsPerDay;
+    // Derived, not hardcoded: the AB 1325 move from 60 to 90 meals/week silently invalidated
+    // the previous fixed two-day form of this test.
+    const daysToFill = Math.floor(config.mehko.maxMealsPerWeek / perDay);
+    expect(daysToFill).toBeLessThan(7);
+    for (let i = 0; i < daysToFill; i += 1) {
+      expect((await createListing(cookie, listingBody(plusDays(monday, i), perDay))).status).toBe(
+        201
+      );
+    }
+    const over = await createListing(cookie, listingBody(plusDays(monday, daysToFill), 1));
+    expect(over.status).toBe(422);
+    expect(over.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
   });
 
-  test('TCB-W3-05 (OPEN, ADR-009 sub-decision): the Monday-anchored week admits 120 meals in 4 days', async () => {
+  test('TCB-W3-05 (ACCEPTED RESIDUAL RISK since ADR-009 was ratified 2026-08-18): the calendar week admits twice the weekly cap across its boundary', async () => {
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
+    const perDay = config.mehko.maxMealsPerDay;
+    const weekly = config.mehko.maxMealsPerWeek;
+    const daysToFill = Math.floor(weekly / perDay);
     const monday = futureMonday(1000);
-    const saturday = plusDays(monday, -2); // Sat of the PREVIOUS Monday-anchored week
-    const sunday = plusDays(monday, -1);
-    expect((await createListing(cookie, listingBody(saturday, 30))).status).toBe(201);
-    expect((await createListing(cookie, listingBody(sunday, 30))).status).toBe(201);
-    expect((await createListing(cookie, listingBody(monday, 30))).status).toBe(201);
-    expect((await createListing(cookie, listingBody(plusDays(monday, 1), 30))).status).toBe(201);
+    // Trailing `daysToFill` days of the PREVIOUS Monday-anchored week, then the leading
+    // `daysToFill` of this one. Each listing is legal inside its own week; together they sit
+    // in a single 7-day span.
+    const first = plusDays(monday, -daysToFill);
+    const last = plusDays(monday, daysToFill - 1);
+    expect(2 * daysToFill).toBeLessThanOrEqual(7);
+    for (let i = 0; i < 2 * daysToFill; i += 1) {
+      expect((await createListing(cookie, listingBody(plusDays(first, i), perDay))).status).toBe(
+        201
+      );
+    }
 
     const { rows } = await query(
       `SELECT coalesce(sum(seat_capacity), 0)::int AS total FROM listings
         WHERE host_id = $1 AND local_date BETWEEN $2 AND $3`,
-      [host.id, saturday.toISOString().slice(0, 10), plusDays(monday, 1).toISOString().slice(0, 10)]
+      [host.id, first.toISOString().slice(0, 10), last.toISOString().slice(0, 10)]
     );
-    // Documented, NOT endorsed: 120 meals inside one 7-day span against a 60/week cap.
-    // This is the open ADR-009 sub-decision (finding TCB-W3-05) and needs a human ruling.
-    expect(rows[0].total).toBe(120);
+    // Ratified 2026-08-18: this is the ACCEPTED residual risk of a calendar-week basis, which
+    // is how California MEHKO weekly limits are calculated. Pinned so it stays visible.
+    expect(rows[0].total).toBe(2 * weekly);
   });
 
   test('there is exactly one server-side MEHKO enforcement point', () => {
@@ -693,7 +709,7 @@ describe('FR-11 — one listing per host per day and the AB 626 meal caps', () =
     expect(defs).toEqual(['src/modules/listings/mehko.js']);
     // No cap-shaped literal lives outside src/config (ADR-009 — caps are configuration).
     const literals = execSync(
-      `grep -rln "maxMealsPerDay: 30\\|maxMealsPerWeek: 60\\|listingsPerHostPerDay: 1" "${__dirname}/../../src" || true`,
+      `grep -rln "maxMealsPerDay: 30\\|maxMealsPerWeek: 90\\|listingsPerHostPerDay: 1" "${__dirname}/../../src" || true`,
       { encoding: 'utf8' }
     )
       .trim()

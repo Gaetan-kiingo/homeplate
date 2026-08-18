@@ -31,6 +31,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { capLiteralHits } = require('../helpers/capScan');
 const request = require('supertest');
 
 const config = require('../../src/config');
@@ -227,9 +228,13 @@ describe('mehko — ADR-009 boundaries and caps', () => {
       path.join(SRC, 'outbox', 'handlers', 'listingGeocode.js'),
     ];
     for (const file of owned) {
-      const text = fs.readFileSync(file, 'utf8');
-      expect(text).not.toMatch(/\b30\b/);
-      expect(text).not.toMatch(/\b60\b/);
+      // Cap values come from config, and the scan skips comments and geographic lines: since
+      // AB 1325 the weekly cap is 90, which is also the maximum latitude.
+      const hits = capLiteralHits(fs.readFileSync(file, 'utf8'), [
+        config.mehko.maxMealsPerDay,
+        config.mehko.maxMealsPerWeek,
+      ]);
+      expect(hits.map((h) => `${path.basename(file)}:${h.line} ${h.text.trim()}`)).toEqual([]);
     }
     // The caps themselves come from config and are frozen (TC-11 pins the values).
     expect(Object.isFrozen(config.mehko)).toBe(true);
@@ -369,24 +374,28 @@ describe('POST /api/listings — FR-11 create', () => {
     const cookie = await cookieFor(host);
     const daily = config.mehko.maxMealsPerDay;
     const weekly = config.mehko.maxMealsPerWeek;
-    // Tue + Wed of the 2027-06-14 LA week fill the whole weekly budget…
-    const tue = await createVia(cookie, {
-      scheduledStart: '2027-06-15T18:00:00-07:00',
-      seatCapacity: daily,
-    });
-    const wed = await createVia(cookie, {
-      scheduledStart: '2027-06-16T18:00:00-07:00',
-      seatCapacity: weekly - daily,
-    });
-    expect(tue.status).toBe(201);
-    expect(wed.status).toBe(201);
-    // …so even ONE more seat on Thursday exceeds it.
-    const thu = await createVia(cookie, {
-      scheduledStart: '2027-06-17T18:00:00-07:00',
+    // Consecutive days from Tue of the 2027-06-14 LA week fill the whole weekly budget. How
+    // many days that takes is derived, because the DAILY cap forbids packing the remainder into
+    // one listing — the AB 1325 move from 60 to 90 meals/week is exactly what exposed that.
+    const remainder = weekly % daily;
+    const fills = [
+      ...Array(Math.floor(weekly / daily)).fill(daily),
+      ...(remainder ? [remainder] : []),
+    ];
+    const june = (n) => `2027-06-${String(n).padStart(2, '0')}T18:00:00-07:00`;
+    expect(fills.length).toBeLessThan(6); // Tue…Sun, leaving a day for the overflow listing
+
+    for (let i = 0; i < fills.length; i += 1) {
+      const res = await createVia(cookie, { scheduledStart: june(15 + i), seatCapacity: fills[i] });
+      expect(res.status).toBe(201);
+    }
+    // …so even ONE more seat later that week exceeds it.
+    const over = await createVia(cookie, {
+      scheduledStart: june(15 + fills.length),
       seatCapacity: 1,
     });
-    expect(thu.status).toBe(422);
-    expect(thu.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
+    expect(over.status).toBe(422);
+    expect(over.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
     // Monday of the NEXT LA week starts a fresh window (anchored, not rolling).
     const nextMon = await createVia(cookie, {
       scheduledStart: '2027-06-21T18:00:00-07:00',

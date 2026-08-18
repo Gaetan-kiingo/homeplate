@@ -861,19 +861,18 @@ describe('FR-11 — server-side MEHKO enforcement is single-sourced (ADR-009)', 
   });
 
   test('the cap NUMBERS appear only in src/config — never inline in a module', () => {
+    const { capLiteralHits } = require('../helpers/capScan');
     const offenders = [];
     for (const file of srcFiles()) {
       const rel = path.relative(SRC, file).replace(/\\/g, '/');
       if (rel.startsWith('config/')) continue;
-      const src = fs.readFileSync(file, 'utf8');
-      // Strip comments before looking for cap-shaped literals.
-      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-      for (const [name, value] of Object.entries({
-        maxMealsPerDay: config.mehko.maxMealsPerDay,
-        maxMealsPerWeek: config.mehko.maxMealsPerWeek,
-      })) {
-        const re = new RegExp(`(?<![\\w.])${value}(?![\\w])`);
-        if (re.test(code)) offenders.push(`${rel}: literal ${value} (${name})`);
+      // capLiteralHits strips comments and skips geographic lines: since AB 1325 the weekly cap
+      // is 90, which is also the maximum latitude (src/schemas/common.js, src/lib/geoPrecision.js).
+      for (const hit of capLiteralHits(fs.readFileSync(file, 'utf8'), [
+        config.mehko.maxMealsPerDay,
+        config.mehko.maxMealsPerWeek,
+      ])) {
+        offenders.push(`${rel}:${hit.line}: ${hit.text.trim()}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -890,13 +889,14 @@ describe('FR-11 — server-side MEHKO enforcement is single-sourced (ADR-009)', 
     expect(rows[0].indexdef).toMatch(/WHERE .*cancelled/i);
   });
 
-  test('TCB-01 (SPEC AMBIGUITY, reproduced): the Monday-anchored week lets one host serve 120 meals in 4 consecutive days', async () => {
-    // ADR-009 fixes "60 meals per host per week" but never names the window shape; the SRS is
-    // silent. mehko.weekRangeFor implements a Monday-anchored LA calendar week, so a host can
-    // fill Sat+Sun of week N and Mon+Tue of week N+1 — 120 meals across FOUR consecutive days,
-    // twice the stated weekly cap over any 7-day span. Under a rolling-7-day reading the third
-    // listing would be refused. This test records the OBSERVED behaviour so the team can ratify
-    // or amend the anchor; it does not assert which reading is correct.
+  test('TCB-01 (ACCEPTED RESIDUAL RISK, ADR-009 ratified 2026-08-18): the calendar week lets one host serve twice the weekly cap across its boundary', async () => {
+    // ADR-009 ratified a Monday–Sunday LA calendar week on 2026-08-18, because California MEHKO
+    // weekly limits are calculated on a calendar-week basis rather than a rolling-day one. A
+    // calendar week is therefore spreadable across its boundary by construction: filling the
+    // trailing days of week N and the leading days of week N+1 places TWICE the weekly cap
+    // inside a single 7-day span. A rolling-7-day reading would refuse the crossing listing.
+    // This test pins that accepted residual risk so it stays visible and cannot regress
+    // silently; it is not a defect report.
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
     const cap = config.mehko.maxMealsPerDay; // 30
@@ -917,27 +917,34 @@ describe('FR-11 — server-side MEHKO enforcement is single-sourced (ADR-009)', 
     const create = (start) =>
       request(app).post('/api/listings').set('Cookie', cookie).send(body(start));
 
-    // 2031-03-08 Sat, 03-09 Sun (week Mon 03-03..Sun 03-09); 03-10 Mon, 03-11 Tue (next week).
-    expect((await create('2031-03-08T20:00:00.000Z')).status).toBe(201);
-    expect((await create('2031-03-09T20:00:00.000Z')).status).toBe(201);
-    expect((await create('2031-03-10T20:00:00.000Z')).status).toBe(201);
-    expect((await create('2031-03-11T20:00:00.000Z')).status).toBe(201);
+    // Week N is Mon 2031-03-03 … Sun 03-09; week N+1 starts Mon 03-10. Fill the trailing
+    // `daysToFill` days of week N and the leading `daysToFill` of week N+1 — every one of them
+    // legal in its own week — and they all land inside a single 7-day span.
+    const daysToFill = Math.floor(config.mehko.maxMealsPerWeek / cap);
+    const day = (n) => `2031-03-${String(n).padStart(2, '0')}T20:00:00.000Z`;
+    const firstDay = 10 - daysToFill; // trailing days of week N, ending Sun 03-09
+    for (let i = 0; i < 2 * daysToFill; i += 1) {
+      expect((await create(day(firstDay + i))).status).toBe(201);
+    }
 
+    const spanEnd = firstDay + 2 * daysToFill - 1;
+    expect(spanEnd - firstDay).toBeLessThan(7); // all of it inside one 7-day span
+    const isoDay = (n) => `2031-03-${String(n).padStart(2, '0')}`;
     const { rows } = await query(
       `SELECT COALESCE(sum(seat_capacity), 0)::int AS seats FROM listings
         WHERE host_id = $1 AND status <> 'cancelled'
-          AND local_date BETWEEN DATE '2031-03-08' AND DATE '2031-03-14'`,
-      [host.id]
+          AND local_date BETWEEN $2::date AND $3::date`,
+      [host.id, isoDay(firstDay), isoDay(spanEnd)]
     );
-    expect(rows[0].seats).toBe(4 * cap); // 120 meals in a 7-day window vs a 60/week cap
+    expect(rows[0].seats).toBe(2 * config.mehko.maxMealsPerWeek);
     expect(rows[0].seats).toBeGreaterThan(config.mehko.maxMealsPerWeek);
   });
 
-  test('caps are configuration and frozen (1 listing/day, 30 meals/day, 60 meals/week, LA time)', () => {
+  test('caps are configuration and frozen (1 listing/day, 30 meals/day, 90 meals/week, LA time)', () => {
     expect(config.mehko).toMatchObject({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
-      maxMealsPerWeek: 60,
+      maxMealsPerWeek: 90, // AB 626 set 60; AB 1325 raised it to 90.
       timezone: 'America/Los_Angeles',
     });
     expect(Object.isFrozen(config.mehko)).toBe(true);

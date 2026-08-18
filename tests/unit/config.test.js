@@ -124,7 +124,7 @@ describe('U1-CONFIG loaded config object (acceptance numbers)', () => {
     expect(config.mehko).toEqual({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
-      maxMealsPerWeek: 60,
+      maxMealsPerWeek: 90,
       timezone: 'America/Los_Angeles',
     });
   });

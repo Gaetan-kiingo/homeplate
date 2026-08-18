@@ -13,8 +13,8 @@ React client) are **not built**, and this report never reports an unbuilt requir
 
 | Field | Value |
 |---|---|
-| Report date | 2026-08-17 |
-| Commit (`git rev-parse --short HEAD`) | **`176ba39`** |
+| Report date | 2026-08-17 (amended 2026-08-18 — ADR-009 weekly window ratified, weekly cap corrected to 90 per AB 1325; see F-02) |
+| Commit (`git rev-parse --short HEAD`) | **`8807117`** (wave-3 close-out); the 2026-08-18 AB 1325 amendment sits on top of it |
 | Wave-3 baseline | `bc27199` (wave-3 code `3136b91`, repair round 1 `f7f954c`) |
 | Working tree | **Dirty.** Repair rounds 1 and 2 and this re-verification are uncommitted: **49 modified files**, **11 new test files**, plus two new untracked directories (`docs/results/`, `.github/zap/`). The human team commits; no agent has committed or pushed. |
 | CI state | **origin/main is still `af1a91a`** — waves 0–2 only. *CI has never executed a single line of wave-3 code.* |
@@ -110,7 +110,7 @@ the "Test file" column names the file that actually executes them in this reposi
 | **FR-08** | Moderation Module (pre-filter, LLM, human review, publication policy) | *(none)* | TC-08, IT-03 | `tests/tc-booking/tc08-moderation-substrate.test.js`, `tests/tc-booking/tcbv2-independent-reverify.test.js`, `tests/adr-conformance/verify-adr-wave0-3.test.js` | **Not implemented** | Proven by execution: `src/modules/moderation` does not exist; `loadHandlers().types()` = `[booking.promote, email.verification, listing.geocode, notify.booking, safety.alert]` — **no `moderation.scan`**; no pre-filter/blocklist module anywhere in `src/`. (`/api/moderation/alerts` is the FR-07 safety queue, not FR-08.) **The safe failure direction IS in place and is proven:** a listing is created `moderation_status='pending'`, is 404 on `GET /api/listings/:id`, 404 on `POST /api/bookings`, invisible in search, `seats_remaining` untouched — and nothing anywhere in `src/` can write `moderation_status`, so no listing can leave the pending queue in this tree. Wave 4 (U4-MODERATION). |
 | **FR-09** | Eligibility Policy Service (`canReserveSeat` / `canPublishListing`) | `src/modules/eligibility/{policy,middleware,repo}.js` | TC-09 | `tests/tc-booking/tc09-eligibility.test.js`, `tcbv2-independent-reverify.test.js` | **Met** | **Both** states asserted, as §4.1 requires for state-driven requirements. Restricted: `email_verified=false` → 403 `NOT_ELIGIBLE` `[EMAIL_UNVERIFIED]`; `full_name=null` → `[NAME_MISSING]`; `phone_enc=null` → `[PHONE_MISSING]`; `seats_remaining` unchanged across all three. Permitted: complete guest → 201, seats 5→4. Publish restricted: no `host_profiles` row → `[HOST_PROFILE_INCOMPLETE]`; `host_agreement_accepted_at=null` → `[HOST_AGREEMENT_MISSING]`; permitted → 201. Repository-wide grep for a `canReserveSeat` definition returns **exactly one file**: `src/modules/eligibility/policy.js`. |
 | **FR-10** | Registration & Email Verification Service | `src/modules/auth/{routes,service}.js`, `src/modules/users/tokens.js`, `src/outbox/handlers/emailVerification.js`, `src/modules/notifications/transport.js`, `src/adapters/sendgrid.js` | TC-10 | `tests/tc-booking/tc10-registration.test.js`, `fr10-verification-link.test.js`, `fr10-resend-verification.test.js`, `tests/it-adapters/it02b-fr10-delivered-email.test.js`, `tests/rt-lt-resilience/rt02-fr10-delivered-token.test.js` | **Met** | **The wave-1/2 blocker is closed, proven through the delivered artifact.** Register → 201, `email_verified=false`, exactly one `email.verification` outbox row whose payload keys are exactly `['tokenHash','userId']` (ADR-003 intact). The real handler runs through the real transport into the real SendGrid `deliver()` (SDK substituted by a double); the token is extracted from the **rendered body text** via `/https?:\/\/\S*[?&]token=([A-Za-z0-9._~+/=-]+)/`. The recorded delivery contains `https://localhost:3000/api/auth/verify-email?token=0jhR3Tufgm6hQUxBvG22xc5pShtsZXULixygdiPpjZ8` — **not** a 64-hex digest. Posting exactly that value → 200, `users.email_verified = true`. Negative control: posting the digest the pre-fix email carried → **400**, flag stays false. The raw token appears in **no** persisted row (outbox payload, `notification_attempts.params`, token row all asserted). Consequence chain closed: the same account's `POST /api/bookings` goes 403 `[EMAIL_UNVERIFIED]` → 201 after verifying. Single-use (replay → 400) and exactly-once under redelivery. |
-| **FR-11** | Listing Service (MEHKO and seat limits) | `src/modules/listings/{routes,service,repo,mehko}.js`, `src/config/` | TC-11 | `tests/tc-booking/tc11-listing-caps.test.js`, `tcb-w3-reverify.test.js`, `tcbv2-independent-reverify.test.js` | **Partial** | **Met:** `config.mehko === {listingsPerHostPerDay:1, maxMealsPerDay:30, maxMealsPerWeek:60, timezone:'America/Los_Angeles'}`, `Object.isFrozen === true`; two listings on the same **LA calendar day** (20:00Z and 21:30Z) → second is 409 `MEHKO_DAILY_LISTING_LIMIT`, one row at that `local_date`; `seatCapacity=31` → 422 `MEHKO_DAILY_MEAL_LIMIT`, `30` → 201; Mon 30 + Tue 30 + Wed 1 → 422 `MEHKO_WEEKLY_MEAL_LIMIT`; **exactly one** definition (`src/modules/listings/mehko.js`) and **exactly one** call site (`listings/service.js`); no cap-shaped literal outside `src/config/`. **Not met:** the *weekly window shape* is an unratified spec ambiguity — see open finding **F-02**. |
+| **FR-11** | Listing Service (MEHKO and seat limits) | `src/modules/listings/{routes,service,repo,mehko}.js`, `src/config/` | TC-11 | `tests/tc-booking/tc11-listing-caps.test.js`, `tcb-w3-reverify.test.js`, `tcbv2-independent-reverify.test.js` | **Met** | **All acceptance clauses executed and passing since the 2026-08-18 ratification (F-02).** `config.mehko === {listingsPerHostPerDay:1, maxMealsPerDay:30, maxMealsPerWeek:90, timezone:'America/Los_Angeles'}`, `Object.isFrozen === true`; two listings on the same **LA calendar day** (20:00Z and 21:30Z) → second is 409 `MEHKO_DAILY_LISTING_LIMIT`, one row at that `local_date`; `seatCapacity=31` → 422 `MEHKO_DAILY_MEAL_LIMIT`, `30` → 201; filling the week with config-derived full-cap days then +1 seat → 422 `MEHKO_WEEKLY_MEAL_LIMIT`; **exactly one** definition (`src/modules/listings/mehko.js`) and **exactly one** call site (`listings/service.js`); no cap-shaped literal outside `src/config/`. The weekly window shape was **ratified 2026-08-18** (Monday–Sunday LA calendar week) and the cap corrected to 90 per AB 1325 — see **F-02**, now closed. |
 | **FR-12** | Booking Service (atomic capacity transaction) | `src/modules/bookings/{service,repo}.js` | TC-12, LT-01 | `tests/tc-booking/tc12-tc14-booking-schema.test.js`, `tcbv2-independent-reverify.test.js`, `tests/rt-lt-resilience/lt01-race.test.js` | **Met** | `seats_remaining=3`, **40 concurrent distinct guests** → status distribution exactly `{201:3, 409:37}`, every 409 carries `NO_CAPACITY`, `seats_remaining=0`, `COUNT(bookings WHERE status<>'cancelled')=3`. LT-01's variant: `seats_remaining=1`, **50 concurrent** → exactly 1×201 / 49×409. Every refusal path moves **no** capacity: full listing (409, seats 0), own listing (409 `OWN_LISTING`), already-started (409 `LISTING_STARTED`), ineligible guest (403) — and zero booking rows over those listings. The decrement is the mandated conditional `SET seats_remaining = seats_remaining - 1 WHERE … seats_remaining > 0`. Configurable per-guest pending cap (`config.booking.maxConcurrentPending = 3`): 8 simultaneous bookings by one guest → exactly 3×201 / 5×409 `BOOKING_LIMIT`, and the 5 refusals consumed capacity nowhere. |
 | **FR-13** | Transactional Outbox, Worker, Notification Adapters | `src/outbox/{outbox,worker,dispatch}.js`, `src/outbox/handlers/*.js`, `src/modules/notifications/*`, `src/adapters/{sendgrid,fcm,mockTransport}.js` | TC-13, RT-02 | `tests/tc-booking/tc13-notifications.test.js`, `tests/rt-lt-resilience/rt02-*.test.js`, `tests/it-adapters/it01-wave3-worker-paths.test.js` | **Met** | Adapter hard-down (20 injected failures + 1 hang) and `POST /api/bookings` still returns 201 in well under `config.adapters.timeoutMs` (3000 ms) with `mockTransport.deliveries()` empty — the request path never touches the transport. **Same-transaction proof:** `SELECT DISTINCT xmin` over the booking row and every outbox row for that booking returns ONE value. Full status coverage: created, **started** (TCB-W3-03 fixed and re-verified) and completed each produce exactly one row per participant. Every emitted template id resolves in the SendGrid subject registry — no message renders the neutral fallback (TCB-W3-04 fixed and re-verified). Worker-side outage: the handler throws so the retry budget applies, `notification_attempts` are `failed`, and the booking is unchanged. Static check: no `require('…adapters/…')` anywhere under `src/modules/bookings` or `src/modules/listings`. |
 | **FR-14** | Booking Service (cancellation, capacity restore) | `src/modules/bookings/{service,repo}.js` | TC-14 | `tests/tc-booking/tc12-tc14-booking-schema.test.js`, `tcbv2-independent-reverify.test.js` | **Met** | Guest cancel → 200, `status='cancelled'`, `seats_remaining` 3→4 **exactly**, and `cancelled_by_guest` notify rows exist for **both** parties. Concurrency: 4 simultaneous cancels on one booking all return 200 and seats return to exactly 4 — never 5 (no double restore). After `scheduled_start`: 409 `CANCEL_TOO_LATE`, seats untouched. Non-participant: 403 `NOT_PARTICIPANT`, seats untouched. |
@@ -142,7 +142,7 @@ below name, in addition, the file that executes each case.
 |---|---|---|---|---|---|---|
 | **AB-01** Fake host / fake listing | Misuse cases §3.5 — Eligibility Policy, Moderation Module, Review Service, Safety Alert Service | `src/modules/eligibility/policy.js`, `src/modules/listings/service.js` | ST-05, IT-03, TC-09, TC-08, TC-07 | `tests/st-security/st-security-wave3.test.js` | **Partial** | A host without the profile / host-agreement gate is **403 before any listing work**; a freshly created listing is `moderation_status='pending'` and **invisible** in search until approved. The other half is absent by design in wave 3: nothing in `src/` can write `moderation_status`, so no listing can leave the pending queue, and mutual reviews (FR-05) do not exist. Moderation (FR-08) and reviews (FR-05) are wave 4. |
 | **AB-02** Fraudulent / hoarding bookings | Misuse cases §3.5 — Eligibility Policy, Booking Service, Logging | `src/modules/bookings/service.js`, `src/config/` | TC-12, ST-04, LT-01 | `tests/st-security/st-security-wave3.test.js`, `tests/tc-booking/tcbv2-independent-reverify.test.js` | **Met** | Sequentially: the (cap+1)th booking for one guest is 409 `BOOKING_LIMIT`, creates no row and leaves `seats_remaining` unchanged. Concurrently: 8 simultaneous bookings by one guest across 8 listings → exactly 3×201 / 5×409, zero responses outside `{201,409}`, exactly 3 listings decremented and 5 untouched. An ineligible guest is 403 **before** any capacity work (the FR-09 ordering is asserted, not assumed). |
-| **AB-03** Spam / scripted listings | Misuse cases §3.5 — Listing Service (MEHKO invariant), Moderation Module, Input Validation, Auth rate limiting | `db/migrations/0002_indexes_constraints.sql`, `src/modules/listings/mehko.js`, `src/middleware/validate.js` | IT-03, ST-04, ST-03, TC-11 | `tests/st-security/st-security-wave3.test.js` | **Partial** | 10 same-day creations for one host yield **exactly 1** persisted listing and 9×409 — the DB unique index on `(host_id, local_date)` is the enforcement, not application logic. Malformed and oversized payloads are 422 at the validation layer. Login rate limiting is proven under NFR-05. The moderation half ("spam samples are rejected or queued and never published") is wave 4 and cannot be executed; the weekly cap carries the FR-11 ambiguity (**F-02**). |
+| **AB-03** Spam / scripted listings | Misuse cases §3.5 — Listing Service (MEHKO invariant), Moderation Module, Input Validation, Auth rate limiting | `db/migrations/0002_indexes_constraints.sql`, `src/modules/listings/mehko.js`, `src/middleware/validate.js` | IT-03, ST-04, ST-03, TC-11 | `tests/st-security/st-security-wave3.test.js` | **Partial** | 10 same-day creations for one host yield **exactly 1** persisted listing and 9×409 — the DB unique index on `(host_id, local_date)` is the enforcement, not application logic. Malformed and oversized payloads are 422 at the validation layer. Login rate limiting is proven under NFR-05. The moderation half ("spam samples are rejected or queued and never published") is wave 4 and cannot be executed; the weekly cap's window shape is now ratified (**F-02**, closed). |
 | **AB-04** Abusive content in chat or reviews | Misuse cases §3.5 — Moderation Module, Safety Alert Service, Logging | *(none)* | IT-03, TC-08, TC-06, TC-05, TC-07 | `tests/st-security/st-security-verify.test.js` | **Not implemented** | Executed absence check: `src/modules/{reviews,messaging,moderation,privacy}` do not exist on disk and none of `reviews`/`messaging`/`moderation` appear in `app.locals.routes.mounted`. FR-05, FR-06 and FR-08 are all wave 4, so **AB-04 has no attack surface to test**. Reported as not implemented so its silence cannot be read as safety. |
 | **AB-05** Account takeover | Misuse cases §3.5 — Authentication Service (hashing, rate limiting), Network Security Layer | `src/modules/auth/{passwords,rateLimit,sessions}.js`, `src/server.js` | ST-03, ST-02, ST-01 | `tests/st-security/st-security.test.js` | **Met** | A scripted 50-attempt brute force is locked from attempt 6 on, and the **correct** password is refused throughout the lockout. The per-source-IP counter locks out one origin cycling many *accounts* (credential stuffing). Lockout responses do not reveal whether an account exists. The session cookie is opaque with ≥128 bits of entropy and carries `HttpOnly` + `Secure` + `SameSite`; logout deletes the Redis session so the token is unusable afterwards. Combined with ST-01 (all login traffic over TLS 1.2+, plain HTTP refused) and ST-02 (Argon2id only). |
 | **AB-06** Injection attacks (SQLi / XSS) | Misuse cases §3.5 — Input Validation Module | `src/middleware/validate.js`, `src/schemas/*.js`, `.github/zap/baseline-plan.yaml` | ST-04 | `tests/st-security/st-security-verify.test.js` + `docs/results/zap-baseline-RUN.md` | **Partial** | The targeted SQLi/XSS suite (NFR-11 above) passes and is what actually guards this today. The **OWASP ZAP baseline clause is now executed for the first time in this project** rather than merely scheduled: ZAP **2.17.0** (`ghcr.io/zaproxy/zaproxy:stable`, digest `sha256:781a2bd…`) against a live HTTPS server, reporting `FAIL-NEW: 0 · WARN-NEW: 3 · PASS: 58`; the project's own gate `npm run scan:zap:report` prints **High 0 / Medium 0 / Low 0 / Informational 3 across 24 distinct URLs** and exits 0. Report and provenance are committed under `docs/results/`. **Partial for two honest reasons:** (1) 24 URLs is the whole *API* surface — there is no HTML and no client bundle (waves 5–6), so the passive rules that matter for XSS-in-a-page had nothing to run against; (2) the acceptance names chat, review and moderation-note boundaries that do not exist in wave 3. |
@@ -153,8 +153,8 @@ below name, in addition, the file that executes each case.
 
 | Status | FR | NFR | AB | Total |
 |---|---|---|---|---|
-| **Met** | 10 | 8 | 4 | **22 / 35** |
-| **Partial** | 1 (FR-11) | 2 (NFR-08, NFR-13) | 3 (AB-01, AB-03, AB-06) | **6 / 35** |
+| **Met** | 11 | 8 | 4 | **23 / 35** |
+| **Partial** | 0 | 2 (NFR-08, NFR-13) | 3 (AB-01, AB-03, AB-06) | **5 / 35** |
 | **Not implemented** | 3 (FR-05, FR-06, FR-08) | 3 (NFR-07, NFR-10, NFR-12) | 1 (AB-04) | **7 / 35** |
 
 Every "not implemented" is wave 4+ scope, is asserted absent by an executed probe rather than by
@@ -171,7 +171,7 @@ quietly dropped:
 |---|---|---|
 | Claimed resolved by repair round 1 | 30 | **Independently re-verified** by re-executing each original failure scenario against the current tree. **29 confirmed fixed**; TCC-02's declared residual was closed by a documented design decision (**F-08**). No claim survived on the fixer's word alone. |
 | Never repaired, but closed since | 5 | **COV-01** (flaky AB-08 canary — the bare `not.toContain('742')` that matched random UUIDs is gone from the tree and the coverage lane passes), **TCC-04** (FR-02 review preview now carries `reviewsTotal`/`reviewsPageSize`, with the paged list at `GET /api/hosts/:id/reviews`), **W3-ADR-04 + COV-07** (the last raw SQL in a route file moved into `src/modules/media/repo.js`; a dedicated test now asserts **no** DB access in any route layer), **COV-06** (both production notification adapters' `deliver()` bodies are now executed against substituted SDKs — no live provider call), **RTLT-02** (its premise is stale: k6 **is** installed at `/usr/local/bin/k6`, v2.2.0, and the NFR-01 acceptance run was executed with it). |
-| Never repaired, still open | 4 | **IT-F1 → F-04**, **STS-W3-03 → F-03**, **TCB-W3-05 → F-02**, **STS-W3-05 clause 1 → F-06**. |
+| Never repaired, still open | 3 | **IT-F1 → F-04**, **STS-W3-03 → F-03**, **STS-W3-05 clause 1 → F-06**. (**TCB-W3-05 → F-02** was closed by team decision on 2026-08-18.) |
 | Not re-checked in this run | 1 | **COV-08** (nine exported names referenced nowhere in `src/` or `tests/` — dead or premature exports). Minor and cosmetic; recorded here rather than silently marked resolved, because this run did not execute a check for it. |
 
 The sections below are what remains open at `176ba39`, plus one new defect found during this run.
@@ -244,31 +244,47 @@ within a run and share one database. The variance is cross-suite *residue*, not 
 
 ---
 
-### F-02 — The AB 626 weekly MEHKO window shape is unratified (a human decision, not a defect)
-**Severity:** Major (a legal-compliance claim rests on it) · **Requirements:** FR-11, AB-07,
-ADR-009 · **Status: OPEN — awaiting a team decision at CDR. Deliberately not adjudicated here.**
+### F-02 — CLOSED 2026-08-18: the AB 626 weekly MEHKO window is ratified, and the cap corrected to 90
+**Severity:** was Major (a legal-compliance claim rested on it) · **Requirements:** FR-11, AB-07,
+ADR-009 · **Status: CLOSED by team decision.** Retained in full because the decision, and a wrong
+number it uncovered, are both CDR-relevant.
 
-**Reproduction.** With 30-seat listings created on Saturday, Sunday, Monday and Tuesday (LA calendar
-days), all four return **201**, and `SUM(seat_capacity)` over that 7-day span is **120** — twice
-`config.mehko.maxMealsPerWeek = 60`.
+**The decision.** The weekly cap is summed over a fixed **Monday–Sunday `America/Los_Angeles`
+calendar week**, not a rolling 7-day window. California MEHKO weekly limits are calculated on a
+standard calendar-week basis; state operational standards treat the week as a fixed 7-day calendar
+block (commonly Sunday–Saturday or Monday–Sunday, with county health departments enforcing the
+precise tracking), and this deployment pins Monday–Sunday. Recorded in ADR-009 §"Weekly window
+shape — RATIFIED 2026-08-18" and its Amendment log; `requirements-inventory.json` FR-11 now carries
+a `specDecision` block in place of the former `specAmbiguity`.
 
-**Why it is open.** `src/modules/listings/mehko.js` implements a **Monday-anchored
-`America/Los_Angeles` calendar week**; the ledger resets every Monday 00:00 PT. The stricter reading
-is a **rolling 7-day window** (`[localDate − 6 days, localDate]`), under which no 7-day span can ever
-exceed the cap. ADR-009 records this explicitly as an **OPEN sub-decision** with the Monday anchor
-marked as an *implementation default, not a decision*. Both readings are defensible under AB 626;
-the choice belongs to the team.
+**A wrong number found while ratifying it.** The weekly cap was **60**; it is **90**. AB 626 set 60
+and **Assembly Bill 1325** raised it to 90, but this project had carried 60 since 2026-08-12 and
+ADR-009 asserted those values "are the AB 626 MEHKO limits". The error was *over*-restrictive — it
+refused listings a host is legally entitled to post — so it created no compliance exposure, but the
+claim was false. Corrected in `src/config/locale.js`, the one home of the numbers.
 
-**Proposed fix.** Ratify one reading at CDR and amend ADR-009's Decision table. ADR-009 already
-carries a re-verified **impact inventory**: ratifying *Monday-anchored* costs no code and no test
-change (documentation only); ratifying *rolling 7-day* changes **one production file**
-(`mehko.js` `weekRangeFor`), **one requirement file**, and inverts **5 tests in 4 files**
-(`tests/unit/listings.test.js` ×2, `tests/tc-booking/tc11-listing-caps.test.js`,
-`tcb-w3-reverify.test.js`, `tcbv2-independent-reverify.test.js`), while three anchor-*neutral*
-tests must **not** be touched.
+**What the correction exposed in the tests.** Six assertions pinned the literal 60, and — more
+interesting — four tests encoded the cap in their *arithmetic*: they filled a week with two 30-seat
+days because 2 × 30 was the old cap, and one packed `weekly − daily` seats into a single listing,
+which at 90 exceeds the **daily** cap of 30 and returns 422. Those tests were rewritten to derive
+the number of filling days from config, so a future amendment cannot silently void them again. The
+ADR-009 "no cap literal outside src/config" scans also needed narrowing rather than loosening: **90
+is the maximum latitude**, so the old bare `/\b60\b/` scan reported `src/schemas/common.js` and
+`src/lib/geoPrecision.js` as offenders. The shared helper `tests/helpers/capScan.js` now strips
+comments and skips geographic lines, keeping the invariant intact instead of retiring it.
 
-**Consequence until ratified:** **no AB 626 weekly-compliance claim may rest on a TC-11 pass.** The
-daily cap, the single enforcement point and the LA timezone boundaries are proven and unaffected.
+**Accepted residual risk (unchanged behaviour, now a decision).** A calendar week is by construction
+spreadable across its boundary: filling the trailing days of one week and the leading days of the
+next places **twice the weekly cap** inside a single 7-day span. That follows from the statute's own
+calendar-week basis and is accepted, not a defect. Two tests pin it so it stays visible
+(`tcb-w3-reverify.test.js`, `tcbv2-independent-reverify.test.js`).
+
+**Consequence:** a TC-11 pass is now evidence against a **ratified** requirement, so the FR-11
+weekly clause **may** be cited as AB 626 / AB 1325 weekly-compliance evidence. Before 2026-08-18 it
+could not.
+
+**Verified after the change:** two consecutive full-suite runs, **71 suites / 1302 tests**, exit 0,
+~95 s each; lint and build clean.
 
 ---
 
@@ -616,8 +632,9 @@ Stated plainly, because an overstated CDR document is worse than none:
 2. **No NFR-12 erasure guarantee.** No v1.0 user can currently delete their account.
 3. **No NFR-13 CCPA export.** The endpoint does not exist.
 4. **No NFR-07 accessibility result.** There is no client to audit.
-5. **No AB 626 *weekly* compliance claim** until ADR-009's open sub-decision is ratified (F-02). The
-   daily cap is proven.
+5. **AB 626 / AB 1325 weekly compliance** may now be claimed from TC-11: the window shape was
+   ratified 2026-08-18 and the cap corrected to 90 (F-02). Daily cap and single enforcement point
+   were already proven. The claim is that the *ratified* rule is enforced — not legal advice.
 6. **No 99 % availability figure.** Only the NFR-09 degradation *mechanisms* are proven.
 7. **No claim about CI.** CI has never run wave 3 (F-09); every number here was measured locally.
 8. **No claim that the reviews, messaging or moderation surfaces are safe** — they do not exist, so
@@ -629,8 +646,7 @@ Stated plainly, because an overstated CDR document is worse than none:
 
 1. **Commit and push the working tree** so CI executes wave 3 for the first time (F-09). Nothing else
    in this list is worth much if the pipeline has never seen the code.
-2. **Ratify the ADR-009 weekly window** (F-02) — a 15-minute decision that unblocks the only legal
-   compliance claim in the project. ADR-009's impact inventory tells you exactly what each choice
+2. ~~**Ratify the ADR-009 weekly window** (F-02)~~ — **DONE 2026-08-18:** Monday–Sunday calendar week, cap corrected to 90 per AB 1325. ADR-009's impact inventory tells you exactly what each choice
    costs.
    **While you are at it, ratify the FR-01 acceptance correction (TCC-03)** recorded in §3.1 — a
    verification run corrected a requirement's acceptance wording rather than the code, and that

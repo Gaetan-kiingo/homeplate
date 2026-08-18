@@ -15,24 +15,22 @@
 //            config.mehko.timezone (America/Los_Angeles) via Intl.DateTimeFormat — never UTC,
 //            never the caller's timezone: half past eleven PM PT and half past midnight PT
 //            the next day are different days even when they share a UTC day. Weeks are
-//            Monday-anchored in LA time — see the OPEN SPEC QUESTION below before changing
-//            or relying on that.
+//            Monday-anchored in LA time — a RATIFIED decision (ADR-009, 2026-08-18), not a
+//            default; see the note below before changing it.
 //   NFR-11 — all SQL parameterized on the caller's transaction client (ADR-001: the check and
 //            the insert commit or roll back together).
 //
-// OPEN SPEC QUESTION — shape of the weekly window (finding TCB-W3-05; ADR-009 section
-//   "Weekly window shape — OPEN, not ratified"; build-plan open question 1).
-//   ADR-009 fixes the weekly cap NUMBER and the boundary TIMEZONE, but no document fixes the
-//   WINDOW the cap is summed over, and the SRS states no weekly cap at all (its AB 626 wording
-//   is daily-only). This module implements the Monday-anchored LA calendar week; a rolling
-//   seven-day window is the stricter alternative and is still on the table. The two differ
-//   materially: the Monday anchor is evadable across a week boundary, because filling
-//   Saturday+Sunday of one week and Monday+Tuesday of the next puts twice the weekly cap into
-//   four consecutive days and hence into a single seven-day span. The team must ratify one
-//   reading at CDR. DO NOT settle it here: change ADR-009 first, then this code and the
-//   requirements-inventory FR-11 wording follow the ADR. Until then the FR-11 weekly clause in
-//   the inventory is marked provisional, and a TC-11 pass is NOT evidence of AB 626 weekly
-//   compliance.
+// WEEKLY WINDOW — RATIFIED 2026-08-18 (ADR-009, "Weekly window shape"; was finding TCB-W3-05).
+//   The weekly cap is summed over a fixed Monday–Sunday LA calendar week, because California
+//   MEHKO weekly limits are calculated on a calendar-week basis rather than a rolling-day one.
+//   The cap itself is 90 meals (AB 626 set 60; AB 1325 raised it to 90) and lives in
+//   src/config/locale.js, never here.
+//   ACCEPTED RESIDUAL RISK: a calendar week is by construction spreadable across its boundary —
+//   filling Saturday+Sunday of one week and Monday+Tuesday of the next puts twice the weekly cap
+//   into four consecutive days, hence into one seven-day span. That follows from the statute's
+//   own basis and is accepted, not a defect; a rolling window would refuse the third listing.
+//   To change it: amend ADR-009 FIRST, then this code and the requirements-inventory FR-11
+//   wording follow the ADR — never the reverse.
 //
 // Public interface (build-plan wave-3A contract):
 //   assertWithinCaps(client, { hostId, scheduledStart, seatCapacity, excludeListingId? })

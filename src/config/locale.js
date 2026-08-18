@@ -20,7 +20,9 @@ module.exports = Object.freeze({
     maxListingsPerHostPerDay: 1,
     // ADR-009 — at most 30 meals (seats) per host per day.
     maxMealsPerHostPerDay: 30,
-    // ADR-009 — at most 60 meals (seats) per host per week (weeks start Monday, LA time).
-    maxMealsPerHostPerWeek: 60,
+    // ADR-009 — at most 90 meals (seats) per host per week. AB 626 set 60; Assembly Bill 1325
+    // raised it to 90. The week is a fixed calendar block, ratified Monday–Sunday in LA time
+    // (not a rolling 7-day window) — see ADR-009 "Weekly window shape", ratified 2026-08-18.
+    maxMealsPerHostPerWeek: 90,
   }),
 });

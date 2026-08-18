@@ -572,42 +572,44 @@ describe('ADR-009 — MEHKO caps enforced server-side in America/Los_Angeles', (
     const cookie = await cookieFor(host);
     const daily = config.mehko.maxMealsPerDay;
     const weekly = config.mehko.maxMealsPerWeek;
-    // 2029-06-05/06/07 are Tue/Wed/Thu of one LA week (20:00Z = 13:00 PDT).
-    const tue = await request(app)
-      .post('/api/listings')
-      .set('Cookie', cookie)
-      .send(listingBody({ scheduledStart: '2029-06-05T20:00:00Z', seatCapacity: daily }));
-    expect(tue.status).toBe(201);
-    const wed = await request(app)
-      .post('/api/listings')
-      .set('Cookie', cookie)
-      .send(listingBody({ scheduledStart: '2029-06-06T20:00:00Z', seatCapacity: weekly - daily }));
-    expect(wed.status).toBe(201);
+    // Mon 2029-06-04 … Sun 2029-06-10 is one LA week; 06-05 is Tue (20:00Z = 13:00 PDT).
+    // Fill it with whole days of at most `daily` seats each: the DAILY cap forbids packing the
+    // remainder into a single listing, which is what the AB 1325 move from 60 to 90 exposed.
+    const day = (n) => `2029-06-${String(n).padStart(2, '0')}T20:00:00Z`;
+    const remainder = weekly % daily;
+    const fills = [
+      ...Array(Math.floor(weekly / daily)).fill(daily),
+      ...(remainder ? [remainder] : []),
+    ];
+    expect(fills.length).toBeLessThan(7); // must leave a day for the overflow listing
+
+    for (let i = 0; i < fills.length; i += 1) {
+      const res = await request(app)
+        .post('/api/listings')
+        .set('Cookie', cookie)
+        .send(listingBody({ scheduledStart: day(5 + i), seatCapacity: fills[i] }));
+      expect(res.status).toBe(201);
+    }
     // The week's seats are exactly at the configured cap — one more seat must refuse.
-    const thu = await request(app)
+    const over = await request(app)
       .post('/api/listings')
       .set('Cookie', cookie)
-      .send(listingBody({ scheduledStart: '2029-06-07T20:00:00Z', seatCapacity: 1 }));
-    expect(thu.status).toBe(422);
-    expect(thu.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
+      .send(listingBody({ scheduledStart: day(5 + fills.length), seatCapacity: 1 }));
+    expect(over.status).toBe(422);
+    expect(over.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
   });
 
   test('static: no cap-valued literal in wave-3 modules or schemas (config is the only home)', () => {
+    const { fileHardcodesCap } = require('../helpers/capScan');
     const capValues = [
       config.mehko.listingsPerHostPerDay,
       config.mehko.maxMealsPerDay,
       config.mehko.maxMealsPerWeek,
     ];
-    // listingsPerHostPerDay=1 appears legitimately as array indices etc.; the meal caps are
-    // distinctive numbers and must not appear at all outside src/config.
-    const distinctive = capValues.filter((v) => v > 1);
-    const pattern = new RegExp(`\\b(${distinctive.join('|')})\\b`);
     const offenders = [];
     for (const dir of [path.join(SRC, 'modules'), path.join(SRC, 'schemas')]) {
       for (const file of listJsFiles(dir)) {
-        if (pattern.test(fs.readFileSync(file, 'utf8'))) {
-          offenders.push(path.relative(SRC, file));
-        }
+        if (fileHardcodesCap(file, capValues)) offenders.push(path.relative(SRC, file));
       }
     }
     expect(offenders).toEqual([]);

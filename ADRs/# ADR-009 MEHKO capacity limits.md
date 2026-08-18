@@ -1,8 +1,8 @@
 # ADR-009: MEHKO capacity limits — AB 626 caps as configuration with one server-side enforcement point
 
-- **Status:** Accepted — **with one open sub-decision: the shape of the weekly window (see “Weekly window shape — OPEN, not ratified”). The cap numbers, the single-enforcement-point rule and the boundary timezone below are settled; the weekly *window shape* is not.**
-- **Date:** 2026-08-12 (amended 2026-08-14 — weekly window shape recorded as open, see Amendment log)
-- **Deciders:** Gaetan Rieben (decided 2026-08-12; pending team ratification at the next stand-up)
+- **Status:** **Accepted — fully ratified.** The weekly window shape, previously the one open sub-decision, was ratified on 2026-08-18: a fixed **Monday–Sunday `America/Los_Angeles` calendar week**, not a rolling 7-day window. The weekly cap was corrected to **90** at the same time (see Amendment log).
+- **Date:** 2026-08-12 (amended 2026-08-14 — window shape recorded as open; amended 2026-08-18 — window shape ratified and weekly cap corrected to 90 per AB 1325)
+- **Deciders:** Gaetan Rieben (decided 2026-08-12; window shape and AB 1325 cap ratified 2026-08-18)
 - **Related requirements:** FR-11 (listing management), FR-12 (capacity), AB-03 (spam listings), AB-07 (MEHKO evasion), SRS §2.1.7 (site adaptation), SRS §2.4 (regulatory constraint)
 
 ## Context
@@ -15,22 +15,33 @@ The v1.0 California configuration is:
 |---|---|
 | Listings per host per day | 1 (stated in SRS §3.4) |
 | Meals per host per day | 30 |
-| Meals per host per week | 60 |
+| Meals per host per week | **90** — AB 626 set 60; **Assembly Bill 1325** raised it to 90. Corrected 2026-08-18. |
 | Operating timezone for day/week boundaries | `America/Los_Angeles` |
-| Weekly window shape — the span the 60 is summed over | **NOT DECIDED.** See “Weekly window shape — OPEN, not ratified” below before implementing, changing or relying on it. v1.0 ships a Monday-anchored `America/Los_Angeles` calendar week as an *implementation default*, not as a decision. |
+| Weekly window shape — the span the 90 is summed over | **Monday–Sunday `America/Los_Angeles` calendar week** (ratified 2026-08-18). MEHKO weekly limits are calculated on a standard calendar-week basis, not a rolling-day basis; state operational standards treat the week as a fixed 7-day calendar block, and this deployment pins the Monday–Sunday variant. |
 
-These values are the AB 626 MEHKO limits and were confirmed by the team as correct for California. They live in the configuration module (`src/config/`) as jurisdiction data, never inline in a service, per SRS §2.1.7.
+These values are the California MEHKO limits under **AB 626 as amended by AB 1325** (which raised the weekly cap from 60 to 90), confirmed by the team on 2026-08-18. They live in the configuration module (`src/config/`) as jurisdiction data, never inline in a service, per SRS §2.1.7.
 
-**Read the last table row before acting on the weekly number.** The 60 and the timezone are settled; the *window* the 60 is summed over is not, and this record deliberately does not settle it. A reader who takes only the Decision table and implements the stricter rolling 7-day window would contradict the v1.0 code and the tests that currently pin its behaviour — not because the rolling reading is wrong, but because the choice belongs to the team at CDR and must be made here first. The complete, re-verified list of what a ratification touches (one production file, one requirement file, six test files, of which four carry assertions that actually pin the anchor) is the **Impact inventory** below; work from that list, not from memory.
+**All three rows are now settled.** The weekly cap is 90 per AB 1325 and the window is a Monday–Sunday LA calendar week, ratified 2026-08-18. The alternatives considered, and the residual risk the ratified reading accepts, are preserved below for the record — they are history now, not open questions.
 
 Enforcement is **one server-side check** consulted by every path that creates or modifies a listing — not a per-module reimplementation. Day and week boundaries are evaluated in the configured operating timezone, not in UTC and not in the browser's locale, so a host cannot gain a second daily listing by submitting near midnight from another timezone. Client-side display of remaining capacity is a convenience only; the server rejects independently of it.
 
-## Weekly window shape — OPEN, not ratified
+## Weekly window shape — RATIFIED 2026-08-18 (history retained below)
 
-This ADR fixes the weekly **number** (60 meals per host per week) and the boundary **timezone**
-(`America/Los_Angeles`). It has never fixed the **shape of the window that number is summed over**, and
-neither does the SRS: SRS §2.1.7 and FR-11 speak only of "maximum meals per host per day" and
-"one listing per host per day", so the SRS states no weekly cap at all. Two readings are available:
+> **Decision:** a fixed **Monday–Sunday `America/Los_Angeles` calendar week**, with a **90**-meal cap
+> per Assembly Bill 1325. **Rationale:** California MEHKO weekly limits are calculated on a standard
+> calendar-week basis, not a rolling-day basis; state operational standards treat the week as a fixed
+> 7-day calendar block (commonly Sunday–Saturday or Monday–Sunday), with precise tracking enforced by
+> county health departments. This deployment pins the Monday–Sunday variant. **Ratified by:** the team,
+> 2026-08-18. **Consequence:** the week-boundary spread quantified in Consequences below is an
+> **accepted residual risk**, not a defect — it follows from the statute's own calendar-week basis.
+>
+> The two readings and their trade-offs are kept below because a future reader in another jurisdiction
+> will face the same question, and because the analysis is the evidence behind the decision.
+
+This ADR fixes the weekly **number** (90 meals per host per week, AB 1325) and the boundary **timezone**
+(`America/Los_Angeles`). The SRS does not settle the window shape: SRS §2.1.7 and FR-11 speak only of
+"maximum meals per host per day" and "one listing per host per day", so the SRS states no weekly cap at
+all. Two readings were available:
 
 | Reading | Meaning | Behaviour |
 |---|---|---|
@@ -38,19 +49,25 @@ neither does the SRS: SRS §2.1.7 and FR-11 speak only of "maximum meals per hos
 | **Rolling 7-day window** (the stricter alternative) | sum `seat_capacity` over `[localDate − 6 days, localDate]` | no 7-day span can ever exceed the cap |
 
 `src/modules/listings/mehko.js` (`weekRangeFor` / `assertWithinCaps`) implements the Monday-anchored
-reading. **That choice is an implementation default, not a ratified decision**, and it is materially
-weaker than the rolling reading: see the Consequences bullet below for the worked evasion.
+reading, which **is now the ratified decision** (it began life as an implementation default — that is
+what the 2026-08-14 amendment flagged). It is materially more permissive than the rolling reading at
+the week boundary: see the accepted-residual-risk bullet in Consequences for the worked example.
 
-**The team must ratify one reading at CDR.** Until it does, no AB 626 *weekly*-compliance claim may be
-made from a TC-11 pass — TC-11 currently pins observed behaviour, not a ratified requirement. Either
-way the change is made **here first, by an explicit decision record**, and the acceptance criterion
-follows the ADR. Rewriting the criterion to match shipped code — which is what happened in build commit
-`3136b91`, see the Amendment log — is not a valid way to settle this.
+**Ratified 2026-08-18: the Monday–Sunday calendar week.** A TC-11 pass is now evidence against a
+ratified requirement, so the FR-11 weekly clause may be cited as AB 626 / AB 1325 weekly-compliance
+evidence. The procedural rule that produced this record still stands for any future change: the
+decision is made **here first, by an explicit decision record**, and the acceptance criterion follows
+the ADR. Rewriting the criterion to match shipped code — which is what happened in build commit
+`3136b91`, see the Amendment log — is not a valid way to settle a spec question.
 
 ### Impact inventory — what a ratification touches
 
-Re-verified against the working tree on 2026-08-17 (finding TCBV2-04 / ADRC2-05). This inventory
-records consequences; it expresses no preference between the readings.
+**Historical, retained deliberately.** Written before the 2026-08-18 ratification and re-verified
+against the working tree on 2026-08-17 (finding TCBV2-04 / ADRC2-05). The Monday-anchored branch is
+the one that was taken — and, as it predicted, it required no code or test change for the *window
+shape*. (The separate AB 1325 correction from 60 to 90 meals did touch `src/config/locale.js` and six
+assertions; that was a wrong number, not a window-shape change.) The rolling-window branch is kept as
+the ready-made recipe should a county or a future jurisdiction require that reading.
 
 **If _Monday-anchored_ is ratified:** no code and no test changes. The Decision table's last row is
 replaced by "Weekly window shape | Monday-anchored `America/Los_Angeles` calendar week", the FR-11
@@ -132,11 +149,31 @@ While any row above is blank, all of the following hold:
 ## Consequences
 - **Positive:** FR-11's cap enforcement and AB-07's single-enforcement-point mitigation are satisfied by construction; another jurisdiction is a configuration file plus legal review.
 - **Positive:** a single check is a single thing for TC-11 to test and a single thing to get wrong, rather than a condition scattered across listing creation, update and duplication paths.
-- **Negative (weekly window, unratified):** with the Monday-anchored week that v1.0 implements, the weekly cap is **evadable across a week boundary**. Worked example — one eligible host creates 30-seat listings on Sat 2031-03-08 and Sun 2031-03-09 (week Mon 03-03 … Sun 03-09, 60/60) and again on Mon 2031-03-10 and Tue 2031-03-11 (next week, 60/60). All four are accepted, so `sum(seat_capacity)` over `local_date` 2031-03-08 … 2031-03-14 is **120 — twice the stated 60-meals-per-week cap inside a single 7-day span**, served on four consecutive days. Under the rolling reading the third listing is refused. Reproduced independently by two lanes and still reproducing on the current tree: `tests/tc-booking/tcb-w3-reverify.test.js` ("TCB-01 (SPEC AMBIGUITY, reproduced)…") and `tests/tc-booking/tcbv2-independent-reverify.test.js` ("TCB-W3-05 (OPEN, ADR-009 sub-decision)…"), the latter asserting the 120-seat sum directly from the `listings` table. This is the substance of the open sub-decision above, and it is why no weekly-compliance claim may rest on the current implementation.
+- **Negative (weekly window) — ACCEPTED RESIDUAL RISK, ratified 2026-08-18:** a calendar-week cap is by construction **spreadable across a week boundary**. Worked example — one eligible host creates 30-seat listings on Sat and Sun (filling that Mon–Sun week) and again on the following Mon and Tue (filling the next week). All are accepted, so `sum(seat_capacity)` over that 7-day span reaches **twice the weekly cap**, served on four consecutive days. A rolling window would refuse the third listing. This is not a defect: it follows directly from the statute's calendar-week basis, which the team ratified on 2026-08-18 as the correct reading of California MEHKO limits. It is recorded as an accepted risk so that a future jurisdiction change, or a county that enforces a rolling reading, starts from the analysis rather than rediscovering it. Still reproducible on the current tree by design: `tests/tc-booking/tcb-w3-reverify.test.js` and `tests/tc-booking/tcbv2-independent-reverify.test.js`, the latter asserting the doubled seat sum directly from the `listings` table.
 - **Negative:** the daily and weekly caps are per *account*. AB-07 notes that a host operating several accounts evades them, and that phone-number uniqueness and identity verification are deferred to v2.0 — so this decision mitigates the constraint, it does not close the abuse case. Log-based anomaly review (NFR-08) remains the only v1.0 detection for multi-account evasion.
 - **Neutral / follow-ups:** these values are the team's reading of AB 626 for an academic project and are not legal advice. They should be re-confirmed at CDR, and the confirmation recorded, before any claim of regulatory compliance is made in the final presentation.
 
 ## Amendment log
+
+**2026-08-18 — weekly window shape RATIFIED, and the weekly cap corrected to 90 (AB 1325).**
+The team settled the sub-decision opened on 2026-08-14: the weekly cap is summed over a fixed
+**Monday–Sunday `America/Los_Angeles` calendar week**, because California MEHKO weekly limits are
+calculated on a standard calendar-week basis rather than a rolling-day basis — state operational
+standards treat the week as a fixed 7-day calendar block (commonly Sunday–Saturday or
+Monday–Sunday, with county health departments enforcing the precise tracking), and this deployment
+pins Monday–Sunday. The week-boundary spread is therefore an **accepted residual risk** that follows
+from the statute's own basis, not a defect.
+
+Ratifying it also corrected a wrong number that had been carried since 2026-08-12 and repeated in
+this ADR as fact: the weekly cap is **90 meals, not 60**. AB 626 set 60; **Assembly Bill 1325**
+raised it to 90. The old value was *over*-restrictive — it refused listings a host is legally
+entitled to post — so it created no compliance exposure, but this ADR had asserted the values "are
+the AB 626 MEHKO limits", and that sentence was wrong. Changed in `src/config/locale.js` (the one
+home of the numbers) and in the six assertions that pinned 60. The daily cap of 30 and the
+one-listing-per-day rule are unchanged.
+
+Consequence for CDR: a TC-11 pass is now evidence against a **ratified** requirement, so the FR-11
+weekly clause may be cited as weekly-compliance evidence — which it explicitly could not be before.
 
 **2026-08-14 — weekly window shape recorded as open (finding TCB-W3-05).** The wave-3 verification
 lane found that the weekly cap's window shape had never been decided anywhere: this ADR named the

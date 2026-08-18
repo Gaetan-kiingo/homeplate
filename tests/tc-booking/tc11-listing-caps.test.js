@@ -91,10 +91,10 @@ function post(cookie, overrides = {}) {
 // ----------------------------------------------------------------------------------------------
 
 describe('FR-11 / TC-11 — configuration (ADR-009)', () => {
-  test('caps are configuration — 1 listing/day, 30 meals/day, 60 meals/week, America/Los_Angeles', () => {
+  test('caps are configuration — 1 listing/day, 30 meals/day, 90 meals/week, America/Los_Angeles', () => {
     expect(config.mehko.listingsPerHostPerDay).toBe(1);
     expect(config.mehko.maxMealsPerDay).toBe(30);
-    expect(config.mehko.maxMealsPerWeek).toBe(60);
+    expect(config.mehko.maxMealsPerWeek).toBe(90); // AB 626 set 60; AB 1325 raised it to 90.
     expect(config.mehko.timezone).toBe('America/Los_Angeles');
     expect(Object.isFrozen(config.mehko)).toBe(true);
   });
@@ -176,20 +176,26 @@ describe('FR-11 / TC-11 — server-side enforcement over POST /api/listings', ()
     expect(rows[0].c).toBe(0);
   });
 
-  test('weekly meal cap: 30 + 30 seats in one week fills it; a third listing that week → 422 MEHKO_WEEKLY_MEAL_LIMIT', async () => {
-    // 2028-03-14/15/16 (Wed/Thu/Fri) sit inside ONE LA week under both the Monday-anchored
-    // and the rolling-7-day reading, so this assertion is valid under either interpretation.
+  test('weekly meal cap: full-cap days fill the week; one more seat that week → 422 MEHKO_WEEKLY_MEAL_LIMIT', async () => {
+    // Mon 2028-03-13 … Sun 2028-03-19 is ONE Monday-anchored LA week (ADR-009, ratified
+    // 2026-08-18). How many max-day listings it takes to fill that week is DERIVED from config,
+    // never hardcoded, so a future amendment to either cap cannot silently void this test —
+    // which is exactly what the AB 1325 change from 60 to 90 did to its previous form.
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
-    const wed = '2028-03-14T20:00:00.000Z'; // 12:00 PT Wed
-    const thu = '2028-03-15T20:00:00.000Z';
-    const fri = '2028-03-16T20:00:00.000Z';
-    const cap = config.mehko.maxMealsPerDay; // 30
+    const perDay = config.mehko.maxMealsPerDay;
+    const daysToFill = Math.floor(config.mehko.maxMealsPerWeek / perDay);
+    // One listing per host per day, so each filling listing needs its own day, and the
+    // overflow listing needs one more — all inside the same 7-day week.
+    expect(daysToFill).toBeLessThan(7);
 
-    await post(cookie, { scheduledStart: wed, seatCapacity: cap }).expect(201);
-    await post(cookie, { scheduledStart: thu, seatCapacity: cap }).expect(201);
+    for (let i = 0; i < daysToFill; i += 1) {
+      const day = `2028-03-${String(13 + i).padStart(2, '0')}T20:00:00.000Z`;
+      await post(cookie, { scheduledStart: day, seatCapacity: perDay }).expect(201);
+    }
 
-    const over = await post(cookie, { scheduledStart: fri, seatCapacity: 1 });
+    const overflow = `2028-03-${String(13 + daysToFill).padStart(2, '0')}T20:00:00.000Z`;
+    const over = await post(cookie, { scheduledStart: overflow, seatCapacity: 1 });
     expect(over.status).toBe(422);
     expect(over.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
   });
@@ -199,16 +205,17 @@ describe('FR-11 / TC-11 — server-side enforcement over POST /api/listings', ()
     // to the Monday-anchored America/Los_Angeles calendar week per ADR-009 + build-plan §3;
     // the SRS is silent on any weekly anchor (its AB 626 wording is daily-only).
     //
-    // Discriminator: fill the week that ENDS Sunday 2028-03-12 (Sat 3-11: 30 seats,
-    // Sun 3-12: 30 seats = 60 = maxMealsPerWeek). A 30-seat listing on Monday 2028-03-13:
-    //   - rolling 7-day reading  → trailing window still holds 60 seats → would be rejected;
+    // Discriminator: fill the week that ENDS Sunday 2028-03-12 using its TRAILING days, so the
+    // rolling window immediately before Monday is as full as the rules allow. Then post on
+    // Monday 2028-03-13:
+    //   - rolling 7-day reading  → the trailing window still holds a full cap → would reject;
     //   - Monday-anchored reading → a NEW week with 0 seats → must succeed (201).
     // (DST starts 2028-03-12 02:00 PT; all instants below are mid-day, far from boundaries.)
-    const sat = '2028-03-11T20:00:00.000Z'; // 12:00 PST Sat
-    const sun = '2028-03-12T20:00:00.000Z'; // 13:00 PDT Sun
-    const mon = '2028-03-13T20:00:00.000Z'; // 13:00 PDT Mon
-    const cap = config.mehko.maxMealsPerDay; // 30
-    expect(config.mehko.maxMealsPerWeek).toBe(2 * cap);
+    const sun = '2028-03-12T20:00:00.000Z'; // 13:00 PDT Sun — last day of the old week
+    const mon = '2028-03-13T20:00:00.000Z'; // 13:00 PDT Mon — first day of the new week
+    const perDay = config.mehko.maxMealsPerDay;
+    const daysToFill = Math.floor(config.mehko.maxMealsPerWeek / perDay);
+    expect(daysToFill).toBeLessThan(7);
 
     // The unit boundary math itself: Sunday and Monday land in DIFFERENT weeks.
     expect(mehko.weekRangeFor(sun)).toEqual({ weekStart: '2028-03-06', weekEnd: '2028-03-12' });
@@ -216,21 +223,26 @@ describe('FR-11 / TC-11 — server-side enforcement over POST /api/listings', ()
 
     const host = await makeEligibleHost();
     const cookie = await cookieFor(host);
-    await post(cookie, { scheduledStart: sat, seatCapacity: cap }).expect(201);
-    await post(cookie, { scheduledStart: sun, seatCapacity: cap }).expect(201);
+    // Old week, filled on its last `daysToFill` days (… Sat 3-11, Sun 3-12).
+    for (let i = 0; i < daysToFill; i += 1) {
+      const dayNum = 12 - (daysToFill - 1 - i);
+      const day = `2028-03-${String(dayNum).padStart(2, '0')}T20:00:00.000Z`;
+      await post(cookie, { scheduledStart: day, seatCapacity: perDay }).expect(201);
+    }
 
-    // Previous week is full (60/60); Monday belongs to the next Monday-anchored week.
-    const monday = await post(cookie, { scheduledStart: mon, seatCapacity: cap });
+    // The old week is full; Monday belongs to the NEXT Monday-anchored week, so it is allowed.
+    const monday = await post(cookie, { scheduledStart: mon, seatCapacity: perDay });
     expect(monday.status).toBe(201);
 
-    // And the new week's ledger really started fresh: Tue 30 seats reaches 60 for THIS week,
-    // so Wed +1 seat must trip the weekly cap inside the Monday-anchored week.
-    await post(cookie, { scheduledStart: '2028-03-14T20:00:00.000Z', seatCapacity: cap }).expect(
-      201
-    );
-    const wed = await post(cookie, { scheduledStart: '2028-03-15T20:00:00.000Z', seatCapacity: 1 });
-    expect(wed.status).toBe(422);
-    expect(wed.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
+    // And the new week's ledger really started fresh: fill the rest of it, then +1 seat trips.
+    for (let i = 1; i < daysToFill; i += 1) {
+      const day = `2028-03-${String(13 + i).padStart(2, '0')}T20:00:00.000Z`;
+      await post(cookie, { scheduledStart: day, seatCapacity: perDay }).expect(201);
+    }
+    const overflow = `2028-03-${String(13 + daysToFill).padStart(2, '0')}T20:00:00.000Z`;
+    const over = await post(cookie, { scheduledStart: overflow, seatCapacity: 1 });
+    expect(over.status).toBe(422);
+    expect(over.body.error.code).toBe('MEHKO_WEEKLY_MEAL_LIMIT');
   });
 
   test('ADR-009 timezone pin: 23:30 PT and 00:30 PT next day (same UTC day) are DIFFERENT days; one LA day across two UTC days is ONE day', async () => {
@@ -413,7 +425,10 @@ describe('FR-11 / TC-11 — DB backstop retained from wave 2 (0002 unique index,
         WHERE conrelid = 'listings'::regclass AND contype = 'c'`
     );
     const defs = rows.map((r) => r.def).join('\n');
-    expect(defs).not.toMatch(/\b30\b/);
-    expect(defs).not.toMatch(/\b60\b/);
+    // Scan for the CURRENT cap values, read from config — hardcoding them here would be the
+    // very mistake this test exists to catch, and would go stale on the next AB amendment.
+    for (const cap of [config.mehko.maxMealsPerDay, config.mehko.maxMealsPerWeek]) {
+      expect(defs).not.toMatch(new RegExp(`\\b${cap}\\b`));
+    }
   });
 });

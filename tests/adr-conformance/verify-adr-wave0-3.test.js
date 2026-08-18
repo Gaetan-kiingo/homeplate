@@ -596,12 +596,12 @@ describe('(i) ADR-009 — caps are configuration and boundaries are LA-local', (
     expect(locale.mehko).toEqual({
       maxListingsPerHostPerDay: 1,
       maxMealsPerHostPerDay: 30,
-      maxMealsPerHostPerWeek: 60,
+      maxMealsPerHostPerWeek: 90,
     });
     expect(config.mehko).toMatchObject({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
-      maxMealsPerWeek: 60,
+      maxMealsPerWeek: 90,
       timezone: 'America/Los_Angeles',
     });
   });
