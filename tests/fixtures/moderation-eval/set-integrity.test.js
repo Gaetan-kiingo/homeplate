@@ -170,22 +170,45 @@ describe('NFR-10 metric definitions — score()', () => {
 describe('ADR-007 / ADR-008 claim gates — why no NFR-10 number may be quoted yet', () => {
   const set = evalSet.loadSet(SET_VERSION);
 
-  test('the labels are unreviewed and no results file exists, so nothing is claimable', () => {
-    expect(set.manifest.labelReview.status).toBe('unreviewed');
-    expect(set.manifest.labelReview.reviewer).toBeNull();
-    expect(set.manifest.labelReview.date).toBeNull();
+  // Until 2026-08-21 this test asserted the OPPOSITE — that the labels were unreviewed — so a
+  // sign-off could not appear unnoticed. The labels were reviewed and signed off on that date, so
+  // the assertion is INVERTED rather than deleted: it now pins that the sign-off is well-formed
+  // (reviewer, ISO date, matching set version) AND that NFR-10 is still not claimable, because
+  // the label gate was only one of several. Deleting it would leave the claim gate unguarded in
+  // both directions, which is the failure this whole file exists to prevent.
+  test('the labels are signed off, and the sign-off is well formed (ADR-008)', () => {
+    const review = set.manifest.labelReview;
+    expect(review.status).toBe('signed-off');
+    expect(typeof review.reviewer).toBe('string');
+    expect(review.reviewer.trim().length).toBeGreaterThan(0);
+    expect(review.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Number.isNaN(Date.parse(review.date))).toBe(false);
+    expect(review.setVersion).toBe(set.version);
+  });
+
+  test('sign-off satisfies the PRECONDITIONS only — there is still no run and no results file', () => {
+    // Read claimability()'s contract carefully: it answers "IF a run were made with this model
+    // and prompt, could its numbers be claimed?" — it gates on set validity, the label sign-off,
+    // a non-mock model id and a recorded prompt version. It does NOT assert that a run happened,
+    // because the rates come from the run itself (score() → withinBound). So after the 2026-08-21
+    // sign-off, a hypothetical LIVE model legitimately returns claimable: true, and that is not an
+    // NFR-10 pass. What still makes NFR-10 unclaimable in reality is asserted here: no pipeline,
+    // no recorded run, no results file.
     expect(set.hasResults).toBe(false);
     expect(fs.existsSync(set.resultsPath)).toBe(false);
 
-    const verdict = evalSet.claimability({
+    const preconditions = evalSet.claimability({
       set,
       modelId: 'a-real-live-model-id',
       promptVersion: 'moderation-prompt-v1',
     });
-    expect(verdict.claimable).toBe(false);
-    expect(verdict.provisional).toBe(true);
-    expect(verdict.reasons.join(' ')).toMatch(/sign-off/i);
-    expect(() => evalSet.assertClaimable({ set, modelId: 'x', promptVersion: 'y' })).toThrow(
+    expect(preconditions.claimable).toBe(true);
+    expect(preconditions.reasons).toEqual([]);
+
+    // …and the gates that DO still bite, on the two ways a run could be worthless:
+    expect(evalSet.claimability({ set, modelId: '', promptVersion: 'p' }).claimable).toBe(false);
+    expect(evalSet.claimability({ set, modelId: 'live', promptVersion: '' }).claimable).toBe(false);
+    expect(() => evalSet.assertClaimable({ set, modelId: '', promptVersion: '' })).toThrow(
       /NFR-10 may not be claimed/
     );
   });
@@ -264,6 +287,9 @@ describe('ADR-007 / ADR-008 claim gates — why no NFR-10 number may be quoted y
       promptVersion: 'moderation-prompt-v1',
     });
     expect(verdict.claimable).toBe(false);
-    expect(verdict.reasons.length).toBeGreaterThanOrEqual(2); // no sign-off AND a mock model id
+    // Before the 2026-08-21 label sign-off this produced TWO reasons (unreviewed labels AND a
+    // mock model id). The sign-off removed the first; assert the one that matters here rather
+    // than a count that tracked an unrelated gate.
+    expect(verdict.reasons.join(' ')).toMatch(/mock/i);
   });
 });

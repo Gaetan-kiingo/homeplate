@@ -746,18 +746,35 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
       scanForModerationResults(path.join(REPO_ROOT, rel), rel);
     }
     expect(moderationResultFiles).toEqual([]);
-    expect(set.manifest.labelReview.status).toBe('unreviewed');
-    expect(set.manifest.labelReview.reviewer).toBeNull();
-    expect(set.manifest.labelReview.date).toBeNull();
 
-    // So even handed a live model id, ADR-008 refuses the claim: numbers would be provisional.
+    // The label sign-off landed 2026-08-21 (ADR-008: reviewer, date, set version), so this
+    // assertion is INVERTED rather than deleted — the gate is now guarded in the other
+    // direction, i.e. the sign-off must stay well formed and must name THIS set version.
+    expect(set.manifest.labelReview.status).toBe('signed-off');
+    expect(set.manifest.labelReview.reviewer).toEqual(expect.any(String));
+    expect(set.manifest.labelReview.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(set.manifest.labelReview.setVersion).toBe(set.version);
+
+    // What actually keeps NFR-10 unmeasurable is now the MISSING RUN, not the missing sign-off,
+    // and that is the point of this probe: a signed-off label set is a precondition, never a
+    // measurement. claimability() answers "if a run were made, could it be claimed?" — so with a
+    // live model id it legitimately says yes, while `hasResults` above says no run exists.
     const verdict = evalSet.claimability({
       set,
       modelId: 'a-live-model-id',
       promptVersion: 'moderation-prompt-v1',
     });
-    expect(verdict.claimable).toBe(false);
-    expect(verdict.reasons.join(' ')).toMatch(/sign-off/i);
+    expect(verdict.claimable).toBe(true); // preconditions only
+    expect(set.hasResults).toBe(false); // …and still no measurement to claim from
+
+    // The ADR-007 gate is untouched by the sign-off: a mock-scored run stays unclaimable.
+    const viaMock = evalSet.claimability({
+      set,
+      modelId: '',
+      promptVersion: 'moderation-prompt-v1',
+    });
+    expect(viaMock.claimable).toBe(false);
+    expect(viaMock.reasons.join(' ')).toMatch(/mock/i);
   });
 
   test('the ADR-002 pipeline stages the measurement must run through do not exist yet', () => {

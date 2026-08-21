@@ -93,9 +93,20 @@ NFR-10 passes only when **both** rates are below 0.05.
 > file alongside the model id, prompt version, item counts and both measured rates. An IT-03 run
 > against an unreviewed set reports its numbers marked **provisional**; it does not close NFR-10.
 
-**Current status: UNREVIEWED.** `manifest.json → labelReview.status` reads `"unreviewed"`, and
-`reviewer` and `date` are `null`. `index.js → claimability()` refuses to certify a run while that
-is true, and refuses a run whose model id names a mock adapter.
+**Current status: SIGNED OFF — Gaetan Rieben, 2026-08-21, set version v1.** `manifest.json →
+labelReview` records the reviewer, date and set version, so `index.js → claimability()` no longer
+blocks on the sign-off. It still refuses a run whose model id names a mock adapter (ADR-007), still
+requires a prompt version, and still requires a `RESULTS.md`.
+
+**What this sign-off does and does not unlock.** It closes the *label* gate only. NFR-10 remains
+unclaimable until all of the following also exist: the U4-MODERATION pipeline, a real IT-03 run
+through a **live** classifier with its model id and prompt version recorded, a `RESULTS.md`, and both
+measured rates below 0.05. None of those exist today, so no NFR-10 number may be quoted.
+
+**Provenance.** The review was performed by the named reviewer and reported to the build agent, which
+transcribed it here at their instruction; ADR-008 forbids an agent from performing or inventing this
+review, and it did neither. From this point a label correction is a **new set version `v2/`** if it
+comes after a recorded IT-03 run — the set as measured must stay immutable.
 
 To sign off: read every item, correct any label you disagree with using the boundary rules above
 (a correction is an edit to this set *before* it has been measured — after a recorded IT-03 run it

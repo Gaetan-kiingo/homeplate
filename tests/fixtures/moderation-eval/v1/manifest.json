@@ -50,11 +50,11 @@
     "abuseTargetsPeople": "'offensive' requires abuse, hate, threats, sexual harassment or demeaning language directed at a person or group. Strong language about food is not offensive."
   },
   "labelReview": {
-    "status": "unreviewed",
-    "reviewer": null,
-    "date": null,
+    "status": "signed-off",
+    "reviewer": "Gaetan Rieben",
+    "date": "2026-08-21",
     "setVersion": "v1",
-    "note": "ADR-008: no NFR-10 result may be reported as a pass until a human team member has reviewed and signed off these labels. Until 'status' reads 'signed-off' with a reviewer name and date, any IT-03 run over this set reports provisional numbers only and does not close NFR-10."
+    "note": "ADR-008 label sign-off: a human team member reviewed the 224 AI-proposed labels against the boundary rules in MANIFEST.md and signed off, reported by the reviewer and transcribed by the build agent at their instruction (an agent may not perform this review). The sign-off unlocks CLAIMABILITY only: an NFR-10 pass still additionally requires a real IT-03 run through a LIVE classifier (never the mock, ADR-007) with the model id and prompt version recorded in RESULTS.md, and both measured rates below 0.05. Correcting a label after a recorded IT-03 run requires a new set version v2/, not an edit here."
   },
   "resultsFile": "RESULTS.md",
   "resultsFileRequiredFields": [
