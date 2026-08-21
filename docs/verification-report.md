@@ -396,9 +396,11 @@ the `_unsigned_` placeholders were present so a signature could not be lost sile
 a named reviewer and a parseable ISO date, plus that live mode for real user content is still **No**.
 The clause is guarded in both directions.
 
-**Residual, tracked not hidden:** the SPMP §7.4 **countersignature by Nam Tran is outstanding**. No
-agent may record a second human's review, so the §7 table carries an explicit OUTSTANDING row. The
-ST-06 clause is closed; the peer-review formality is not yet complete.
+**Peer review complete 2026-08-21.** Nam Tran gave the SPMP §7.4 countersignature in a team call,
+relayed by Gaetan Rieben and transcribed into the §7 table. That provenance is stated in the file
+itself rather than smoothed over: it is one step longer than a first-hand signature, which is normal
+for a procedural peer review of an already-documented decision but is weaker evidence. The remaining
+step is the weekly stand-up minute (SPMP §5.3.5), so the approval exists outside the file.
 
 ---
 

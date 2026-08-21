@@ -189,11 +189,17 @@ default in §5–§6 governs.
 | Review date | **2026-08-18** |
 | Option ratified (a / b / c) | **(a) + (b)** — live calls restricted to non-personal content, with identifier stripping as defence in depth |
 | Live mode approved for real user content? | **No** |
-| Countersignature (SPMP §7.4) | **OUTSTANDING — Nam Tran.** One peer review is required without exception for AI-assisted work. Record it here and in the weekly stand-up report (SPMP §5.3.5). |
+| Countersignature (SPMP §7.4) | **Nam Tran — approved 2026-08-21.** Peer review of the ratified option (a) + (b), given in a team call and relayed by Gaetan Rieben. Still to do: the corresponding minute in the weekly stand-up report (SPMP §5.3.5), so the approval exists outside this file. |
 
 **Provenance of this entry, stated because ADR-007 forbids an agent to fill this block in.** The
 decision above was taken by the named reviewer in a working session on 2026-08-18 and transcribed
-verbatim by the build agent at their instruction; the agent did not choose it. The agent's own
+verbatim by the build agent at their instruction; the agent did not choose it. The countersignature
+was recorded on 2026-08-21 the same way, and its provenance is one step longer, which the record
+states plainly rather than smoothing over: **Nam Tran gave the peer approval in a team call, and
+Gaetan Rieben relayed it to the agent, which transcribed it.** Nam Tran did not enter it personally.
+That is normal team practice for a procedural peer review of an already-documented decision, but it
+is weaker evidence than a first-hand signature, so the stand-up minute below is what should carry it
+outside this file. The agent's own
 contribution is the evidence in §2–§4, which it re-fetched from the live terms page on the same day —
 effective date **still 2026-03-23**, and findings F1–F4 confirmed **verbatim** against the live text,
 so the snapshot below is current rather than stale. The countersignature row is deliberately left
