@@ -120,7 +120,7 @@ describe('U1-CONFIG loaded config object (acceptance numbers)', () => {
     }).toThrow(TypeError);
   });
 
-  test('mehko caps (FR-11, AB-07, ADR-009): 1/day-listing, 30/day, 60/week, LA timezone', () => {
+  test('mehko caps (FR-11, AB-07, ADR-009): 1/day-listing, 30/day, 90/week (AB 1325), LA timezone', () => {
     expect(config.mehko).toEqual({
       listingsPerHostPerDay: 1,
       maxMealsPerDay: 30,
@@ -250,6 +250,21 @@ describe('U1-CONFIG production rejects mock adapters (FR-01, FR-08, NFR-10, ADR-
     expect(cfg.moderation.mode).toBe('live');
     expect(cfg.notifications.transport).toBe('sendgrid');
   });
+
+  // These two paths were previously executed only by ACCIDENT — a residue test's unscoped
+  // outbox drain happened to walk them — so the 2026-08-21 consolidation dropped their
+  // coverage. They are asserted deliberately here instead: a transport selected without the
+  // credentials it needs must fail at config time, not at the first send.
+  test.each(['SENDGRID_API_KEY', 'SENDGRID_FROM_EMAIL'])(
+    'NOTIFICATIONS_TRANSPORT=sendgrid without %s is rejected',
+    (key) => {
+      // Same copy-and-delete shape as the fail-fast block above, rather than a destructuring
+      // omit — that leaves an unused binding the linter rejects.
+      const env = { ...productionEnv };
+      delete env[key];
+      expect(() => validateEnv(env)).toThrow(new RegExp(`${key} is required`));
+    }
+  );
 
   test('MAPS_MODE=mock is rejected in production (ADR-005 — no fabricated geocoding)', () => {
     expect(() => validateEnv({ ...productionEnv, MAPS_MODE: 'mock' })).toThrow(

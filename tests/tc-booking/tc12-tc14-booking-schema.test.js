@@ -18,8 +18,16 @@
 
 const request = require('supertest');
 const { createApp } = require('../../src/app');
-const { query, makeListing, makeBooking, makeUser, closeDb } = require('../helpers/db');
+const {
+  query,
+  makeListing,
+  makeBooking,
+  makeUser,
+  makeHostProfile,
+  closeDb,
+} = require('../helpers/db');
 const { closeTestRedis } = require('../helpers/redis');
+const { pollOnlyThese } = require('../helpers/outboxScope');
 const config = require('../../src/config');
 const sessions = require('../../src/modules/auth/sessions');
 
@@ -283,6 +291,7 @@ describe('FR-14 / TC-14 — POST /api/bookings/:id/cancel', () => {
     const stranger = await makeGuest();
     const res = await cancel(await cookieFor(stranger), bookingId);
     expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('NOT_PARTICIPANT');
     const { rows } = await query('SELECT status FROM bookings WHERE id = $1', [bookingId]);
     expect(rows[0].status).toBe('pending');
     expect(await seatsRemaining(listing.id)).toBe(2);
@@ -295,7 +304,6 @@ describe('FR-14 / TC-14 — POST /api/bookings/:id/cancel', () => {
 
 describe('FR-12/FR-04 — scheduled promotion job (pending → in_progress at scheduled_start)', () => {
   test('promote job enqueued at creation with availableAt = scheduled_start; due job promotes; redelivery is a no-op', async () => {
-    const { pollOnce } = require('../../src/outbox/worker');
     const { createRegistry } = require('../../src/outbox/dispatch');
     const promoteHandler = require('../../src/outbox/handlers/bookingPromote');
 
@@ -321,45 +329,10 @@ describe('FR-12/FR-04 — scheduled promotion job (pending → in_progress at sc
     await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = $1`, [jobs[0].id]);
     const registry = createRegistry([promoteHandler]);
 
-    /**
-     * Deliver ONE job through the real worker claim path, scoped to rows this test created.
-     *
-     * DETERMINISM (finding TCBV2-01): pollOnce() claims from the WHOLE shared outbox table
-     * `ORDER BY available_at, id LIMIT config.outbox.batchSize` (10). Every suite in the run
-     * shares that table and outbox_jobs is reset only in globalSetup, so foreign PENDING rows
-     * left by whichever files Jest happened to schedule earlier sit AHEAD of this job (their
-     * available_at is older). The previous fixed 20-pass loop therefore starved: measured on
-     * this tree, 0 foreign due rows needed 1 pass, 50 needed 6, and 250 exhausted all 20
-     * passes leaving the booking 'pending' — the exact intermittent failure reported against
-     * this test. Parking the foreign rows for the duration (and restoring them) makes the
-     * outcome depend only on rows this test owns. The assertions below are unchanged.
-     */
-    async function deliverScoped(jobId) {
-      const { rows: parked } = await query(
-        `SELECT id, available_at FROM outbox_jobs
-          WHERE status = 'pending' AND id <> $1`,
-        [jobId]
-      );
-      await query(
-        `UPDATE outbox_jobs SET available_at = now() + interval '1 hour'
-          WHERE status = 'pending' AND id <> $1`,
-        [jobId]
-      );
-      try {
-        for (let i = 0; i < 5; i += 1) {
-          const { rows } = await query('SELECT status FROM outbox_jobs WHERE id = $1', [jobId]);
-          if (rows[0].status !== 'pending') break;
-          await pollOnce({ registry });
-        }
-      } finally {
-        for (const row of parked) {
-          await query('UPDATE outbox_jobs SET available_at = $2 WHERE id = $1', [
-            row.id,
-            row.available_at,
-          ]);
-        }
-      }
-    }
+    // Deliver through the real worker claim path, scoped to rows this test created — see
+    // tests/helpers/outboxScope.js for the TCBV2-01 finding (foreign pending rows win the
+    // 10 claim slots) that the helper's parking exists to handle.
+    const deliverScoped = (jobId) => pollOnlyThese([jobId], registry, 5);
 
     await deliverScoped(jobs[0].id);
 
@@ -407,5 +380,303 @@ describe('FR-12/FR-14 — DB CHECK backstops (overbooking / double-restore are D
     await expect(
       query('UPDATE listings SET seats_remaining = seats_remaining + 1 WHERE id = $1', [listing.id])
     ).rejects.toMatchObject({ code: '23514' });
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// FR-12 under genuine CONCURRENCY — merged from the wave-3 re-verification files
+// (tcb-w3-reverify / tcbv2-independent-reverify), which re-derived these probes independently
+// of the sequential acceptance tests above.
+// ----------------------------------------------------------------------------------------------
+
+describe('FR-12 — concurrent seat requests never overbook; refusals leave capacity untouched', () => {
+  test('seats_remaining=3, 40 concurrent distinct guests → exactly 3×201, 37×409 NO_CAPACITY, seats 0', async () => {
+    const listing = await makeApprovedListing({ seat_capacity: 3, seats_remaining: 3 });
+    const cookies = await Promise.all(
+      (await Promise.all(Array.from({ length: 40 }, () => makeGuest()))).map(cookieFor)
+    );
+    const startedAt = Date.now();
+    const responses = await Promise.all(cookies.map((c) => book(c, listing.id)));
+    const elapsedMs = Date.now() - startedAt;
+    const created = responses.filter((r) => r.status === 201);
+    const refused = responses.filter((r) => r.status === 409);
+    // DIAGNOSTIC, not a relaxation: this assertion has been reported as intermittently failing
+    // in full-suite runs with an opaque "Expected length: 3, Received length: N". 40 concurrent
+    // requests contend for a pool of src/db/pool.js `max: 10` connections with
+    // `connectionTimeoutMillis: 5_000`, so on a loaded host a request can fail to ACQUIRE a
+    // connection and return 500 — which is neither 201 nor 409 and silently shrinks both
+    // buckets. Surface the real status distribution before the counts are asserted so the next
+    // failure names its cause instead of looking like an overbooking bug. The 3/37 assertions
+    // below are unchanged.
+    const unexpected = responses.filter((r) => r.status !== 201 && r.status !== 409);
+    if (unexpected.length > 0) {
+      const distribution = responses.reduce((acc, r) => {
+        acc[r.status] = (acc[r.status] || 0) + 1;
+        return acc;
+      }, {});
+      throw new Error(
+        `FR-12: ${unexpected.length}/40 concurrent booking responses were neither 201 nor 409 ` +
+          `after ${elapsedMs} ms. distribution=${JSON.stringify(distribution)} ` +
+          `firstBody=${JSON.stringify(unexpected[0].body)}`
+      );
+    }
+    expect(created).toHaveLength(3);
+    expect(refused).toHaveLength(37);
+    for (const r of refused) expect(r.body.error.code).toBe('NO_CAPACITY');
+    expect(await seatsRemaining(listing.id)).toBe(0);
+
+    const { rows } = await query(
+      `SELECT count(*)::int AS c FROM bookings WHERE listing_id = $1 AND status <> 'cancelled'`,
+      [listing.id]
+    );
+    expect(rows[0].c).toBe(3); // == seat_capacity − seats_remaining. Never more.
+  }, 30000);
+
+  test('AB-02 under CONCURRENCY: one guest firing maxConcurrentPending+5 simultaneous bookings gets exactly the cap', async () => {
+    // The sequential AB-02 acceptance above cannot catch a check-then-insert race on the
+    // per-guest pending count (finding TCB-01: the cap must hold under genuine concurrency,
+    // not just for a polite scripted guest).
+    const limit = config.booking.maxConcurrentPending;
+    expect(typeof limit).toBe('number');
+    const guest = await makeGuest();
+    const cookie = await cookieFor(guest);
+    const listings = await Promise.all(
+      Array.from({ length: limit + 5 }, () =>
+        makeApprovedListing({ seat_capacity: 5, seats_remaining: 5 })
+      )
+    );
+    const responses = await Promise.all(listings.map((l) => book(cookie, l.id)));
+    const unexpected = responses.filter((r) => r.status !== 201 && r.status !== 409);
+    expect(unexpected.map((r) => [r.status, r.body])).toEqual([]);
+    expect(responses.filter((r) => r.status === 201)).toHaveLength(limit);
+    const capped = responses.filter((r) => r.status === 409);
+    expect(capped).toHaveLength(5);
+    for (const r of capped) expect(r.body.error.code).toBe('BOOKING_LIMIT');
+
+    const { rows } = await query(
+      `SELECT count(*)::int AS c FROM bookings WHERE guest_id = $1 AND status = 'pending'`,
+      [guest.id]
+    );
+    expect(rows[0].c).toBe(limit);
+    // The five refusals consumed no capacity anywhere.
+    const seats = await Promise.all(listings.map((l) => seatsRemaining(l.id)));
+    expect(seats.filter((s) => s === 4)).toHaveLength(limit);
+    expect(seats.filter((s) => s === 5)).toHaveLength(5);
+  }, 30000);
+
+  test('a listing already started is refused 409 LISTING_STARTED and the refusal moves no seats', async () => {
+    // The refusal CODE itself is pinned by tests/unit/bookings.test.js ("cancelled listing →
+    // 409; past listing → 409"); what no other file asserted is that this refusal path — like
+    // every other one in this file — leaves capacity and the bookings table untouched.
+    const started = await makeApprovedListing({
+      seat_capacity: 2,
+      seats_remaining: 2,
+      scheduled_start: new Date(Date.now() - 3600 * 1000),
+    });
+    const res = await book(await cookieFor(await makeGuest()), started.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('LISTING_STARTED');
+    expect(await seatsRemaining(started.id)).toBe(2);
+    expect(await bookingCount(started.id)).toBe(0);
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// FR-14 under CONCURRENCY — merged from the wave-3 re-verification files
+// ----------------------------------------------------------------------------------------------
+
+describe('FR-14 — guest and host cancelling the same booking simultaneously', () => {
+  test('restores exactly one seat and enqueues exactly one cancellation notification pair', async () => {
+    const listing = await makeApprovedListing({ seat_capacity: 4, seats_remaining: 4 });
+    const guest = await makeGuest();
+    const guestCookie = await cookieFor(guest);
+    const created = await book(guestCookie, listing.id);
+    expect(created.status).toBe(201);
+    expect(await seatsRemaining(listing.id)).toBe(3);
+
+    const { rows: hostRows } = await query('SELECT * FROM users WHERE id = $1', [listing.host_id]);
+    const hostCookie = await cookieFor(hostRows[0]);
+
+    const responses = await Promise.all([
+      cancel(guestCookie, created.body.booking.id),
+      cancel(hostCookie, created.body.booking.id),
+      cancel(guestCookie, created.body.booking.id),
+      cancel(hostCookie, created.body.booking.id),
+    ]);
+    for (const r of responses) expect(r.status).toBe(200);
+    expect(await seatsRemaining(listing.id)).toBe(4); // == seat_capacity, never 5+
+
+    // Exactly one cancellation notification pair (no duplicate enqueues per event/recipient),
+    // whichever party's cancel won the race.
+    const { rows: jobs } = await query(
+      `SELECT payload FROM outbox_jobs
+        WHERE type = 'notify.booking' AND payload->>'bookingId' = $1
+          AND payload->>'event' LIKE 'cancelled_by_%'`,
+      [created.body.booking.id]
+    );
+    expect(jobs).toHaveLength(2);
+    expect(jobs.map((j) => j.payload.recipientUserId).sort()).toEqual(
+      [guest.id, listing.host_id].sort()
+    );
+  }, 30000);
+});
+
+// ----------------------------------------------------------------------------------------------
+// The promote job must survive early delivery and listing reschedules — merged from the wave-3
+// re-verification files (IT3-F1 and finding TCB-W3-02).
+// ----------------------------------------------------------------------------------------------
+
+describe('FR-12/FR-04 — early booking.promote delivery and rescheduled starts never lose the promotion', () => {
+  const { createRegistry } = require('../../src/outbox/dispatch');
+  const promoteHandler = require('../../src/outbox/handlers/bookingPromote');
+
+  /** FR-09-eligible host (guest attributes + complete host profile + agreement). */
+  async function makeEligibleHost() {
+    const host = await makeGuest({ can_publish_listing: true });
+    await makeHostProfile({ user_id: host.id });
+    return host;
+  }
+
+  test('IT3-F1: scheduled_start UNCHANGED and still in the future — the delivered row is replaced by a LIVE pending promote row', async () => {
+    const start = new Date(Date.now() + 2 * 24 * 3600 * 1000);
+    const listing = await makeApprovedListing({
+      seat_capacity: 2,
+      seats_remaining: 2,
+      scheduled_start: start,
+    });
+    const guest = await makeGuest();
+    const res = await book(await cookieFor(guest), listing.id);
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    const { rows: before } = await query(
+      `SELECT * FROM outbox_jobs WHERE type = 'booking.promote' AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    expect(before).toHaveLength(1);
+    const originalId = before[0].id;
+
+    // Early delivery: the row comes due while listings.scheduled_start is still in the future
+    // (DB clock ahead of the Node clock, or an operator requeue). scheduled_start UNTOUCHED —
+    // this is exactly the state in which a naive re-enqueue reproduces the delivered row's own
+    // dedupe key and ON CONFLICT DO NOTHING collapses onto it (finding IT3-F1: the promotion
+    // was silently lost).
+    await query('UPDATE outbox_jobs SET available_at = now() WHERE id = $1', [originalId]);
+    await pollOnlyThese([originalId], createRegistry([promoteHandler]));
+
+    const { rows: after } = await query(
+      `SELECT id, status, available_at FROM outbox_jobs
+        WHERE type = 'booking.promote' AND payload->>'bookingId' = $1 ORDER BY id`,
+      [bookingId]
+    );
+    const live = after.filter((j) => j.status === 'pending');
+    // THE assertion: whatever happened to the delivered row, a pending promote row for this
+    // booking must still exist, scheduled at the listing's start.
+    expect(live.length).toBeGreaterThanOrEqual(1);
+    expect(new Date(live[0].available_at).getTime()).toBe(start.getTime());
+    // Regression detector: the surviving row must be a DIFFERENT row from the one delivered.
+    // A naive re-enqueue reproduces the delivered row's own dedupe key, collapses onto it and
+    // leaves zero live rows — this inequality is what distinguishes fixed from broken.
+    expect(after.find((j) => String(j.id) === String(originalId)).status).toBe('delivered');
+    expect(live.map((j) => String(j.id))).not.toContain(String(originalId));
+
+    // …and the booking was NOT promoted early.
+    const { rows: b } = await query('SELECT status FROM bookings WHERE id = $1', [bookingId]);
+    expect(b[0].status).toBe('pending');
+
+    // Recovery: the start arrives, the surviving row promotes the booking.
+    await query(`UPDATE listings SET scheduled_start = now() - interval '1 minute' WHERE id = $1`, [
+      listing.id,
+    ]);
+    const liveIds = live.map((j) => j.id);
+    await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = ANY($1::bigint[])`, [
+      liveIds,
+    ]);
+    await pollOnlyThese(liveIds, createRegistry([promoteHandler]));
+    const { rows: promoted } = await query('SELECT status FROM bookings WHERE id = $1', [
+      bookingId,
+    ]);
+    expect(promoted[0].status).toBe('in_progress');
+  });
+
+  test('TCB-W3-02 (fixed): moving scheduled_start EARLIER re-enqueues the promote job at the NEW instant and the booking reaches in_progress in time', async () => {
+    // lifecycle.js is self-repairing only for starts that move LATER (the old job comes due,
+    // sees a future start and re-schedules). A start moved EARLIER has no such repair — the
+    // stale row is not due until after the meal — so listings/service.updateListing now
+    // enqueues a FRESH promotion at the new instant for every still-pending booking, on the
+    // listing update's own transaction (TCB-W3-02, ADR-001/003). This test was written to pin
+    // the defect; it is inverted here to pin the fix, and it FAILS if the re-enqueue is lost.
+    const host = await makeEligibleHost();
+    const hostCookie = await cookieFor(host);
+    const farStart = new Date(Date.UTC(2031, 4, 20, 20, 0, 0)); // 2031-05-20 13:00 PDT
+    const created = await request(app)
+      .post('/api/listings')
+      .set('Cookie', hostCookie)
+      .send({
+        title: 'Reschedule probe meal',
+        description: 'A verifier-lane probe for the promote-job reschedule gap on earlier starts.',
+        ingredients: ['rice'],
+        allergens: ['none'],
+        cuisine: 'test',
+        scheduledStart: farStart.toISOString(),
+        durationMinutes: 90,
+        seatCapacity: 4,
+        addressLine1: '9 Probe Street',
+        city: 'San Diego',
+        region: 'CA',
+        postalCode: '92101',
+      });
+    expect(created.status).toBe(201);
+    const listingId = created.body.listing.id;
+    await query(`UPDATE listings SET moderation_status = 'approved' WHERE id = $1`, [listingId]);
+
+    const guest = await makeGuest();
+    const guestCookie = await cookieFor(guest);
+    const booked = await book(guestCookie, listingId);
+    expect(booked.status).toBe(201);
+    const bookingId = booked.body.booking.id;
+
+    // Host pulls the meal forward by a month.
+    const nearStart = new Date(Date.UTC(2031, 3, 20, 20, 0, 0)); // 2031-04-20 13:00 PDT
+    const moved = await request(app)
+      .patch(`/api/listings/${listingId}`)
+      .set('Cookie', hostCookie)
+      .send({ scheduledStart: nearStart.toISOString() });
+    expect(moved.status).toBe(200);
+
+    const { rows: promoteJobs } = await query(
+      `SELECT id, status, available_at FROM outbox_jobs
+        WHERE type = 'booking.promote' AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    // THE assertion (inverted from the reproduction): a LIVE promote row now exists at the
+    // NEW instant. The stale row at the old instant may survive — it is harmless (it finds
+    // the booking no longer pending, or a start already past, and no-ops).
+    const atNew = promoteJobs.filter(
+      (j) => j.status === 'pending' && new Date(j.available_at).getTime() === nearStart.getTime()
+    );
+    expect(atNew).toHaveLength(1);
+    expect(
+      promoteJobs.every((j) => new Date(j.available_at).getTime() !== farStart.getTime())
+    ).toBe(false); // the stale row is still there, and that is fine
+
+    // Functional consequence: when the (new) start arrives the fresh row promotes the booking,
+    // so FR-04 dual confirmation is accepted instead of 409 BOOKING_NOT_IN_PROGRESS.
+    await query(
+      `UPDATE listings SET scheduled_start = now() - interval '5 minutes' WHERE id = $1`,
+      [listingId]
+    );
+    const newIds = atNew.map((j) => j.id);
+    await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = ANY($1::bigint[])`, [
+      newIds,
+    ]);
+    await pollOnlyThese(newIds, createRegistry([promoteHandler]));
+    const { rows: state } = await query('SELECT status FROM bookings WHERE id = $1', [bookingId]);
+    expect(state[0].status).toBe('in_progress');
+    const confirm = await request(app)
+      .post(`/api/bookings/${bookingId}/confirm-completion`)
+      .set('Cookie', guestCookie)
+      .send({});
+    expect(confirm.status).toBe(200);
   });
 });

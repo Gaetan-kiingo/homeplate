@@ -174,9 +174,21 @@ module.exports = async function globalTeardown() {
     await lockClient.end();
   }
 
-  // One macrotask so the sockets closed just above (and by the last suite's afterAll) finish
-  // their close handshake before the snapshot — otherwise they read as still-open leaks.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // Settle window before the snapshot. It serves two purposes, and its LENGTH is load-bearing:
+  //   1. The sockets closed just above (and by the last suite's afterAll) finish their close
+  //      handshake — otherwise they read as still-open leaks.
+  //   2. Jest's OWN reporter timer fires. @jest/reporters Status._debouncedEmit() arms a bare
+  //      100 ms setTimeout on every testFinished and never stores it; Status.runFinished()
+  //      clears only its 1 s interval, so the debounce armed by the LAST test file's finish is
+  //      still pending — and ref'd — when this hook starts. A settle shorter than 100 ms
+  //      races it: on fast teardowns (the advisory-lock release above is the variable part)
+  //      the snapshot saw that timer and reported "1 pending ref'd timer (Timeout)" as a suite
+  //      leak (residual R-1 — traced with an async_hooks init-stack capture, 2026-08-21; the
+  //      stack ends at Status.js _debouncedEmit, not in any suite). The timer is armed strictly
+  //      BEFORE globalTeardown runs (the last testFinished precedes runGlobalHook), so waiting
+  //      150 ms here guarantees it has fired and the timer snapshot below carries only timers a
+  //      SUITE armed — keeping "a line here is always a real leak" true.
+  await new Promise((resolve) => setTimeout(resolve, 150));
 
   const leaks = leakedHandles();
   // Timers are NOT handles — process._getActiveHandles() cannot see them — so an unstopped

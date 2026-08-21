@@ -4,6 +4,11 @@
 // Asserted here, by execution against the seeded test DB (SRS §4.1):
 //   - each filter alone (location+radiusKm, from/to window, hostId, cuisine) and all four
 //     combined return exactly the expected listing IDs;
+//   - the acceptance clause "the resolved COORDINATES … are written to Redis with a TTL"
+//     (the ADR-005 geocode cache, distinct from the result-page cache) and the
+//     {page, pageSize, total} paging contract the LT-01 harness depends on;
+//   - NFR-12 erasure direction on search: a soft-deleted host's listings are never offered
+//     (findings TCC-02 / TCC-RV-02);
 //   - only approved + active + future listings are returned — a pending/rejected/cancelled/
 //     past listing seeded in range is never returned;
 //   - the result page lands in Redis with a TTL and a second identical query performs ZERO
@@ -349,6 +354,8 @@ describe('TC-01 / FR-01 — NFR-09 degraded mode (Maps outage)', () => {
       warm.body.results.map((r) => r.id).sort()
     );
     expect(spy).not.toHaveBeenCalled(); // served from the page cache, provider never touched
+    // A page-cache hit is NOT a degraded answer: the flag must be absent (re-verify TCC-03(i)).
+    expect(during.body.degraded).toBeUndefined();
   });
 
   test('a stale-cache adapter answer surfaces as degraded:true and the degraded page is never cached', async () => {
@@ -366,7 +373,13 @@ describe('TC-01 / FR-01 — NFR-09 degraded mode (Maps outage)', () => {
     expect(first.body.degraded).toBe(true);
     expect(first.body.results.map((r) => r.id)).toEqual([inWindowA.id]);
 
-    // Degraded pages are not cached: the identical query consults the adapter again.
+    // Degraded pages are not cached — proven twice (re-verify TCC-03(ii)): the exact page
+    // key is absent from Redis, and the identical query consults the adapter again.
+    expect(
+      await redis.get(
+        pageCacheKey({ location: LOC_OUTAGE_CACHED, radiusKm: RADIUS_KM, cuisine: CUISINE })
+      )
+    ).toBeNull();
     const second = await search({
       location: LOC_OUTAGE_CACHED,
       radiusKm: RADIUS_KM,
@@ -393,5 +406,112 @@ describe('TC-01 / FR-01 — NFR-09 degraded mode (Maps outage)', () => {
     const res = await search({ cuisine: CUISINE });
     expect(res.status).toBe(200);
     expect(ids(res)).toEqual([inWindowA.id, inWindowB.id, outWindow.id].sort());
+  });
+});
+
+describe('TC-01 / FR-01 — geocode-coordinate cache and the paging contract (acceptance gaps)', () => {
+  const LOC_GEOCACHE = `tc01 geocache ${RUN}`;
+  const PAGING_CUISINE = `tc01paging${RUN}`;
+
+  /** Every 'hp:cache:maps:*' key currently in this lane's Redis index (SCAN, never KEYS). */
+  async function mapsCacheKeys() {
+    let cursor = '0';
+    const keys = [];
+    do {
+      const [next, batch] = await redis.scan(cursor, 'MATCH', 'hp:cache:maps:*', 'COUNT', 500);
+      cursor = next;
+      keys.push(...batch);
+    } while (cursor !== '0');
+    return keys;
+  }
+
+  test('a location query writes the RESOLVED COORDINATES to Redis with a TTL, at public precision only', async () => {
+    // Determinism (finding MTUT-RV-03): this test used to open with flushNamespace('cache'),
+    // which deletes EVERY 'hp:cache:*' key in the lane — every other suite's cached search
+    // pages and geocodes, not just this one's. It was unnecessary: LOC_GEOCACHE carries the
+    // per-run RUN token, so no earlier suite (or earlier run) can have cached it and the
+    // ADR-005 adapter is guaranteed to be called. Scoping replaces flushing: snapshot the
+    // maps-cache keyspace, fire the query, and assert on the keys THIS query added. That is
+    // strictly stronger than the old form — after a flush the surviving keys were this test's
+    // by construction, so the old sweep proved only "some key exists", while the diff proves
+    // this query wrote one.
+    const before = new Set(await mapsCacheKeys());
+
+    const res = await search({ location: LOC_GEOCACHE, radiusKm: 5 });
+    expect(res.status).toBe(200);
+
+    // The ADR-005 adapter's own geocode cache — separate from the result-page cache.
+    const allKeys = await mapsCacheKeys();
+    const geoKeys = allKeys.filter((k) => !before.has(k));
+    expect(geoKeys.length).toBeGreaterThan(0);
+
+    for (const key of geoKeys) {
+      expect(await redis.ttl(key)).toBeGreaterThan(0); // TTL, never a permanent entry
+      const value = await redis.get(key);
+      expect(value).not.toMatch(/addressLine1|postalCode/);
+    }
+
+    // ADR-010 is a safety property of the WHOLE keyspace, not just of the keys this query
+    // added: a raw location string (possibly a street address) must never appear in any maps
+    // cache key. Every location string this file sends carries the 'tc01' marker plus the
+    // per-run RUN token, so only this file can put one there — scanning every key costs
+    // nothing in determinism and catches a leak written anywhere.
+    for (const key of allKeys) {
+      expect(key).not.toMatch(/tc01/i);
+    }
+  });
+
+  test('the response carries the {page, pageSize, total} paging contract and pages do not overlap', async () => {
+    const created = [];
+    for (let i = 0; i < 3; i += 1) {
+      const host = await dbh.makeUser({ can_publish_listing: true });
+      created.push(
+        await support.makeApprovedListing({
+          host_id: host.id,
+          cuisine: PAGING_CUISINE,
+          scheduled_start: new Date(`203${4 + i}-04-0${i + 1}T18:00:00Z`),
+        })
+      );
+    }
+
+    const page1 = await search({ cuisine: PAGING_CUISINE, page: 1, pageSize: 2 });
+    expect(page1.status).toBe(200);
+    expect(page1.body.page).toBe(1);
+    expect(page1.body.pageSize).toBe(2);
+    expect(page1.body.total).toBe(3);
+    expect(page1.body.results).toHaveLength(2);
+
+    const page2 = await search({ cuisine: PAGING_CUISINE, page: 2, pageSize: 2 });
+    expect(page2.status).toBe(200);
+    expect(page2.body.total).toBe(3);
+    expect(page2.body.results).toHaveLength(1);
+
+    const seen = [...page1.body.results, ...page2.body.results].map((r) => r.id);
+    expect(new Set(seen).size).toBe(3);
+    expect(seen.sort()).toEqual(created.map((l) => l.id).sort());
+  });
+});
+
+// NFR-12 erasure, discovery direction (findings TCC-02 / TCC-RV-02): search is the surface
+// that OFFERS meals, so it must never offer a soft-deleted host's listing. The v1.0 deletion
+// endpoint is wave-4 U4-PRIVACY; this pins the read-path predicate wave 3 implements
+// (src/modules/search/repo.js VISIBLE_PREDICATES) so the cascade is written against a proven
+// contract. The retention half (the detail read) lives in tc02-listing-detail.test.js; the
+// cascade contract itself in tccrv02-erasure-read-paths.test.js.
+describe('TC-01 / FR-01 — NFR-12: a soft-deleted host is never offered by search', () => {
+  test('search returns the live host’s listing and never the soft-deleted host’s', async () => {
+    const cuisine = `tc01erasure${RUN}`;
+    // A live host on the SAME cuisine, so an empty result cannot be mistaken for a broken query.
+    const liveHost = await dbh.makeUser({ can_publish_listing: true });
+    await dbh.makeHostProfile({ user_id: liveHost.id });
+    const liveListing = await support.makeApprovedListing({ host_id: liveHost.id, cuisine });
+    const { listing: deletedHostListing } = await support.seedDeletedHostWithListing({ cuisine });
+
+    const res = await search({ cuisine });
+    expect(res.status).toBe(200);
+    const resultIds = res.body.results.map((r) => r.id);
+    expect(resultIds).toContain(liveListing.id);
+    // Original TCC-02 failureScenario: 'PROBE search status 200 n= 1' for the deleted host.
+    expect(resultIds).not.toContain(deletedHostListing.id);
   });
 });

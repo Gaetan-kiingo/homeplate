@@ -143,10 +143,9 @@ fail-closed style the config layer already applies to `ENFORCE_HTTPS` and the sa
 a `scripts/retention.js` that lists and expires artifacts older than that window and exits non-zero
 if any survive. It lands **with** the erasure job (`DELETE /api/users/me` + the outbox erasure
 handler), so ST-05 has one reviewable subject rather than a config key with nothing behind it. The
-two assertions that today pin the *absence* of that surface — "no backup-retention script or
-documented backup policy artifact exists yet" in `tests/st-security/st-security-verify.test.js` and
-"backup-expiry is a documented 30-day config policy" in `tests/st-security/st-security.test.js` —
-invert into its acceptance criteria in the same change.
+assertion that today pins the *absence* of that surface — "backup-expiry is a documented 30-day
+config policy; no retention/backup script exists yet" in `tests/st-security/st-security.test.js` —
+inverts into its acceptance criteria in the same change.
 
 Encryption in transit is a separate control (TLS 1.2+, NFR-03, `src/middleware/security.js`);
 neither substitutes for the other.

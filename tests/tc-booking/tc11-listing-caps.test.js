@@ -432,3 +432,166 @@ describe('FR-11 / TC-11 — DB backstop retained from wave 2 (0002 unique index,
     }
   });
 });
+
+// ----------------------------------------------------------------------------------------------
+// FR-11 merged from the wave-3 re-verification files (tcb-w3-reverify /
+// tcbv2-independent-reverify): the single-enforcement-point audits, the ratified calendar-week
+// residual risk, the local_date wire shape and the capacity-shrink interaction.
+// ----------------------------------------------------------------------------------------------
+
+const fs = require('fs');
+const path = require('path');
+const SRC = path.join(__dirname, '..', '..', 'src');
+
+/** Every .js file under src/ (recursive). */
+function srcFiles(dir = SRC, acc = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) srcFiles(full, acc);
+    else if (entry.name.endsWith('.js')) acc.push(full);
+  }
+  return acc;
+}
+
+describe('FR-11 — server-side MEHKO enforcement is single-sourced (ADR-009)', () => {
+  test('exactly one module calls the cap checker, and it is the listing service', () => {
+    const { stripComments } = require('../helpers/capScan');
+    const callers = srcFiles()
+      .filter((f) => /assertWithinCaps/.test(stripComments(fs.readFileSync(f, 'utf8'))))
+      .map((f) => path.relative(SRC, f).replace(/\\/g, '/'))
+      .sort();
+    expect(callers).toEqual(['modules/listings/mehko.js', 'modules/listings/service.js']);
+  });
+
+  test('the cap NUMBERS appear only in src/config — never inline in a module', () => {
+    const { capLiteralHits } = require('../helpers/capScan');
+    const offenders = [];
+    for (const file of srcFiles()) {
+      const rel = path.relative(SRC, file).replace(/\\/g, '/');
+      if (rel.startsWith('config/')) continue;
+      // capLiteralHits strips comments and skips geographic lines: since AB 1325 the weekly cap
+      // is 90, which is also the maximum latitude (src/schemas/common.js, src/lib/geoPrecision.js).
+      for (const hit of capLiteralHits(fs.readFileSync(file, 'utf8'), [
+        config.mehko.maxMealsPerDay,
+        config.mehko.maxMealsPerWeek,
+      ])) {
+        offenders.push(`${rel}:${hit.line}: ${hit.text.trim()}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('TCB-01 (ACCEPTED RESIDUAL RISK, ADR-009 ratified 2026-08-18): the calendar week lets one host serve twice the weekly cap across its boundary', async () => {
+    // ADR-009 ratified a Monday–Sunday LA calendar week on 2026-08-18, because California MEHKO
+    // weekly limits are calculated on a calendar-week basis rather than a rolling-day one. A
+    // calendar week is therefore spreadable across its boundary by construction: filling the
+    // trailing days of week N and the leading days of week N+1 places TWICE the weekly cap
+    // inside a single 7-day span. A rolling-7-day reading would refuse the crossing listing.
+    // This test pins that accepted residual risk so it stays visible and cannot regress
+    // silently; it is not a defect report.
+    const host = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    const cap = config.mehko.maxMealsPerDay; // 30
+    const create = (start) => post(cookie, { scheduledStart: start, seatCapacity: cap });
+
+    // Week N is Mon 2031-03-03 … Sun 03-09; week N+1 starts Mon 03-10. Fill the trailing
+    // `daysToFill` days of week N and the leading `daysToFill` of week N+1 — every one of them
+    // legal in its own week — and they all land inside a single 7-day span.
+    const daysToFill = Math.floor(config.mehko.maxMealsPerWeek / cap);
+    const day = (n) => `2031-03-${String(n).padStart(2, '0')}T20:00:00.000Z`;
+    const firstDay = 10 - daysToFill; // trailing days of week N, ending Sun 03-09
+    for (let i = 0; i < 2 * daysToFill; i += 1) {
+      expect((await create(day(firstDay + i))).status).toBe(201);
+    }
+
+    const spanEnd = firstDay + 2 * daysToFill - 1;
+    expect(spanEnd - firstDay).toBeLessThan(7); // all of it inside one 7-day span
+    const isoDay = (n) => `2031-03-${String(n).padStart(2, '0')}`;
+    const { rows } = await query(
+      `SELECT COALESCE(sum(seat_capacity), 0)::int AS seats FROM listings
+        WHERE host_id = $1 AND status <> 'cancelled'
+          AND local_date BETWEEN $2::date AND $3::date`,
+      [host.id, isoDay(firstDay), isoDay(spanEnd)]
+    );
+    expect(rows[0].seats).toBe(2 * config.mehko.maxMealsPerWeek);
+    expect(rows[0].seats).toBeGreaterThan(config.mehko.maxMealsPerWeek);
+  });
+});
+
+describe('ADRC-W3-01 / FR-11 — listings.local_date on the wire', () => {
+  test('POST and GET /api/listings/:id return localDate as YYYY-MM-DD, not a timezone-dependent instant', async () => {
+    // The hazard: node-postgres hands back a JS Date for a SQL DATE, so a naive String()
+    // yields a full locale timestamp ("Mon Mar 15 2030 00:00:00 GMT-0700 (…)") that nothing
+    // downstream can read as a MEHKO calendar day. The serializer must render the plain
+    // ISO calendar date. (The matching audit-record assertion lives in
+    // tests/mt-ut-quality/mt01-wave3-audit-gaps.test.js.)
+    const host = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    const start = new Date(Date.UTC(2030, 6, 9, 20, 0, 0)).toISOString(); // 13:00 PDT 2030-07-09
+    const created = await post(cookie, { scheduledStart: start });
+    expect(created.status).toBe(201);
+    expect(created.body.listing.localDate).toBe('2030-07-09');
+    expect(created.body.listing.localDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // The owner's read path too.
+    const detail = await request(app)
+      .get(`/api/listings/${created.body.listing.id}`)
+      .set('Cookie', cookie);
+    expect(detail.status).toBe(200);
+    expect(detail.body.listing.localDate).toBe('2030-07-09');
+  });
+});
+
+describe('FR-11/FR-14 — capacity shrink interacts safely with the 0001 seats CHECK', () => {
+  test('capacity shrink then cancel does not violate the seats CHECK (atomic restore stays in range)', async () => {
+    const host = await makeEligibleHost();
+    const hostCookie = await cookieFor(host);
+    const created = await post(hostCookie, {
+      scheduledStart: new Date(Date.UTC(2030, 8, 11, 20, 0, 0)).toISOString(),
+    });
+    expect(created.status).toBe(201);
+    const listingId = created.body.listing.id;
+    await query(`UPDATE listings SET moderation_status = 'approved' WHERE id = $1`, [listingId]);
+
+    const book = async () => {
+      const guest = await makeUser({ phone_enc: 'enc:v1:tc11-fixture' });
+      const cookie = await cookieFor(guest);
+      const res = await request(app)
+        .post('/api/bookings')
+        .set('Cookie', cookie)
+        .send({ listingId });
+      expect(res.status).toBe(201);
+      return { cookie, bookingId: res.body.booking.id };
+    };
+    await book();
+    const b2 = await book();
+    const seatsRemaining = async () =>
+      (await query('SELECT seats_remaining FROM listings WHERE id = $1', [listingId])).rows[0]
+        .seats_remaining;
+    expect(await seatsRemaining()).toBe(2);
+
+    // Shrink to exactly the booked count → seats_remaining 0.
+    const shrink = await request(app)
+      .patch(`/api/listings/${listingId}`)
+      .set('Cookie', hostCookie)
+      .send({ seatCapacity: 2 });
+    expect(shrink.status).toBe(200);
+    expect(await seatsRemaining()).toBe(0);
+
+    // Shrinking BELOW the booked count is refused (would make the restore impossible).
+    const tooFar = await request(app)
+      .patch(`/api/listings/${listingId}`)
+      .set('Cookie', hostCookie)
+      .send({ seatCapacity: 1 });
+    expect(tooFar.status).toBe(409);
+    expect(tooFar.body.error.code).toBe('SEAT_CAPACITY_BELOW_BOOKED');
+
+    // Cancel one → restores to 1, still ≤ seat_capacity (no 23514).
+    const cancelled = await request(app)
+      .post(`/api/bookings/${b2.bookingId}/cancel`)
+      .set('Cookie', b2.cookie)
+      .send({});
+    expect(cancelled.status).toBe(200);
+    expect(await seatsRemaining()).toBe(1);
+  });
+});

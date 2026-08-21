@@ -259,6 +259,31 @@ describe('resilience — NFR-09 bounded retries, backoff, failed result without 
     expect(mock.deliveries()).toHaveLength(0);
   });
 
+  // Deliberate cover for scrubErrorMessage's code branch. It used to be reached only by
+  // ACCIDENT — a residue test's unscoped drain delivered a foreign row whose error happened to
+  // carry a code — so the 2026-08-21 consolidation dropped it. It is asserted on purpose here
+  // because last_error is an operator's only clue about a failed send, and it must be BOTH
+  // useful (the provider's code survives) and safe (NFR-13: no address is written to a column
+  // that operators read casually).
+  test('last_error keeps the provider error code and scrubs an email-shaped address (NFR-13)', async () => {
+    const providerError = new Error('rejected recipient guest.private@leak.invalid unknown');
+    providerError.code = 'PROVIDER_550';
+    mock.injectFailures(3, undefined, providerError);
+
+    const result = await transport.send({
+      userId: user.id,
+      channel: 'email',
+      template: 'booking-cancelled',
+    });
+    expect(result.status).toBe('failed');
+
+    const row = await repo.findById(result.attemptId);
+    expect(row.last_error).toMatch(/^PROVIDER_550: /); // the code is prefixed, not dropped
+    expect(row.last_error).toMatch(/rejected recipient/); // the diagnosis survives
+    expect(row.last_error).toContain('[REDACTED]'); // …but the address does not
+    expect(row.last_error).not.toContain('guest.private@leak.invalid');
+  });
+
   test('a redelivery with the same key after failure reuses the row and can succeed', async () => {
     const key = `it-redeliver-${Date.now()}`;
     mock.injectFailures(3);

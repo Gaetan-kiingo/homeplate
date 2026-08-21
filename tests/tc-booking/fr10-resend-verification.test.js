@@ -29,8 +29,8 @@ const { createApp } = require('../../src/app');
 const { query, closeDb } = require('../helpers/db');
 const { redis, closeTestRedis } = require('../helpers/redis');
 const config = require('../../src/config');
-const dispatch = require('../../src/outbox/dispatch');
 const mockTransport = require('../../src/adapters/mockTransport');
+const { drainCapturingDelivery } = require('../helpers/outboxDirect');
 const rateLimit = require('../../src/modules/auth/rateLimit');
 const authService = require('../../src/modules/auth/service');
 const { logger } = require('../../src/lib/logger');
@@ -69,39 +69,9 @@ async function registerAndQueue() {
   return { email, user: rows[0], job: jobs[0] };
 }
 
-function ctxFor(job) {
-  return {
-    jobId: job.id,
-    type: job.type,
-    attempt: 1,
-    correlationId: job.correlation_id,
-    idempotencyKey: job.dedupe_key,
-    log: logger.child({ correlationId: job.correlation_id }),
-  };
-}
-
-/**
- * Run the real 'email.verification' handler while the ADR-011 mock adapter stands in for a
- * body-composing adapter (it declares requiresRenderContext exactly as src/adapters/sendgrid.js
- * does), and capture what the adapter received. Nothing is stubbed below the adapter seam.
- */
-async function drainCapturingDelivery(job) {
-  const handler = dispatch.loadHandlers({ log: logger }).get('email.verification');
-  const realDeliver = mockTransport.adapter.deliver;
-  const received = [];
-  mockTransport.adapter.requiresRenderContext = true;
-  mockTransport.adapter.deliver = async (input) => {
-    received.push(input);
-    return realDeliver(input);
-  };
-  try {
-    const result = await handler.handle(job.payload, ctxFor(job));
-    return { result, received };
-  } finally {
-    mockTransport.adapter.deliver = realDeliver;
-    delete mockTransport.adapter.requiresRenderContext;
-  }
-}
+// drainCapturingDelivery (tests/helpers/outboxDirect.js) runs the real 'email.verification'
+// handler with the ADR-011 mock adapter standing in for a body-composing one, capturing what
+// the adapter received. Nothing below the adapter seam is stubbed.
 
 /** The loopback per-IP resend counters this file's own HTTP requests increment. Cleared at
  *  both ends so neither a previous run nor this one can influence anything else. */

@@ -13,6 +13,12 @@
 //     documented pager GET /api/hosts/:id/reviews (asserted end to end, preview ∪ page 2);
 //   - pending/rejected → 404 for any user but the owning host; the owner sees it WITH its
 //     moderation status;
+//   - TCC-01: the host summary survives a soft-deleted or profile-less host — never
+//     host: null, and (NFR-12) never the erased name or email back on the wire;
+//   - localDate is the plain MEHKO calendar day on the wire, not a timezone-dependent
+//     instant (ADR-009 / ADRC-W3-01 re-derivation, on the FR-02 read path);
+//   - only APPROVED host reviews reach the detail payload and its aggregates (the FR-05
+//     moderation gate enforced on the FR-02 read path);
 //   - NFR-13: no host email/phone/exact street address in the public payload;
 //   - ADR-010: exact address + precise coordinates ONLY for (a) the owner, (b) a guest whose
 //     booking on this listing is pending or in_progress — a cancelled/completed guest reverts
@@ -25,6 +31,7 @@ const request = require('supertest');
 const { createApp } = require('../../src/app');
 const { createLogger } = require('../../src/lib/logger');
 const serializers = require('../../src/modules/listings/serializers');
+const hostSerializers = require('../../src/modules/hosts/serializers');
 const dbh = require('../helpers/db');
 const { closeTestRedis } = require('../helpers/redis');
 const support = require('./support');
@@ -209,6 +216,131 @@ describe('TC-02 / FR-02 — the embedded review list is a self-describing page (
     expect(page2.body.reviews.length).toBe(REVIEW_COUNT - pageSize);
     const ids = new Set([...body.reviews.map((r) => r.id), ...page2.body.reviews.map((r) => r.id)]);
     expect(ids.size).toBe(REVIEW_COUNT);
+  });
+});
+
+// TC-02 / FR-02 regression guard for the degraded host-summary paths (finding TCC-01).
+//
+// FR-02 acceptance: the listing detail response carries the host summary (display name, bio,
+// average rating, review count) IN THE SAME response. hostsRepo.findHost requires BOTH a
+// host_profiles join AND users.deleted_at IS NULL, so two states used to make
+// src/modules/listings/service.js hostContextFor answer `host: null` on a listing that is
+// itself visible — breaking that acceptance with no display name at all:
+//   (a) the host account is soft-deleted (reachable the moment the wave-4 U4-PRIVACY erasure
+//       endpoint ships), and
+//   (b) the host has no host_profiles row.
+// Both now degrade to a display identity plus the review aggregates. NFR-12 direction —
+// finding TCC-RV-02's retention half: the FR-02 detail read is a RETENTION surface — it keeps
+// answering, but (a) must render the anonymized display name; the fallback must never
+// resurface the erased name or email.
+describe('TC-02 / FR-02 — the host summary survives a deleted or profile-less host (TCC-01)', () => {
+  test('a SOFT-DELETED host yields the ANONYMIZED summary, never host: null and never the erased name or email', async () => {
+    const { host: deletedHost, listing: retained } = await support.seedDeletedHostWithListing();
+
+    const res = await detail(retained.id, await support.cookieFor(await dbh.makeUser()));
+
+    expect(res.status).toBe(200);
+    expect(res.body.listing.host).not.toBeNull();
+    // The degraded summary is still the exact FR-02/NFR-13 allowlist — no widened surface.
+    expect(Object.keys(res.body.listing.host).sort()).toEqual(
+      [...serializers.HOST_SUMMARY_KEYS].sort()
+    );
+    expect(res.body.listing.host.displayName).toBe(hostSerializers.ANONYMIZED_AUTHOR);
+    expect(res.body.listing.host.bio).toBeNull();
+    // NFR-12: the erasure is not undone by the fallback — neither the erased name nor the
+    // erased account email comes back anywhere on the wire (TCC-RV-02 retention direction).
+    const raw = JSON.stringify(res.body);
+    expect(raw).not.toContain(deletedHost.full_name);
+    expect(raw).not.toContain(deletedHost.email);
+  });
+
+  test('a host with NO host_profiles row still yields a NAMED summary with the review aggregates', async () => {
+    const bareHost = await dbh.makeUser({ can_publish_listing: true });
+    const bareListing = await dbh.makeListing({
+      host_id: bareHost.id,
+      moderation_status: 'approved',
+    });
+
+    const res = await detail(bareListing.id, await support.cookieFor(await dbh.makeUser()));
+
+    expect(res.status).toBe(200);
+    expect(res.body.listing.host).not.toBeNull();
+    expect(res.body.listing.host.displayName).toBe(bareHost.full_name);
+    expect(res.body.listing.host.bio).toBeNull();
+    expect(res.body.listing.host.reviewCount).toBe(0);
+    expect(res.body.listing.host.averageRating).toBeNull();
+    expect(Array.isArray(res.body.listing.reviews)).toBe(true);
+  });
+});
+
+describe('TC-02 / FR-02 — localDate is the plain MEHKO calendar day (ADR-009)', () => {
+  test('localDate equals the stored America/Los_Angeles calendar day as YYYY-MM-DD, not an instant', async () => {
+    const dayHost = await dbh.makeUser({ can_publish_listing: true });
+    await dbh.makeHostProfile({ user_id: dayHost.id, bio: 'Calendar-day probe host.' });
+    // 04:00 UTC on 2033-06-15 is 21:00 PDT on 2033-06-14 — the UTC day and the LA day differ,
+    // so a timezone-dependent serialization is visible as an off-by-one here.
+    const dayListing = await support.makeApprovedListing({
+      host_id: dayHost.id,
+      scheduled_start: new Date('2033-06-15T04:00:00Z'),
+    });
+    const { rows } = await dbh.query(
+      `SELECT to_char(local_date, 'YYYY-MM-DD') AS d FROM listings WHERE id = $1`,
+      [dayListing.id]
+    );
+    expect(rows[0].d).toBe('2033-06-14');
+
+    const res = await detail(dayListing.id, viewerCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.listing.localDate).toBe('2033-06-14');
+    expect(res.body.listing.localDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(res.body.listing.localDate).not.toContain('T');
+  });
+});
+
+describe('TC-02 / FR-02 — only APPROVED host reviews reach the detail payload (FR-05/FR-08)', () => {
+  let modHost;
+  let modListing;
+
+  beforeAll(async () => {
+    modHost = await dbh.makeUser({ can_publish_listing: true, full_name: `Tc02 Mod Host ${RUN}` });
+    await dbh.makeHostProfile({ user_id: modHost.id, bio: `Tc02 mod bio ${RUN}` });
+    modListing = await support.makeApprovedListing({ host_id: modHost.id });
+
+    // One approved (5), one pending (1), one rejected (1) review about this host.
+    for (const [rating, status, body] of [
+      [5, 'approved', 'TC02-APPROVED'],
+      [1, 'pending', 'TC02-PENDING-INVISIBLE'],
+      [1, 'rejected', 'TC02-REJECTED-INVISIBLE'],
+    ]) {
+      const guest = await dbh.makeUser();
+      const past = await support.makeApprovedListing({ host_id: modHost.id });
+      const booking = await support.makeCompletedBooking(past.id, guest.id);
+      await dbh.insertRow('reviews', {
+        booking_id: booking.id,
+        author_id: guest.id,
+        target_user_id: modHost.id,
+        rating,
+        body,
+        moderation_status: status,
+      });
+    }
+  });
+
+  test('pending and rejected reviews are absent from GET /api/listings/:id and excluded from the aggregates', async () => {
+    const res = await detail(modListing.id, viewerCookie);
+    expect(res.status).toBe(200);
+    const raw = JSON.stringify(res.body);
+    expect(raw).toContain('TC02-APPROVED');
+    expect(raw).not.toContain('TC02-PENDING-INVISIBLE');
+    expect(raw).not.toContain('TC02-REJECTED-INVISIBLE');
+
+    expect(res.body.listing.host).toMatchObject({
+      displayName: `Tc02 Mod Host ${RUN}`,
+      bio: `Tc02 mod bio ${RUN}`,
+      averageRating: 5, // the approved review only — pending/rejected 1s would drag it to 2.33
+      reviewCount: 1,
+    });
+    expect(res.body.listing.reviews.map((r) => r.body)).toEqual(['TC02-APPROVED']);
   });
 });
 

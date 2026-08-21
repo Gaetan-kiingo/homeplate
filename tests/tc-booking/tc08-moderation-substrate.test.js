@@ -15,10 +15,22 @@
 
 const fs = require('fs');
 const path = require('path');
+const request = require('supertest');
+const { createApp } = require('../../src/app');
 const llm = require('../../src/adapters/llmModeration');
 const mockLlm = require('../../src/adapters/llmModeration.mock');
-const { query, makeListing, closeDb } = require('../helpers/db');
+const { query, makeUser, makeHostProfile, makeListing, closeDb } = require('../helpers/db');
 const { closeTestRedis } = require('../helpers/redis');
+const { pollOnlyThese } = require('../helpers/outboxScope');
+const config = require('../../src/config');
+const sessions = require('../../src/modules/auth/sessions');
+const { loadHandlers } = require('../../src/outbox/dispatch');
+
+let app;
+
+beforeAll(() => {
+  app = createApp();
+});
 
 afterAll(async () => {
   mockLlm.reset();
@@ -75,10 +87,103 @@ describe('FR-08 / TC-08 — moderation substrate (wave-2 scope)', () => {
     expect(rows[0].column_default).toMatch(/pending/);
   });
 
-  test('WAVE-4 GAP (documented): no moderation module, pre-filter, queue, or decision writer exists yet', () => {
+  test('WAVE-4 GAP (documented): no moderation module, routes, decision writer, or moderation.scan handler exists yet', () => {
     const modulesDir = path.join(__dirname, '..', '..', 'src', 'modules');
     expect(fs.existsSync(path.join(modulesDir, 'moderation'))).toBe(false);
+    // …and the outbox worker has NO handler for the scan jobs listings enqueue (the safe
+    // failure direction of that absence is proven in the next describe).
+    const registry = loadHandlers();
+    expect(registry.types()).not.toContain('moderation.scan');
+    expect(registry.get('moderation.scan')).toBeFalsy();
     // moderation_decisions / moderation_queue tables exist (schema-first), but nothing
     // writes them yet — assert they are empty of application writes in this run.
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// FR-08's safe failure direction — merged from the wave-3 re-verification files: with no
+// moderation handler built, an unhandled scan job must strand content INVISIBLE, never publish it.
+// ----------------------------------------------------------------------------------------------
+
+describe('FR-08 — an unhandled moderation.scan dead-letters and the content never publishes itself', () => {
+  async function cookieFor(user) {
+    const { token } = await sessions.createSession(user);
+    return `${config.auth.sessionCookieName}=${token}`;
+  }
+
+  test('the scan job retries then DEAD-LETTERS, and the listing stays pending and invisible to non-owners', async () => {
+    const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-fixture' });
+    await makeHostProfile({ user_id: host.id });
+    const cookie = await cookieFor(host);
+    const created = await request(app)
+      .post('/api/listings')
+      .set('Cookie', cookie)
+      .send({
+        title: 'Reverify probe meal',
+        description: 'A verifier-lane probe listing for the FR-08 safe-direction assertion.',
+        ingredients: ['rice'],
+        allergens: ['none'],
+        cuisine: 'test',
+        scheduledStart: new Date(Date.UTC(2030, 5, 17, 20, 0, 0)).toISOString(),
+        durationMinutes: 90,
+        seatCapacity: 4,
+        addressLine1: '9 Probe Street',
+        city: 'San Diego',
+        region: 'CA',
+        postalCode: '92101',
+      });
+    expect(created.status).toBe(201);
+    const listingId = created.body.listing.id;
+    expect(created.body.listing.moderationStatus).toBe('pending');
+
+    const { rows: scan } = await query(
+      `SELECT id FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [listingId]
+    );
+    expect(scan).toHaveLength(1);
+
+    // Burn the retry budget with the REAL registry (no moderation handler is registered).
+    const registry = loadHandlers();
+    for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
+      await query('UPDATE outbox_jobs SET available_at = now() WHERE id = $1', [scan[0].id]);
+      await pollOnlyThese([scan[0].id], registry, 1);
+    }
+    const { rows: dead } = await query('SELECT status, last_error FROM outbox_jobs WHERE id = $1', [
+      scan[0].id,
+    ]);
+    expect(dead[0].status).toBe('dead');
+    expect(dead[0].last_error).toMatch(/no outbox handler registered/i);
+
+    // FR-08's required failure direction: the content NEVER publishes itself.
+    const { rows: still } = await query('SELECT moderation_status FROM listings WHERE id = $1', [
+      listingId,
+    ]);
+    expect(still[0].moderation_status).toBe('pending');
+
+    // …and it is invisible to every read path a non-owner can reach. (AB-08: both read
+    // routes require a session — anonymous callers get 401, which is also invisibility.)
+    expect((await request(app).get(`/api/listings/${listingId}`)).status).toBe(401);
+    expect((await request(app).get('/api/listings/search').query({ q: 'Reverify' })).status).toBe(
+      401
+    );
+
+    const browser = await makeUser({ phone_enc: 'enc:v1:tc08-fixture' });
+    const browserCookie = await cookieFor(browser);
+    const detail = await request(app)
+      .get(`/api/listings/${listingId}`)
+      .set('Cookie', browserCookie);
+    expect(detail.status).toBe(404); // pending content is indistinguishable from missing
+
+    const search = await request(app)
+      .get('/api/listings/search')
+      .set('Cookie', browserCookie)
+      .query({ city: 'San Diego', pageSize: 50 });
+    expect(search.status).toBe(200);
+    expect(JSON.stringify(search.body)).not.toContain(listingId);
+
+    // The owner still sees their own pending listing (not a publication).
+    const ownerView = await request(app).get(`/api/listings/${listingId}`).set('Cookie', cookie);
+    expect(ownerView.status).toBe(200);
+    expect(ownerView.body.listing.moderationStatus).toBe('pending');
   });
 });

@@ -540,3 +540,55 @@ describe('IT-01 · moderation LLM adapter (ADR-007, NFR-09, ADR-002 substrate)',
     expect(err.retryable).toBe(true); // ADR-002: pending, never published unreviewed
   });
 });
+
+// ==============================================================================================
+describe('IT-F3 / W3-ADR-01 re-verification · no object-storage adapter on the request path', () => {
+  // Moved from it-w3rv-reverify.test.js (verification round 2). ORIGINAL failureScenario:
+  // "POST /api/media → mediaService.attach() → getStorage() at src/modules/media/service.js:45
+  // does require('../../adapters/objectStorage') on the request path. src/adapters/
+  // objectStorage.js:220 builds `const defaultAdapter = createObjectStorage()` at module load,
+  // so the first media attach in a fresh process constructs an S3Client (endpoint + credentials)
+  // inside a request handler." (FR-02 / NFR-12, ADR-001.)
+  //
+  // The ADR lane's static scan deliberately exempts CALL-TIME requires inside worker-only
+  // functions, and tests/unit/hosts-media.test.js pins only the /api/media/uploads mint route —
+  // so attach()'s own load behaviour is pinned HERE and nowhere else. This test also lives in
+  // THIS file on purpose: it needs a module registry that has never loaded
+  // src/adapters/objectStorage, and it01c-adapter-depth requires that adapter top-level for its
+  // MinIO sandbox tests.
+  test('attach() rejects a bad key WITHOUT loading src/adapters/objectStorage into the registry', async () => {
+    const adapterPath = require.resolve('../../src/adapters/objectStorage');
+    // Baseline: the adapters THIS test file's own top-level imports already pulled in (the mock
+    // transport and, through it, sendgrid/fcm/maps). The claim under test is that loading and
+    // calling the media service adds NOTHING to that set — objectStorage above all.
+    const adaptersBefore = Object.keys(require.cache)
+      .filter((f) => f.includes('/src/adapters/'))
+      .sort();
+    expect(adaptersBefore).not.toContain(adapterPath);
+    let loadedAdapters;
+    let attachPromise;
+    jest.isolateModules(() => {
+      // eslint-disable-next-line global-require
+      const mediaService = require('../../src/modules/media/service');
+      // attach() is async, so the rejection is captured, not thrown; the module-loading
+      // snapshot below is taken while the isolated registry is still the live one.
+      attachPromise = mediaService
+        .attach('00000000-0000-4000-8000-000000000001', '../escape', 'listing')
+        .then(
+          () => null,
+          (err) => err
+        );
+      loadedAdapters = Object.keys(require.cache)
+        .filter((f) => f.includes('/src/adapters/'))
+        .sort();
+      expect(require.cache[adapterPath]).toBeUndefined();
+    });
+    // The pure validator still enforces the rule — the behaviour was preserved, not deleted.
+    const thrown = await attachPromise;
+    expect(thrown).toBeTruthy();
+    expect(thrown.code || thrown.name).toMatch(/INVALID_STORAGE_KEY|ValidationError/);
+    expect(loadedAdapters).toEqual(adaptersBefore);
+    expect(loadedAdapters).not.toContain(adapterPath);
+    jest.resetModules();
+  });
+});

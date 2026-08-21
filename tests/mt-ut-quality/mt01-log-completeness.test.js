@@ -20,37 +20,13 @@
 
 const request = require('supertest');
 const { createApp } = require('../../src/app');
-const { createLogger } = require('../../src/lib/logger');
 const { loadHandlers } = require('../../src/outbox/dispatch');
-const { pollOnce } = require('../../src/outbox/worker');
 const { query, closeDb } = require('../helpers/db');
+const { makeRecordingLogger, drainOutboxUntil } = require('./support');
 const { closeRedis } = require('../../src/db/redis');
 
-// ---- recording logger ---------------------------------------------------------------
-// Every line the app/worker would write goes into `lines` so the suite can assert on the
-// exact bytes that would reach a log aggregator.
-const lines = [];
-const sink = {
-  write(line) {
-    lines.push(String(line));
-  },
-};
-const recLogger = createLogger({ level: 'info', stream: sink });
-
-function records() {
-  return lines
-    .map((l) => {
-      try {
-        return JSON.parse(l);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-function auditRecords() {
-  return records().filter((r) => r.audit === true);
-}
+// ---- recording logger (the exact bytes a log aggregator would receive) ----------------------
+const { lines, logger: recLogger, records, auditRecords } = makeRecordingLogger();
 
 // ---- fixture identity (synthetic, PII-shaped on purpose for the leak scan) ----------
 const RUN = `${process.pid}${Date.now()}`;
@@ -122,27 +98,22 @@ describe('MT-01 / NFR-08 — registration audit record', () => {
     const before = lines.length;
     const registry = loadHandlers({ log: recLogger });
     // Drain rather than poll once: sibling suites (e.g. tests/unit/bookings.test.js) may
-    // leave their own due jobs in the shared test outbox, and pollOnce claims oldest-first
-    // with a bounded batch — so poll until THIS user's email.verification job has left
-    // 'pending' (bounded so a regression cannot loop forever).
-    let totalClaimed = 0;
-    // DETERMINISM (verification-report F-01): a RUNAWAY GUARD, not a budget. pollOnce claims from the
-    // whole outbox table oldest-first, ten rows a pass, so the passes this job needs depend
-    // on how many rows sibling suites left behind — state this test does not own. The loop
-    // is ended by the `stats.claimed === 0` break below (jobs that back off take a future
-    // available_at and drop out of the claim), never by this number.
-    for (let i = 0; i < 5000; i += 1) {
-      const stats = await pollOnce({ registry, log: recLogger });
-      totalClaimed += stats.claimed;
-      const { rows } = await query(
-        `SELECT status FROM outbox_jobs
-         WHERE type = 'email.verification' AND payload->>'userId' = $1`,
-        [userId]
-      );
-      if (rows.length === 1 && rows[0].status !== 'pending') break;
-      if (stats.claimed === 0) break; // queue drained without reaching the job — fail below
-    }
-    expect(totalClaimed).toBeGreaterThanOrEqual(1);
+    // leave their own due jobs in the shared test outbox — poll until THIS user's
+    // email.verification job has left 'pending' (see ./support.js drainOutboxUntil for the
+    // F-01 determinism rationale).
+    const { claimed } = await drainOutboxUntil({
+      registry,
+      log: recLogger,
+      isDone: async () => {
+        const { rows } = await query(
+          `SELECT status FROM outbox_jobs
+           WHERE type = 'email.verification' AND payload->>'userId' = $1`,
+          [userId]
+        );
+        return rows.length === 1 && rows[0].status !== 'pending';
+      },
+    });
+    expect(claimed).toBeGreaterThanOrEqual(1);
 
     const workerLines = records().slice();
     const delivered = workerLines.filter(

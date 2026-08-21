@@ -242,3 +242,43 @@ describe('repo — delivery-status transitions the worker drives (FR-07)', () =>
     expect(await repo.loadForDelivery(UNKNOWN_UUID)).toBeNull();
   });
 });
+
+// ---- FR-07 / NFR-09: a failed moderator notice must RETRY, not be swallowed ------------------
+//
+// Deliberate cover for the handler's moderator-notice failure throw. That branch used to be
+// executed only by ACCIDENT — a residue test's unscoped outbox drain delivered a foreign safety
+// job — so the 2026-08-21 consolidation dropped its coverage. It is asserted on purpose here
+// because the behaviour is load-bearing: if the handler swallowed a failed moderator notice and
+// returned success, the outbox would mark the job delivered and NOBODY would be told about a
+// safety alert. Throwing is what keeps the retry/backoff/dead-letter budget engaged (NFR-09),
+// while the alert itself stays visible in the moderator queue either way.
+describe('safetyAlert handler — a failed moderator notice throws so the outbox retries', () => {
+  const handler = require('../../src/outbox/handlers/safetyAlert');
+  const transport = require('../../src/modules/notifications/transport');
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('moderator delivery not "sent" → throws SAFETY_ALERT_MODERATOR_NOTICE_FAILED', async () => {
+    await makeUser({ roles: ['user', 'moderator'] });
+    const raiser = await makeUser({ emergency_contact_email_enc: null });
+    const booking = await makeBooking({ listing_id: listing.id, guest_id: raiser.id });
+    const alert = await service.raiseAlert(raiser.id, booking.id);
+
+    // The provider is down for every leg: the transport reports a non-'sent' outcome rather
+    // than throwing, which is exactly the case the handler has to notice for itself.
+    jest.spyOn(transport, 'send').mockResolvedValue({ status: 'failed', attemptId: null });
+
+    // The count is deliberately NOT pinned: moderator rows are shared state, so asserting
+    // "1 of 1" would couple this test to whatever other suites left behind — the exact
+    // failure class the 2026-08-21 hygiene sweep removed. The shape is what matters: every
+    // moderator failed, and the message says so.
+    await expect(handler.handle({ alertId: alert.id })).rejects.toThrow(
+      /moderator notification failed for (\d+) of \1 moderators/
+    );
+    await expect(handler.handle({ alertId: alert.id })).rejects.toMatchObject({
+      code: 'SAFETY_ALERT_MODERATOR_NOTICE_FAILED',
+    });
+  });
+});

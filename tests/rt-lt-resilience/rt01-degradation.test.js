@@ -1,4 +1,4 @@
-// tests/rt-lt-resilience/rt01-degradation.test.js — RT-01 (SRS §4.4, NFR-09; ADR-002/005/007/011).
+// tests/rt-lt-resilience/rt01-degradation.test.js — RT-01 (SRS §4.4, NFR-09; ADR-002/004/005/007/011).
 //
 // Verifier lane: cut off each external service in turn and prove the system
 //   (a) surfaces a typed, user-presentable error instead of an unhandled 5xx,
@@ -6,21 +6,37 @@
 //   (c) defers notifications/moderation work instead of dropping it, and
 //   (d) recovers once the service returns.
 //
-// Wave-2 scope note: the wave-3/4 read paths (search endpoint, listing detail, moderation
-// pipeline) do not exist yet, so the drills run at the adapter/outbox level — the exact
-// surface the NFR-09 acceptance names — plus the one real end-to-end flow that exists
-// (FR-10 registration → outbox → notification transport).
+// The drills run at BOTH levels the NFR-09 acceptance names:
+//   - adapter level (drills 1–4b): each adapter cut off directly, proving the typed-error /
+//     cache-fallback / bounded-retry contract at the exact surface the acceptance describes;
+//   - the wave-3 HTTP surface (drills 5–9): the same outages driven through the REAL
+//     route → service → repo → serializer chain (GET /api/listings/search, POST /api/bookings,
+//     POST /api/listings, GET /api/listings/:id). Outage lever: the shared adapter module
+//     objects are monkey-patched through the require cache (wave3.patchFn) — the exact function
+//     the application resolves at call time — with restores in finally/afterEach so no drill
+//     leaks.
+//
+// SendGrid and FCM cannot be drilled as themselves here BY DESIGN: src/config/schema.js rejects
+// any NOTIFICATIONS_TRANSPORT other than 'mock' while NODE_ENV=test (ADR-011 — the automated
+// suite asserts on persisted NOTIFICATION_ATTEMPT rows, never on a third party). The shared
+// transport contract both live adapters are driven through is drilled in this file (drill 4b);
+// the live adapter BODIES (retryability split, timeout, recovery) are executed against harness
+// doubles in rt01-provider-outage-drill.test.js.
 'use strict';
 
 const request = require('supertest');
 
 const config = require('../../src/config');
 const resilience = require('../../src/lib/resilience');
-const { createMapsAdapter } = require('../../src/adapters/maps');
-const { createObjectStorage } = require('../../src/adapters/objectStorage');
+const maps = require('../../src/adapters/maps');
+const { createMapsAdapter } = maps;
+const objectStorage = require('../../src/adapters/objectStorage');
+const { createObjectStorage } = objectStorage;
 const llm = require('../../src/adapters/llmModeration');
 const llmMock = require('../../src/adapters/llmModeration.mock');
 const mockTransport = require('../../src/adapters/mockTransport');
+const transport = require('../../src/modules/notifications/transport');
+const { ServiceUnavailableError } = require('../../src/lib/errors');
 const { pollOnce } = require('../../src/outbox/worker');
 const { loadHandlers } = require('../../src/outbox/dispatch');
 const { createApp } = require('../../src/app');
@@ -28,9 +44,11 @@ const { createApp } = require('../../src/app');
 const dbh = require('../helpers/db');
 const rh = require('../helpers/redis');
 const { quietLogger } = require('./helpers');
+const w3 = require('./wave3');
 
 const quiet = quietLogger();
 const PASSWORD = 'CorrectHorseBattery!42';
+let app;
 
 /** Delete the FRESH maps cache entries (keep :stale) — simulates fresh-TTL expiry. */
 async function expireFreshMapsCache() {
@@ -73,6 +91,24 @@ function googleGeocodeBody(lat, lng) {
   };
 }
 
+function mapsOutageError() {
+  return new ServiceUnavailableError('maps.searchArea: provider unavailable and no cached result', {
+    code: 'MAPS_UNAVAILABLE',
+  });
+}
+
+async function attemptRow(attemptId) {
+  const { rows } = await dbh.query(`SELECT * FROM notification_attempts WHERE id = $1`, [
+    attemptId,
+  ]);
+  return rows[0];
+}
+
+beforeAll(async () => {
+  app = createApp({ logger: quiet });
+  await rh.flushNamespace('cache'); // start with no cached search/maps pages
+});
+
 afterAll(async () => {
   mockTransport.reset();
   llmMock.reset();
@@ -81,19 +117,25 @@ afterAll(async () => {
 });
 
 describe('RT-01 substrate — resilience policy defaults (NFR-09 acceptance)', () => {
-  test('adapter timeout defaults to 3000 ms with bounded retries and backoff in config', () => {
+  test('adapter timeout defaults to 3000 ms with bounded retries and exponential backoff', () => {
     // NFR-09: "each adapter enforces a timeout (default 3000 ms), bounded retries with
     // exponential backoff". The test env does not override ADAPTER_TIMEOUT_MS.
     expect(config.adapters.timeoutMs).toBe(3000);
     expect(resilience.DEFAULT_TIMEOUT_MS).toBe(3000);
     expect(Number.isInteger(config.adapters.retryMax)).toBe(true);
-    expect(config.adapters.retryMax).toBeGreaterThanOrEqual(0);
+    expect(config.adapters.retryMax).toBeGreaterThanOrEqual(1); // bounded, and really retries
     expect(config.adapters.backoffBaseMs).toBeGreaterThan(0);
     expect(config.outbox.maxAttempts).toBeGreaterThanOrEqual(1);
+    // The backoff policy the transport hands to withResilience really is exponential —
+    // doubling per attempt, not linear (NFR-09 acceptance wording).
+    const base = config.adapters.backoffBaseMs;
+    expect(resilience.computeBackoffDelay(1, { baseMs: base })).toBe(base);
+    expect(resilience.computeBackoffDelay(2, { baseMs: base })).toBe(base * 2);
+    expect(resilience.computeBackoffDelay(3, { baseMs: base })).toBe(base * 4);
   });
 });
 
-describe('RT-01 drill 1 — Google Maps outage (ADR-005, NFR-09)', () => {
+describe('RT-01 drill 1 — Google Maps outage at the adapter (ADR-005, NFR-09)', () => {
   let mode = 'ok';
   let calls = 0;
   const fetchImpl = async () => {
@@ -167,15 +209,11 @@ describe('RT-01 drill 1 — Google Maps outage (ADR-005, NFR-09)', () => {
 });
 
 describe('RT-01 drill 2 — notification provider outage (ADR-011, FR-10/FR-13 mechanism, NFR-09)', () => {
-  let app;
   const registry = loadHandlers({ log: quiet });
 
   beforeAll(async () => {
-    app = createApp({ logger: quiet });
     // Neutralize pending jobs left by other lane files so poll stats are deterministic.
-    await dbh.query(
-      `UPDATE outbox_jobs SET status = 'delivered', delivered_at = now() WHERE status = 'pending'`
-    );
+    await w3.neutralizePendingJobs();
   });
 
   afterEach(() => mockTransport.reset());
@@ -288,10 +326,10 @@ describe('RT-01 drill 3 — moderation LLM outage (ADR-002/ADR-007, NFR-09)', ()
   });
 
   test('public content stays PENDING by schema default — an outage cannot publish unreviewed content (ADR-002)', async () => {
-    // Wave-4 note: the runtime moderation pipeline does not exist yet. What IS testable now
-    // is the database invariant the pipeline builds on: a listing row created without an
-    // explicit moderation_status is born 'pending' and stays 'pending' unless something
-    // APPROVES it — and with the LLM down nothing can.
+    // What is testable at the schema level: a listing row created without an explicit
+    // moderation_status is born 'pending' and stays 'pending' unless something APPROVES it —
+    // and with the LLM down nothing can. (Drill 7 proves the same invariant through the
+    // POST /api/listings pipeline.)
     llmMock.setOutage(true);
     const listing = await dbh.makeListing({});
     expect(listing.moderation_status).toBe('pending');
@@ -302,7 +340,7 @@ describe('RT-01 drill 3 — moderation LLM outage (ADR-002/ADR-007, NFR-09)', ()
   });
 });
 
-describe('RT-01 drill 4 — object storage outage (ADR-004, NFR-09)', () => {
+describe('RT-01 drill 4 — object storage outage at the adapter (ADR-004, NFR-09)', () => {
   test('outage: typed 503 OBJECT_STORAGE_UNAVAILABLE after bounded retries; recovery works', async () => {
     let downCalls = 0;
     let down = true;
@@ -362,43 +400,504 @@ describe('RT-01 drill 4 — object storage outage (ADR-004, NFR-09)', () => {
   });
 });
 
-describe('RT-01 drill 5 — combined Google-side outage: Maps AND moderation LLM down at once (NFR-09 acceptance)', () => {
-  test('business writes still commit and public content stays pending', async () => {
-    // Both Google-backed services down simultaneously.
-    llmMock.setOutage(true);
-    const deadFetch = async () => {
-      throw new Error('simulated Google-wide outage');
-    };
-    const maps = createMapsAdapter({
-      mode: 'live',
-      apiKey: 'rt01-test-api-key-not-real',
-      cacheTtlSeconds: 60,
-      timeoutMs: 100,
-      retries: 0,
-      backoffBaseMs: 5,
-      fetchImpl: deadFetch,
-      log: quiet,
-    });
+describe('RT-01 drill 4b — the notification provider contract behind SendGrid and FCM (NFR-09, ADR-011)', () => {
+  // NFR-09 acceptance names five adapters (Maps, SendGrid, FCM, LLM, object storage). SendGrid
+  // and FCM are drilled here through the shared contract in src/modules/notifications/transport.js
+  // (the ADR-011 mock stands in at the adapter seam); their live delivery BODIES are executed
+  // against harness doubles in rt01-provider-outage-drill.test.js. What this describe closes:
+  //   1. the ADR-011 push gate defaults FALSE, so an FCM send is refused before any adapter
+  //      runs and is recorded as a failed row (never delivered);
+  //   2. a provider outage exhausts BOUNDED retries and resolves to a FAILED ROW rather than
+  //      throwing through the worker — the outbox keeps draining its batch (NFR-09);
+  //   3. recovery: once the provider returns, sends deliver and rows read 'sent'.
+  beforeEach(() => mockTransport.reset());
+  afterAll(() => mockTransport.reset());
 
-    // Maps: typed failure only.
-    await expect(maps.geocode('Uncached Combined-Outage Lane 7')).rejects.toMatchObject({
-      code: 'MAPS_UNAVAILABLE',
-    });
-    // LLM: typed retryable failure only.
-    await expect(llm.classify('combined outage content')).rejects.toMatchObject({
-      code: 'MODERATION_PROVIDER_UNAVAILABLE',
-    });
+  test('the ADR-011 push gate defaults FALSE: an FCM send is refused, recorded, and never delivered', async () => {
+    expect(config.notifications.push.enabled).toBe(false); // ADR-011 default
+    expect(config.notifications.transport).toBe('mock'); // ADR-011: suite is mock-only
 
-    // The transactional write path is untouched: a registration (wave-2's stand-in for the
-    // wave-3 booking commit) succeeds, and new public content is born 'pending'.
-    const app = createApp({ logger: quiet });
-    const email = `rt01.combined.${Date.now()}@resilience.homeplate.invalid`;
-    const res = await request(app).post('/api/auth/register').send({ email, password: PASSWORD });
-    expect(res.status).toBe(201);
+    const user = await w3.makeGuest();
+    const result = await transport.send(
+      {
+        userId: user.id,
+        channel: 'push',
+        template: 'booking-created',
+        params: {},
+        idempotencyKey: `rt01-push-gate-${user.id}`,
+      },
+      { log: quiet }
+    );
 
-    const listing = await dbh.makeListing({});
-    expect(listing.moderation_status).toBe('pending');
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('push_disabled');
+    const row = await attemptRow(result.attemptId);
+    expect(row.channel).toBe('push');
+    expect(row.status).toBe('failed');
+    expect(row.last_error).toMatch(/push channel refused/i);
+    // Refused BEFORE any adapter ran — the mock recorded nothing.
+    expect(mockTransport.deliveries()).toHaveLength(0);
+  });
 
-    llmMock.reset();
+  test('a total provider outage exhausts bounded retries and yields a FAILED ROW, never a throw', async () => {
+    const user = await w3.makeGuest();
+    const maxTries = config.adapters.retryMax + 1; // initial try + bounded retries
+    // One more failure than the budget: the send must still stop at the budget.
+    mockTransport.injectFailures(maxTries + 5);
+
+    let threw = null;
+    let result;
+    try {
+      result = await transport.send(
+        {
+          userId: user.id,
+          channel: 'email',
+          template: 'booking-created',
+          params: {},
+          idempotencyKey: `rt01-outage-${user.id}`,
+        },
+        { log: quiet }
+      );
+    } catch (err) {
+      threw = err;
+    }
+
+    // NFR-09: "a provider outage yields a failed ROW, not an unhandled rejection".
+    expect(threw).toBeNull();
+    expect(result.status).toBe('failed');
+
+    const row = await attemptRow(result.attemptId);
+    expect(row.status).toBe('failed');
+    expect(row.last_error).toBeTruthy();
+    expect(row.sent_at).toBeNull();
+    // Bounded: exactly the configured budget was spent, no more.
+    expect(row.attempt_count).toBe(maxTries);
+    expect(mockTransport.deliveries()).toHaveLength(0);
   }, 20000);
+
+  test('recovery: once the provider returns, the same recipient is delivered to and the row reads sent', async () => {
+    const user = await w3.makeGuest();
+    mockTransport.injectFailures(1);
+    const first = await transport.send(
+      {
+        userId: user.id,
+        channel: 'email',
+        template: 'booking-created',
+        params: {},
+        idempotencyKey: `rt01-recovery-a-${user.id}`,
+      },
+      { log: quiet }
+    );
+    // A single injected failure is inside the retry budget, so the send recovers in-flight.
+    expect(['sent', 'failed']).toContain(first.status);
+
+    mockTransport.reset(); // provider healthy again
+    const second = await transport.send(
+      {
+        userId: user.id,
+        channel: 'email',
+        template: 'booking-created',
+        params: {},
+        idempotencyKey: `rt01-recovery-b-${user.id}`,
+      },
+      { log: quiet }
+    );
+    expect(second.status).toBe('sent');
+    const row = await attemptRow(second.attemptId);
+    expect(row.status).toBe('sent');
+    expect(row.sent_at).not.toBeNull();
+    expect(mockTransport.deliveries().filter((d) => d.userId === user.id)).toHaveLength(1);
+  }, 20000);
+});
+
+describe('RT-01 drill 5 — Google Maps outage against GET /api/listings/search (NFR-09, ADR-005)', () => {
+  let cookie;
+  let listing;
+  const CUISINE = 'rt01drill';
+  const LOCATION = 'RT01 Drill Cove, San Diego';
+
+  beforeAll(async () => {
+    const guest = await w3.makeGuest();
+    cookie = await w3.cookieFor(guest);
+    // A listing sitting exactly on the coarse cell the degraded-mode areas will point at.
+    listing = await w3.makeApprovedListing({ cuisine: CUISINE });
+  });
+
+  test('healthy: a location search answers 200 and its page is cached', async () => {
+    const res = await request(app)
+      .get('/api/listings/search')
+      .query({ location: LOCATION, cuisine: CUISINE })
+      .set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.degraded).toBeUndefined();
+  });
+
+  test('provider down: the identical query is served from the cached page — 200, zero adapter calls', async () => {
+    let adapterCalls = 0;
+    const restore = w3.patchFn(maps, 'searchArea', async () => {
+      adapterCalls += 1;
+      throw mapsOutageError();
+    });
+    try {
+      const res = await request(app)
+        .get('/api/listings/search')
+        .query({ location: LOCATION, cuisine: CUISINE })
+        .set('Cookie', cookie);
+      expect(res.status).toBe(200); // cached data served during the outage (NFR-09)
+      expect(adapterCalls).toBe(0); // the page cache answered before the adapter was touched
+    } finally {
+      restore();
+    }
+  });
+
+  test('provider down, stale area cache: 200 with results AND a degraded indicator; degraded pages are never cached', async () => {
+    let adapterCalls = 0;
+    // The adapter-level stale-cache fallback (proven live in drill 1 above) is simulated at
+    // the adapter boundary so the service/route degraded contract is exercised.
+    const restore = w3.patchFn(maps, 'searchArea', async () => {
+      adapterCalls += 1;
+      return {
+        areas: [{ lat: 32.75, lng: -117.15, areaLabel: 'San Diego' }],
+        degraded: true,
+        source: 'cache-degraded',
+      };
+    });
+    try {
+      const q = { location: 'RT01 Degraded Heights', cuisine: CUISINE };
+      const res1 = await request(app).get('/api/listings/search').query(q).set('Cookie', cookie);
+      expect(res1.status).toBe(200);
+      expect(res1.body.degraded).toBe(true); // the degraded-mode indicator (NFR-09)
+      expect(res1.body.results.map((r) => r.id)).toContain(listing.id); // stored data served
+      // ADR-010: even in degraded mode only public precision leaves the API.
+      for (const item of res1.body.results) {
+        expect(item.addressLine1).toBeUndefined();
+        expect(item.lat).toBeUndefined();
+        expect(item.lng).toBeUndefined();
+      }
+      expect(adapterCalls).toBe(1);
+
+      // The degraded page must NOT have been cached: the same query consults the adapter again.
+      const res2 = await request(app).get('/api/listings/search').query(q).set('Cookie', cookie);
+      expect(res2.status).toBe(200);
+      expect(res2.body.degraded).toBe(true);
+      expect(adapterCalls).toBe(2);
+    } finally {
+      restore();
+    }
+  });
+
+  test('provider down, nothing cached: typed 503 SEARCH_DEGRADED with a user-facing message — never a 500', async () => {
+    const restore = w3.patchFn(maps, 'searchArea', async () => {
+      throw mapsOutageError();
+    });
+    try {
+      const res = await request(app)
+        .get('/api/listings/search')
+        .query({ location: 'RT01 Never Cached Bluffs' })
+        .set('Cookie', cookie);
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe('SEARCH_DEGRADED');
+      expect(res.body.error.message).toMatch(/temporarily unavailable/i); // the required message
+      expect(res.body.error.message).toMatch(/without a location/i); // actionable for the user
+    } finally {
+      restore();
+    }
+  });
+
+  test('provider down: non-location searches are entirely unaffected', async () => {
+    const restore = w3.patchFn(maps, 'searchArea', async () => {
+      throw mapsOutageError();
+    });
+    try {
+      const res = await request(app)
+        .get('/api/listings/search')
+        .query({ cuisine: CUISINE })
+        .set('Cookie', cookie);
+      expect(res.status).toBe(200);
+      expect(res.body.results.map((r) => r.id)).toContain(listing.id);
+      expect(res.body.degraded).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test('recovery: once the provider returns, a fresh location query answers 200 un-degraded', async () => {
+    const res = await request(app)
+      .get('/api/listings/search')
+      .query({ location: 'RT01 Recovery Point, San Diego' })
+      .set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    expect(res.body.degraded).toBeUndefined();
+  });
+});
+
+describe('RT-01 drill 6 — notification provider outage against POST /api/bookings (FR-12/FR-13, ADR-011)', () => {
+  afterEach(() => mockTransport.reset());
+
+  test('booking commits during the outage; both notify jobs defer with failed attempt rows, then deliver on recovery', async () => {
+    await w3.neutralizePendingJobs();
+    const registry = loadHandlers({ log: quiet });
+    const host = await w3.makeHost();
+    const listing = await w3.makeApprovedListing({ host_id: host.id });
+    const guest = await w3.makeGuest();
+    const cookie = await w3.cookieFor(guest);
+
+    mockTransport.injectFailures(1000); // total provider outage
+
+    const started = Date.now();
+    const res = await request(app)
+      .post('/api/bookings')
+      .send({ listingId: listing.id })
+      .set('Cookie', cookie);
+    const elapsedMs = Date.now() - started;
+
+    // The business write is untouched by the outage: committed, fast, no 5xx (FR-13, NFR-09).
+    // FR-13 acceptance: "with the adapters forced to throw, POST /api/bookings still returns
+    // 201 in under 500 ms" — the outage must be invisible to the request path's latency.
+    expect(res.status).toBe(201);
+    expect(elapsedMs).toBeLessThan(500);
+    const bookingId = res.body.booking.id;
+    const { rows: bookingRows } = await dbh.query(`SELECT * FROM bookings WHERE id = $1`, [
+      bookingId,
+    ]);
+    expect(bookingRows).toHaveLength(1);
+    expect(bookingRows[0].status).toBe('pending');
+
+    // Both notify.booking rows committed with the booking; the promote job is scheduled.
+    const { rows: notifyJobs } = await dbh.query(
+      `SELECT * FROM outbox_jobs WHERE type = 'notify.booking'
+        AND payload->>'bookingId' = $1 ORDER BY id`,
+      [bookingId]
+    );
+    expect(notifyJobs).toHaveLength(2);
+    const recipients = notifyJobs.map((j) => j.payload.recipientUserId).sort();
+    expect(recipients).toEqual([guest.id, host.id].sort());
+
+    // Worker cycle during the outage: both jobs retried (deferred), neither dead, none lost.
+    const stats1 = await pollOnce({ registry, log: quiet });
+    expect(stats1.retried).toBe(2);
+    expect(stats1.deadLettered).toBe(0);
+    const { rows: afterFail } = await dbh.query(
+      `SELECT status, attempt_count FROM outbox_jobs WHERE type = 'notify.booking'
+        AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    for (const row of afterFail) {
+      expect(row.status).toBe('pending');
+      expect(row.attempt_count).toBe(1);
+    }
+    const { rows: failedAttempts } = await dbh.query(
+      `SELECT status FROM notification_attempts WHERE recipient_user_id = ANY($1::uuid[])`,
+      [[guest.id, host.id]]
+    );
+    expect(failedAttempts.length).toBeGreaterThanOrEqual(2);
+    expect(failedAttempts.every((a) => a.status === 'failed')).toBe(true);
+    expect(mockTransport.deliveries()).toHaveLength(0);
+
+    // Recovery: provider restored → the SAME deferred jobs complete, exactly once each.
+    mockTransport.reset();
+    await dbh.query(
+      `UPDATE outbox_jobs SET available_at = now() WHERE type = 'notify.booking'
+        AND payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    const stats2 = await pollOnce({ registry, log: quiet });
+    expect(stats2.delivered).toBe(2);
+    const delivered = mockTransport.deliveries();
+    expect(delivered.filter((d) => d.userId === guest.id)).toHaveLength(1);
+    expect(delivered.filter((d) => d.userId === host.id)).toHaveLength(1);
+    const { rows: sentAttempts } = await dbh.query(
+      `SELECT status FROM notification_attempts WHERE recipient_user_id = ANY($1::uuid[])`,
+      [[guest.id, host.id]]
+    );
+    expect(sentAttempts.every((a) => a.status === 'sent')).toBe(true);
+  }, 30000);
+});
+
+describe('RT-01 drill 7 — moderation LLM outage against POST /api/listings (FR-08, ADR-002/007)', () => {
+  afterEach(() => llmMock.reset());
+
+  test('creation succeeds, the listing stays PENDING and invisible, moderation work defers — never publishes', async () => {
+    await w3.neutralizePendingJobs();
+    const registry = loadHandlers({ log: quiet });
+    llmMock.setOutage(true); // provider down for the whole drill
+
+    const host = await w3.makeHost();
+    const hostCookie = await w3.cookieFor(host);
+    const guest = await w3.makeGuest();
+    const guestCookie = await w3.cookieFor(guest);
+
+    const res = await request(app)
+      .post('/api/listings')
+      .send({
+        title: 'RT01 Outage Dinner',
+        description: 'Listing created while the moderation provider is down.',
+        ingredients: ['rice', 'beans'],
+        cuisine: 'rt01llmdrill',
+        scheduledStart: new Date(Date.now() + 14 * 24 * 3600 * 1000).toISOString(),
+        durationMinutes: 90,
+        seatCapacity: 4,
+        addressLine1: '742 Outage Drill Way',
+        city: 'San Diego',
+        region: 'CA',
+      })
+      .set('Cookie', hostCookie);
+    expect(res.status).toBe(201); // the outage never blocks creation (NFR-09)
+    const listingId = res.body.listing.id;
+
+    const { rows: created } = await dbh.query(
+      `SELECT moderation_status FROM listings WHERE id = $1`,
+      [listingId]
+    );
+    expect(created[0].moderation_status).toBe('pending'); // born pending (ADR-002)
+
+    // The moderation.scan job is committed and deferred — a worker cycle during the outage
+    // must leave it queued (wave 3 has no moderation handler yet; either way it may NOT
+    // complete as an approval) and the listing must still be pending afterwards.
+    const { rows: scanJobs } = await dbh.query(
+      `SELECT * FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [listingId]
+    );
+    expect(scanJobs).toHaveLength(1);
+    expect(scanJobs[0].status).toBe('pending');
+
+    await pollOnce({ registry, log: quiet });
+    const { rows: afterPoll } = await dbh.query(
+      `SELECT moderation_status FROM listings WHERE id = $1`,
+      [listingId]
+    );
+    expect(afterPoll[0].moderation_status).toBe('pending'); // NEVER published unreviewed
+    const { rows: scanAfter } = await dbh.query(
+      `SELECT status FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [listingId]
+    );
+    expect(scanAfter[0].status).toBe('pending'); // deferred, not dropped, not dead yet
+
+    // Publicly invisible while pending: search never returns it (FR-08/ADR-002).
+    const search = await request(app)
+      .get('/api/listings/search')
+      .query({ cuisine: 'rt01llmdrill' })
+      .set('Cookie', guestCookie);
+    expect(search.status).toBe(200);
+    expect(search.body.results).toHaveLength(0);
+  }, 30000);
+});
+
+describe('RT-01 drill 8 — object storage outage against GET /api/listings/:id (ADR-004)', () => {
+  test('listing detail with media renders 200 with locally-derived image URLs while the storage adapter is down', async () => {
+    const host = await w3.makeHost();
+    const listing = await w3.makeApprovedListing({ host_id: host.id });
+    await dbh.insertRow('media_objects', {
+      owner_user_id: host.id,
+      entity_type: 'listing',
+      entity_id: listing.id,
+      storage_key: `listing/${host.id}/rt01-storage-drill.jpg`,
+      content_type: 'image/jpeg',
+    });
+    const guest = await w3.makeGuest();
+    const cookie = await w3.cookieFor(guest);
+
+    // Total storage outage: every adapter operation throws.
+    let adapterCalls = 0;
+    const boom = async () => {
+      adapterCalls += 1;
+      throw new ServiceUnavailableError('storage outage drill', {
+        code: 'OBJECT_STORAGE_UNAVAILABLE',
+      });
+    };
+    const restores = ['put', 'get', 'deleteByKey'].map((fn) => w3.patchFn(objectStorage, fn, boom));
+    try {
+      const res = await request(app).get(`/api/listings/${listing.id}`).set('Cookie', cookie);
+      expect(res.status).toBe(200); // never a 500 (NFR-09 acceptance)
+      // WHY it cannot 500: the read path derives URLs by pure local SigV4 arithmetic
+      // (src/lib/mediaUrls) and never touches src/adapters/objectStorage at all — the
+      // ADR-001/003 request-path rule makes the storage outage structurally invisible here.
+      // Asserting zero adapter calls turns an otherwise unfalsifiable drill into a real
+      // regression guard: if anyone later puts a storage call on this read path, the outage
+      // becomes user-visible and this count catches it.
+      expect(adapterCalls).toBe(0);
+      expect(Array.isArray(res.body.listing.images)).toBe(true);
+      expect(res.body.listing.images).toHaveLength(1);
+      // The URL is derived locally from the storage key (ADR-004/lib/mediaUrls) — the client
+      // gets a renderable reference (its <img> may fall back to a placeholder) instead of an
+      // API failure.
+      expect(typeof res.body.listing.images[0].url).toBe('string');
+      expect(res.body.listing.images[0].url).toContain('rt01-storage-drill.jpg');
+    } finally {
+      restores.forEach((restore) => restore());
+    }
+  });
+});
+
+describe('RT-01 drill 9 — combined Google-side outage: Maps AND moderation LLM down at once (NFR-09 acceptance)', () => {
+  // This drill also owns what the retired wave-2 combined drill asserted at the adapter level:
+  // its registration write was explicitly "wave-2's stand-in for the wave-3 booking commit"
+  // (the real commit is (1) below), its typed MAPS_UNAVAILABLE / MODERATION_PROVIDER_UNAVAILABLE
+  // failures are drilled in drills 1 and 3, and its born-pending listing is (2) below plus
+  // drill 3's schema-default case.
+  afterEach(() => llmMock.reset());
+
+  test('bookings still commit, new public content stays pending, non-location search still serves', async () => {
+    llmMock.setOutage(true);
+    const restoreSearch = w3.patchFn(maps, 'searchArea', async () => {
+      throw mapsOutageError();
+    });
+    const restoreGeocode = w3.patchFn(maps, 'geocode', async () => {
+      throw mapsOutageError();
+    });
+    try {
+      const host = await w3.makeHost();
+      const hostCookie = await w3.cookieFor(host);
+      const listing = await w3.makeApprovedListing({ host_id: host.id, cuisine: 'rt01combined' });
+      const guest = await w3.makeGuest();
+      const guestCookie = await w3.cookieFor(guest);
+
+      // (1) The booking write path is fully operational (FR-12 commit, FR-13 deferred).
+      const booking = await request(app)
+        .post('/api/bookings')
+        .send({ listingId: listing.id })
+        .set('Cookie', guestCookie);
+      expect(booking.status).toBe(201);
+
+      // (2) New public content is created but stays pending (ADR-002 — nothing can approve).
+      const created = await request(app)
+        .post('/api/listings')
+        .send({
+          title: 'RT01 Combined Outage Dinner',
+          description: 'Created while Maps and the moderation LLM are both down.',
+          ingredients: ['pasta'],
+          scheduledStart: new Date(Date.now() + 15 * 24 * 3600 * 1000).toISOString(),
+          durationMinutes: 60,
+          seatCapacity: 2,
+          addressLine1: '1 Combined Outage Court',
+          city: 'San Diego',
+          region: 'CA',
+        })
+        .set('Cookie', hostCookie);
+      expect(created.status).toBe(201);
+      const { rows } = await dbh.query(`SELECT moderation_status FROM listings WHERE id = $1`, [
+        created.body.listing.id,
+      ]);
+      expect(rows[0].moderation_status).toBe('pending');
+
+      // (3) Non-location reads keep serving previously stored data.
+      const search = await request(app)
+        .get('/api/listings/search')
+        .query({ cuisine: 'rt01combined' })
+        .set('Cookie', guestCookie);
+      expect(search.status).toBe(200);
+      expect(search.body.results.map((r) => r.id)).toContain(listing.id);
+
+      // (4) The one thing that IS down fails typed and user-facing, not with a 500.
+      const located = await request(app)
+        .get('/api/listings/search')
+        .query({ location: 'RT01 Combined Uncached Mesa' })
+        .set('Cookie', guestCookie);
+      expect(located.status).toBe(503);
+      expect(located.body.error.code).toBe('SEARCH_DEGRADED');
+    } finally {
+      restoreSearch();
+      restoreGeocode();
+    }
+  }, 30000);
 });

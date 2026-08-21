@@ -45,6 +45,7 @@ const { pollOnce } = require('../../src/outbox/worker');
 const safetyRepo = require('../../src/modules/safety/repo');
 const sessions = require('../../src/modules/auth/sessions');
 const dbh = require('../helpers/db');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
 const { closeTestRedis } = require('../helpers/redis');
 
 const EMERGENCY_TEMPLATE = 'safety-alert-emergency';
@@ -233,7 +234,9 @@ describe('IT-04 · happy path — moderator notified, emergency contact emailed,
       [job.id]
     );
     mockTransport.reset();
-    await drainDue();
+    // F-01 determinism: scoped — a foreign row drained here would deliver through the same
+    // mock transport and break the zero-deliveries assertion below.
+    await withOnlyTheseDue([job.id], () => drainDue());
 
     expect((await jobRow(job.id)).status).toBe('delivered');
     expect(mockTransport.deliveries()).toHaveLength(0); // nothing left the process a second time
@@ -261,7 +264,12 @@ describe('IT-04 · no approved emergency contact — recorded as no_channel, nev
       attempt_count: 0, // nothing was ever handed to a provider
     });
     expect(emergency[0].last_error).toMatch(/no emergency contact/i);
-    expect(attempts.filter((a) => a.template === MODERATOR_TEMPLATE).length).toBeGreaterThan(0);
+    // Absorbed from it-w3rv-reverify (IT-F2 re-verification): the moderator notice must be
+    // SENT even when the emergency-contact leg has no channel — "not failed" alone would let a
+    // silently-skipped moderator notice pass.
+    const moderatorRows = attempts.filter((a) => a.template === MODERATOR_TEMPLATE);
+    expect(moderatorRows.length).toBeGreaterThan(0);
+    expect(moderatorRows.every((r) => r.status === 'sent')).toBe(true);
     expect(attempts.every((a) => a.status !== 'failed')).toBe(true);
   });
 });
@@ -275,7 +283,9 @@ describe('IT-04 · provider outage — retried, visible throughout, completed on
     const moderatorCookie = await cookieFor(moderator);
 
     const spy = injectEmergencyOutage();
-    await pollOnce({ registry, log: quietLog });
+    // F-01 determinism: scope the pass so THIS job is claimed in a single poll regardless of
+    // what sibling suites left pending ahead of it in the shared table.
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog }));
 
     const retried = await jobRow(job.id);
     expect(retried.status).toBe('pending'); // deferred, never dropped
@@ -316,10 +326,14 @@ describe('IT-04 · provider outage — retried, visible throughout, completed on
     const moderatorCookie = await cookieFor(moderator);
 
     injectEmergencyOutage();
-    for (let i = 0; i < config.outbox.maxAttempts; i += 1) {
-      await makeDue(job.id);
-      await pollOnce({ registry, log: quietLog });
-    }
+    // F-01 determinism: scoped — makeDue() re-dates OUR row to now(), the NEWEST of the due
+    // rows, so unscoped passes would hand the claim slots to older foreign rows first.
+    await withOnlyTheseDue([job.id], async () => {
+      for (let i = 0; i < config.outbox.maxAttempts; i += 1) {
+        await makeDue(job.id);
+        await pollOnce({ registry, log: quietLog });
+      }
+    });
 
     const dead = await jobRow(job.id);
     expect(dead.status).toBe('dead');

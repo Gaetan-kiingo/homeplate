@@ -25,6 +25,9 @@ const { pollOnce } = require('../../src/outbox/worker');
 const { loadHandlers } = require('../../src/outbox/dispatch');
 const transport = require('../../src/modules/notifications/transport');
 const mockTransport = require('../../src/adapters/mockTransport');
+const sendgrid = require('../../src/adapters/sendgrid');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
+const { runJobs } = require('../helpers/outboxDirect');
 
 let app;
 let registry;
@@ -59,49 +62,10 @@ async function drainOutbox() {
   }
 }
 
-/**
- * Run `fn` (a worker pass) with ONLY `jobIds` due: every other pending row in the shared table
- * is parked an hour out for the duration and its original available_at restored afterwards.
- *
- * DETERMINISM (finding TCBV2-01, second half): draining the queue first is not by itself enough
- * to make "the next pass claims OUR job" true. A drained foreign job that FAILS is rescheduled
- * available_at = now() + backoffBaseMs (5 s), so it becomes due again inside this file's own
- * run and competes for the 10 claim slots of the very next pass — and the claim is ordered by
- * available_at, so those older rows win. Measured on this tree with foreign pending rows seeded
- * ahead of the file: 600 rows still passed, 3000 rows failed at the 'redelivery is exactly-once'
- * assertion with `Expected: 2 / Received: 0` because the booking's two notify.booking rows were
- * never claimed. Parking makes each pass depend only on rows the test itself created, so the
- * assertions below hold at any queue depth. The pass semantics are unchanged: exactly one
- * pollOnce per call site, claiming exactly the jobs named here.
- *
- * @param {Array<string|number>} jobIds outbox_jobs.id values this pass must be able to claim
- * @param {() => Promise<T>} fn
- * @returns {Promise<T>}
- * @template T
- */
-async function withOnlyTheseDue(jobIds, fn) {
-  const ids = jobIds.map(String);
-  const { rows: parked } = await query(
-    `SELECT id, available_at FROM outbox_jobs
-      WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))`,
-    [ids]
-  );
-  await query(
-    `UPDATE outbox_jobs SET available_at = now() + interval '1 hour'
-      WHERE status = 'pending' AND NOT (id = ANY($1::bigint[]))`,
-    [ids]
-  );
-  try {
-    return await fn();
-  } finally {
-    for (const row of parked) {
-      await query('UPDATE outbox_jobs SET available_at = $2 WHERE id = $1', [
-        row.id,
-        row.available_at,
-      ]);
-    }
-  }
-}
+// withOnlyTheseDue (imported above) scopes each worker pass to rows this file created — see
+// tests/helpers/outboxScope.js for the TCBV2-01 finding (foreign pending rows win the claim
+// slots, and a drained-then-failed foreign job becomes due again within this file's own run)
+// that its parking exists to handle.
 
 beforeAll(() => {
   app = createApp();
@@ -115,8 +79,9 @@ afterAll(async () => {
 });
 
 describe('FR-13 / TC-13 — deferred notification mechanism (wave-2 substrate)', () => {
-  test('ADR-011: push channel is gated off by default (notifications.push.enabled === false)', () => {
+  test('ADR-011: push channel is gated off by default and email rides the mock transport in this suite', () => {
     expect(config.notifications.push.enabled).toBe(false);
+    expect(config.notifications.transport).toBe('mock'); // dev/test transport (ADR-011)
   });
 
   test('provider failure never rolls back or delays the committed business transaction', async () => {
@@ -462,5 +427,316 @@ describe('FR-13 / TC-13 — booking notifications end to end (wave-3 acceptance)
     );
     await withOnlyTheseDue(notifyIds, () => pollOnce({ registry }));
     expect(await countSent()).toBe(afterFirst); // no double-send
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// FR-13 merged from the wave-3 re-verification files (tcb-w3-reverify /
+// tcbv2-independent-reverify): the status-TRANSITION notifications, the transaction evidence,
+// the ADR-003 payload audit and the ADR-011 template-vocabulary audit.
+// ----------------------------------------------------------------------------------------------
+
+/** FR-09-eligible host: guest attributes + complete host profile + host agreement. */
+async function makeEligibleHost() {
+  const { makeHostProfile } = require('../helpers/db');
+  const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc13-fixture' });
+  await makeHostProfile({ user_id: host.id });
+  return host;
+}
+
+async function promoteJobsFor(bookingId) {
+  const { rows } = await query(
+    `SELECT * FROM outbox_jobs WHERE type = 'booking.promote' AND payload->>'bookingId' = $1
+      ORDER BY id`,
+    [bookingId]
+  );
+  return rows;
+}
+
+describe('FR-13 — status transitions notify, transactionally, and the request path never touches the transport', () => {
+  afterEach(() => {
+    mockTransport.reset();
+  });
+
+  test("TCB-W3-03 (fixed): promotion writes 'started' notify.booking rows for guest AND host, in ONE transaction", async () => {
+    // FR-13 says "created, cancelled, OR CHANGES STATUS". §3.4 gives the lifecycle
+    // pending → in_progress → completed. This test used to PIN the gap (the automatic
+    // promotion had no event and enqueued nothing); TCB-W3-03 closed it, so it now asserts
+    // the requirement: promotion writes EVENTS.STARTED for the guest AND the host, in the
+    // SAME transaction as the status change (ADR-001/003 — no dual write). The promote
+    // handler runs DIRECTLY (tests/helpers/outboxDirect.js) so the worker's claim UPDATE
+    // cannot rewrite the started rows' xmin and destroy the same-transaction evidence.
+    const host = await makeEligibleHost();
+    const listing = await makeApprovedListing({
+      host_id: host.id,
+      seat_capacity: 3,
+      seats_remaining: 3,
+    });
+    const guest = await makeGuest();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    const promotes = await promoteJobsFor(bookingId);
+    expect(promotes).toHaveLength(1);
+    await query(`UPDATE listings SET scheduled_start = now() - interval '1 minute' WHERE id = $1`, [
+      listing.id,
+    ]);
+    await runJobs(promotes);
+
+    const { rows: booking } = await query('SELECT status, xmin FROM bookings WHERE id = $1', [
+      bookingId,
+    ]);
+    expect(booking[0].status).toBe('in_progress');
+
+    const notify = await notifyJobsFor(bookingId);
+    const events = [...new Set(notify.map((j) => j.payload.event))].sort();
+    expect(events).toEqual(['created', 'started']);
+
+    // One row per AFFECTED USER — the guest and the listing's host, exactly once each.
+    const startedRows = notify.filter((j) => j.payload.event === 'started');
+    const recipients = startedRows.map((j) => j.payload.recipientUserId).sort();
+    expect(recipients).toEqual([guest.id, host.id].sort());
+
+    // ADR-001/003: the status change and its notification rows share ONE transaction.
+    const { rows: xmins } = await query(
+      `SELECT DISTINCT xmin::text AS x FROM outbox_jobs WHERE id = ANY($1::bigint[])`,
+      [startedRows.map((r) => r.id)]
+    );
+    expect(xmins).toHaveLength(1);
+    expect(xmins[0].x).toBe(String(booking[0].xmin));
+  });
+
+  test('every FR-13 status change notifies: created, started and completed, each to both participants', async () => {
+    const host = await makeEligibleHost();
+    const hostCookie = await cookieFor(host);
+    const listing = await makeApprovedListing({
+      host_id: host.id,
+      seat_capacity: 4,
+      seats_remaining: 4,
+    });
+    const guest = await makeGuest();
+    const guestCookie = await cookieFor(guest);
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', guestCookie)
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    // pending -> in_progress
+    await query(`UPDATE listings SET scheduled_start = now() - interval '1 minute' WHERE id = $1`, [
+      listing.id,
+    ]);
+    await runJobs(await promoteJobsFor(bookingId));
+
+    // in_progress -> completed (dual confirmation, FR-04)
+    const first = await request(app)
+      .post(`/api/bookings/${bookingId}/confirm-completion`)
+      .set('Cookie', guestCookie)
+      .send({});
+    expect(first.status).toBe(200);
+    const second = await request(app)
+      .post(`/api/bookings/${bookingId}/confirm-completion`)
+      .set('Cookie', hostCookie)
+      .send({});
+    expect(second.status).toBe(200);
+
+    const { rows } = await query('SELECT status FROM bookings WHERE id = $1', [bookingId]);
+    expect(rows[0].status).toBe('completed');
+
+    const notify = await notifyJobsFor(bookingId);
+    const events = [...new Set(notify.map((j) => j.payload.event))].sort();
+    expect(events).toEqual(['completed', 'created', 'started']);
+    for (const event of events) {
+      const recipients = notify
+        .filter((j) => j.payload.event === event)
+        .map((j) => j.payload.recipientUserId)
+        .sort();
+      expect(recipients).toEqual([guest.id, host.id].sort());
+    }
+  });
+
+  test('a booking row and its outbox rows commit in ONE transaction (ADR-001/003, positive xmin evidence)', async () => {
+    // The rollback test above proves no dual write on the FAILURE path; this is the direct
+    // evidence for the success path: every outbox row of the booking carries the booking
+    // row's own transaction id.
+    const host = await makeEligibleHost();
+    const listing = await makeApprovedListing({
+      host_id: host.id,
+      seat_capacity: 4,
+      seats_remaining: 4,
+    });
+    const guest = await makeGuest();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    const bookingId = res.body.booking.id;
+
+    const { rows: b } = await query('SELECT xmin::text AS x FROM bookings WHERE id = $1', [
+      bookingId,
+    ]);
+    const { rows: jobs } = await query(
+      `SELECT DISTINCT xmin::text AS x FROM outbox_jobs WHERE payload->>'bookingId' = $1`,
+      [bookingId]
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].x).toBe(b[0].x);
+  });
+
+  test('the request path never touches the transport, even with the adapter hard-DOWN and hard-HUNG', async () => {
+    // The <500 ms bound elsewhere in this file catches an inline adapter that FAILS fast; a
+    // HUNG adapter is the sneakier regression (an inline await would block the request for the
+    // full per-attempt timeout). Both are injected together, and the direct evidence is added:
+    // zero deliveries during the request.
+    const host = await makeEligibleHost();
+    const listing = await makeApprovedListing({
+      host_id: host.id,
+      seat_capacity: 4,
+      seats_remaining: 4,
+    });
+    const guest = await makeGuest();
+    const cookie = await cookieFor(guest);
+
+    mockTransport.injectFailures(20);
+    mockTransport.injectHangs(1);
+
+    const started = Date.now();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', cookie)
+      .send({ listingId: listing.id });
+    const elapsedMs = Date.now() - started;
+
+    expect(res.status).toBe(201);
+    // The adapter's per-attempt timeout is config.adapters.timeoutMs; if the request path
+    // had called the transport inline, this would take at least that long.
+    expect(elapsedMs).toBeLessThan(config.adapters.timeoutMs);
+    // Nothing was delivered during the request.
+    expect(mockTransport.deliveries()).toHaveLength(0);
+
+    const bookingId = res.body.booking.id;
+    const notify = await notifyJobsFor(bookingId);
+    expect(notify).toHaveLength(2);
+    expect(notify.map((j) => j.payload.recipientUserId).sort()).toEqual([guest.id, host.id].sort());
+    // ADR-003: IDs only.
+    for (const j of notify) {
+      for (const value of Object.values(j.payload)) {
+        expect(String(value)).not.toMatch(/@/);
+      }
+    }
+  });
+
+  test('ADR-003: EVERY persisted outbox payload of EVERY type carries IDs only (key-name audit)', async () => {
+    // Beyond the email-shape scan above: fullName/emailAddress-style KEYS are the ADR-003
+    // smell even when their values do not look like an address. Guarantee at least one row of
+    // each wave-3 type exists regardless of suite order, so the audit can never pass
+    // vacuously on an empty queue.
+    const listing = await makeApprovedListing({ seat_capacity: 2, seats_remaining: 2 });
+    const seedRes = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(await makeGuest()))
+      .send({ listingId: listing.id });
+    expect(seedRes.status).toBe(201);
+
+    const { rows } = await query('SELECT type, payload FROM outbox_jobs');
+    expect(rows.length).toBeGreaterThan(0);
+    expect([...new Set(rows.map((r) => r.type))].sort()).toEqual(
+      expect.arrayContaining(['booking.promote', 'notify.booking'])
+    );
+    const emailShape = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+    const piiKey = /(name|email|phone|address|password)/i;
+    const sha256Hex = /^[0-9a-f]{64}$/i;
+    const offenders = [];
+    for (const row of rows) {
+      const json = JSON.stringify(row.payload);
+      if (emailShape.test(json)) offenders.push(`${row.type}: email shape in ${json}`);
+      for (const [key, value] of Object.entries(row.payload || {})) {
+        // *Id keys and opaque SHA-256 digests are not personal data.
+        if (typeof value === 'string' && sha256Hex.test(value)) continue;
+        if (piiKey.test(key) && !/id$/i.test(key)) offenders.push(`${row.type}: key "${key}"`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('ADR-011: EVERY template id emitted by a handler has a real SendGrid subject (TCB-W3-04)', async () => {
+    // Was the TCB-W3-04 defect: the handlers emit dotted ids ('email.verification',
+    // `booking.${event}`) while sendgrid.js registered only hyphenated ones
+    // ('email-verification', 'booking-created', …). The vocabularies were disjoint for the
+    // FR-13/FR-14 booking family, so a guest's confirmation shipped titled "Homeplate
+    // notification (booking.created)". Re-derived from the PERSISTED attempt rows: every
+    // template id that actually reaches the transport must render a registered subject.
+    const listing = await makeApprovedListing({ seat_capacity: 2, seats_remaining: 2 });
+    const guest = await makeGuest();
+    const res = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', await cookieFor(guest))
+      .send({ listingId: listing.id });
+    expect(res.status).toBe(201);
+    await runJobs(await notifyJobsFor(res.body.booking.id));
+
+    const { rows: attempts } = await query(
+      `SELECT DISTINCT template FROM notification_attempts WHERE params->>'bookingId' = $1`,
+      [res.body.booking.id]
+    );
+    expect(attempts.length).toBeGreaterThan(0);
+    expect(attempts.map((a) => a.template)).toContain('booking.created');
+
+    for (const { template } of attempts) {
+      expect(sendgrid.hasSubject(template)).toBe(true);
+      expect(sendgrid.renderEmail(template, { bookingId: 'b-1' }).subject).not.toMatch(
+        /^Homeplate notification \(/
+      );
+    }
+
+    // …and the whole emitted vocabulary, not just the ids this one booking happened to
+    // produce: every id the v1.0 flows can put on the wire resolves to a real subject.
+    const emitted = [
+      ...Object.values(sendgrid.TEMPLATE_IDS),
+      ...sendgrid.BOOKING_EVENTS.map(sendgrid.templateForBookingEvent),
+    ];
+    expect(emitted).toEqual(expect.arrayContaining(['email.verification', 'booking.completed']));
+    expect(emitted.filter((id) => !sendgrid.hasSubject(id))).toEqual([]);
+
+    // The registry derives the booking family from its own event list; it must stay identical
+    // to the lifecycle vocabulary the handler builds `booking.${event}` from, or a NEW event
+    // would reintroduce TCB-W3-04 for exactly one flow.
+    expect([...sendgrid.BOOKING_EVENTS].sort()).toEqual([...lifecycle.EVENT_VALUES].sort());
+  });
+
+  test('ADR-001/003: no file under bookings/listings/hosts imports an adapter; search imports ONLY the ADR-005 maps read adapter', () => {
+    const SRC = path.join(__dirname, '..', '..', 'src');
+    const srcFiles = (dir = SRC, acc = []) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) srcFiles(full, acc);
+        else if (entry.name.endsWith('.js')) acc.push(full);
+      }
+      return acc;
+    };
+    // Broader than the module-scope scan above: EVERY file in these modules, at ANY scope
+    // (a lazy require inside a request handler is still a request-path adapter call).
+    const offenders = [];
+    const searchImports = [];
+    for (const file of srcFiles()) {
+      const rel = path.relative(SRC, file).replace(/\\/g, '/');
+      if (!/^modules\/(bookings|listings|hosts|search)\//.test(rel)) continue;
+      const src = fs.readFileSync(file, 'utf8');
+      const matches = [...src.matchAll(/require\(['"]([^'"]*adapters\/[^'"]+)['"]\)/g)].map(
+        (m) => m[1]
+      );
+      if (matches.length === 0) continue;
+      if (rel.startsWith('modules/search/')) searchImports.push(...matches);
+      else offenders.push(`${rel}: ${matches.join(', ')}`);
+    }
+    expect(offenders).toEqual([]);
+    // ADR-005 carve-out: the Maps read adapter is the ONE request-path adapter allowed.
+    for (const imported of searchImports) expect(imported).toMatch(/adapters\/maps$/);
   });
 });

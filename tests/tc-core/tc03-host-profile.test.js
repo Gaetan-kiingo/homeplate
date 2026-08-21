@@ -12,7 +12,10 @@
 //   - unauthenticated → 401 (AB-08);
 //   - ADR-010: exampleDishes show coarse location + area label only — never a street address
 //     or precise coordinates;
-//   - GET /api/hosts/:id/reviews paginates the approved reviews newest-first.
+//   - GET /api/hosts/:id/reviews paginates the approved reviews newest-first;
+//   - NFR-12 erasure: media marked deleted_at never resurface on the host page (ADR-004);
+//     a soft-deleted host account is a 404 indistinguishable from an unknown id, and the
+//     example-dishes repo read is empty for it (findings TCC-02 / TCC-RV-02).
 'use strict';
 
 const request = require('supertest');
@@ -20,6 +23,7 @@ const request = require('supertest');
 const { createApp } = require('../../src/app');
 const { createLogger } = require('../../src/lib/logger');
 const listingSerializers = require('../../src/modules/listings/serializers');
+const listingsRepo = require('../../src/modules/listings/repo');
 const hostSerializers = require('../../src/modules/hosts/serializers');
 const dbh = require('../helpers/db');
 const { closeTestRedis } = require('../helpers/redis');
@@ -246,6 +250,83 @@ describe('TC-03 / FR-03 — host page content', () => {
     const nobody = await dbh.makeUser(); // no host profile
     expect((await hostPage('00000000-0000-4000-8000-000000000000')).status).toBe(404);
     expect((await hostPage(nobody.id)).status).toBe(404);
+  });
+});
+
+// NFR-12 erasure marks and deleted accounts on the FR-03 surface (findings TCC-02/TCC-RV-02).
+// The v1.0 deletion endpoint is wave-4 U4-PRIVACY; these pin the read-path semantics wave 3
+// implements so the erasure cascade is written against a proven contract. The search half
+// lives in tc01-search.test.js, the detail-retention half in tc02-listing-detail.test.js,
+// and the cascade contract itself in tccrv02-erasure-read-paths.test.js.
+describe('TC-03 / FR-03 — NFR-12: deleted media and deleted accounts', () => {
+  test('media marked deleted_at never resurface on the host page (NFR-12 / ADR-004)', async () => {
+    const probeHost = await dbh.makeUser({ can_publish_listing: true });
+    await dbh.makeHostProfile({ user_id: probeHost.id, bio: `Erasure probe ${RUN}` });
+    const live = await support.attachHostProfileMedia(probeHost.id, `tc03-live-${RUN}.jpg`);
+    const erased = await dbh.insertRow('media_objects', {
+      owner_user_id: probeHost.id,
+      entity_type: 'host_profile',
+      entity_id: probeHost.id,
+      storage_key: `host_profile/${probeHost.id}/tc03-erased-${RUN}.jpg`,
+      content_type: 'image/jpeg',
+      deleted_at: new Date(),
+    });
+
+    const dish = await support.makeApprovedListing({ host_id: probeHost.id });
+    const dishLive = await support.attachListingMedia(
+      dish,
+      probeHost.id,
+      `tc03-dish-live-${RUN}.jpg`
+    );
+    const dishErased = await dbh.insertRow('media_objects', {
+      owner_user_id: probeHost.id,
+      entity_type: 'listing',
+      entity_id: dish.id,
+      storage_key: `listing/${probeHost.id}/tc03-dish-erased-${RUN}.jpg`,
+      content_type: 'image/jpeg',
+      deleted_at: new Date(),
+    });
+
+    const res = await hostPage(probeHost.id);
+    expect(res.status).toBe(200);
+    const raw = JSON.stringify(res.body);
+    expect(raw).toContain(live.storage_key);
+    expect(raw).not.toContain(erased.storage_key);
+
+    const dishPayload = res.body.host.exampleDishes.find((d) => d.id === dish.id);
+    expect(dishPayload).toBeDefined();
+    const dishUrls = dishPayload.images.map((i) => i.url).join('\n');
+    expect(dishUrls).toContain(dishLive.storage_key);
+    expect(dishUrls).not.toContain(dishErased.storage_key);
+  });
+
+  test('a soft-deleted host account is a structured 404 indistinguishable from an unknown id (NFR-12)', async () => {
+    const doomedHost = await dbh.makeUser({ can_publish_listing: true });
+    await dbh.makeHostProfile({ user_id: doomedHost.id, bio: `Deleted host ${RUN}` });
+    expect((await hostPage(doomedHost.id)).status).toBe(200); // visible until deleted
+
+    await dbh.query(`UPDATE users SET deleted_at = now() WHERE id = $1`, [doomedHost.id]);
+    const res = await hostPage(doomedHost.id);
+    expect(res.status).toBe(404);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+    // …and the 404 envelope itself never leaks the erased name (TCC-RV-02).
+    expect(JSON.stringify(res.body)).not.toContain(doomedHost.full_name);
+  });
+
+  test('the example-dishes read is empty for a soft-deleted host and populated for a live one', async () => {
+    // The repo primitive itself, not just the 404 one call frame up: hosts/service.getHostPage
+    // 404s first today, so this is the assertion that actually exercises the erasure predicate
+    // added to listings/repo.findApprovedByHost (TCC-RV-02).
+    const cuisine = `tc03erasure${RUN}`;
+    const liveHost = await dbh.makeUser({ can_publish_listing: true });
+    await dbh.makeHostProfile({ user_id: liveHost.id });
+    const liveListing = await support.makeApprovedListing({ host_id: liveHost.id, cuisine });
+    const { host: goneHost } = await support.seedDeletedHostWithListing({ cuisine });
+
+    await expect(listingsRepo.findApprovedByHost(goneHost.id)).resolves.toEqual([]);
+    const liveRows = await listingsRepo.findApprovedByHost(liveHost.id);
+    expect(liveRows.map((r) => r.id)).toContain(liveListing.id);
   });
 });
 

@@ -1042,6 +1042,26 @@ describe('NFR-08 / MT-01 — audit records', () => {
     ]);
   });
 
+  // Deliberate cover for the missing-booking branch. It used to be executed only by ACCIDENT:
+  // a residue test deleted bookings in its cleanup, orphaning a scheduled promote job that an
+  // unscoped drain later delivered. The 2026-08-21 hygiene sweep stopped drains claiming foreign
+  // rows, so the branch is asserted here on purpose instead. It matters because the job outlives
+  // the row: a booking cancelled and hard-deleted before its start must make the worker no-op,
+  // not throw and burn the outbox retry budget.
+  test('promoting a booking whose row no longer exists is a logged noop, not an error', async () => {
+    const listing = await makeApprovedListing({
+      scheduled_start: new Date(Date.now() - 3600 * 1000),
+    });
+    const booking = await makeBooking({ listing_id: listing.id });
+    await query('DELETE FROM bookings WHERE id = $1', [booking.id]);
+
+    const log = fakeLog();
+    const outcome = await lifecycle.promoteDueBooking(booking.id, { log });
+
+    expect(outcome).toBe('noop');
+    expect(auditRecords(log)).toEqual([]); // a noop is not an audited business event
+  });
+
   test('lifecycle promotion writes a booking.promoted audit record', async () => {
     const listing = await makeApprovedListing({
       scheduled_start: new Date(Date.now() - 3600 * 1000),

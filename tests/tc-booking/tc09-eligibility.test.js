@@ -264,9 +264,18 @@ describe('FR-09 / TC-09 — eligibility policy is state-driven (restricted AND p
         if (entry.isDirectory()) walk(full);
         else if (entry.name.endsWith('.js')) {
           if (full.includes(path.join('modules', 'eligibility'))) continue;
-          const text = fs.readFileSync(full, 'utf8');
-          // A re-implementation would DEFINE the predicate, not merely consume the flag.
-          if (/function\s+(canReserveSeat|canPublishListing)\s*\(/.test(text)) {
+          // A re-implementation would DEFINE the predicate, not merely consume the flag —
+          // as a declaration OR as an assigned function/arrow (the wave-3 re-verification
+          // probe added the assignment forms). Comments are stripped first so prose about
+          // the predicate cannot false-positive.
+          const text = fs
+            .readFileSync(full, 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^\s*\/\/.*$/gm, '');
+          if (
+            /function\s+(canReserveSeat|canPublishListing)\s*\(/.test(text) ||
+            /can(ReserveSeat|PublishListing)\s*[:=]\s*(\(|function|async)/.test(text)
+          ) {
             offenders.push(path.relative(src, full));
           }
         }

@@ -12,6 +12,8 @@
 //   ADR-006     — exactly one eligibility-policy implementation; sessions + login rate
 //                 limiting behave per NFR-05/AB-05.
 //   ADR-007     — no provider/model/key hardcoded; test suite resolves the mock adapter.
+//   W3-ADR-02   — NODE_ENV=test REFUSES a live adapter (env pinning + config refusal),
+//                 re-executed in a child process so no jest-side pinning masks a regression.
 //   ADR-009     — caps come from config; DB backstop refuses a second listing on the same
 //                 America/Los_Angeles day across UTC-day boundaries.
 //   ADR-011     — push gated off by default; every send persists a NOTIFICATION_ATTEMPT
@@ -21,12 +23,16 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 const request = require('supertest');
 
 const dbHelper = require('../helpers/db');
+const { pollOnlyThese } = require('../helpers/outboxScope');
 const { localDateFor } = require('../../scripts/seed');
 
-const SRC = path.join(__dirname, '..', '..', 'src');
+const ROOT = path.join(__dirname, '..', '..');
+const SRC = path.join(ROOT, 'src');
 
 /** Recursively list .js files under a directory. */
 function listJsFiles(dir) {
@@ -65,33 +71,33 @@ describe('ADR-001/003 — request path never touches an adapter; outbox is trans
     expect(adapterModules).toEqual([]);
   });
 
-  test('static scan: no module-scope adapter require in routes/services/middleware/app', () => {
-    // Belt-and-braces over the runtime check: scan request-reachable directories for a
-    // top-level (brace-depth-0) require of src/adapters. Call-time requires inside
+  test('static scan: no module-scope adapter require ANYWHERE in src/ outside the worker layer', () => {
+    // Belt-and-braces over the runtime check: scan the WHOLE of src/ (not just the
+    // request-reachable directories — a helper in lib/ or db/ pulled in at module scope
+    // would load the adapter for every consumer) for a top-level (brace-depth-0) require
+    // of src/adapters. The only sanctioned module-scope importers are the worker layer:
+    // src/outbox/handlers/* and the notifications delivery transport (whose importers are
+    // themselves pinned to outbox handlers by the next test). Call-time requires inside
     // documented worker-only functions (media/service.deleteForUser) are exempt because
     // they never run on a request; the runtime check above proves they did not load.
-    const scanDirs = [
-      path.join(SRC, 'modules'),
-      path.join(SRC, 'routes'),
-      path.join(SRC, 'middleware'),
+    const allowed = [
+      path.join('outbox', 'handlers'),
+      path.join('modules', 'notifications', 'transport.js'),
     ];
     const offenders = [];
-    for (const dir of scanDirs) {
-      for (const file of listJsFiles(dir)) {
-        // transport.js is the worker-only delivery layer (imported ONLY from outbox
-        // handlers — verified in the next test); everything else must stay adapter-free.
-        if (file.endsWith(path.join('notifications', 'transport.js'))) continue;
-        const text = fs.readFileSync(file, 'utf8');
-        let depth = 0;
-        for (const rawLine of text.split('\n')) {
-          const line = rawLine.replace(/\/\/.*$/, '');
-          if (depth === 0 && /require\(['"][^'"]*adapters\//.test(line)) {
-            offenders.push(path.relative(SRC, file));
-          }
-          for (const ch of line) {
-            if (ch === '{' || ch === '(') depth += 1;
-            else if (ch === '}' || ch === ')') depth = Math.max(0, depth - 1);
-          }
+    for (const file of listJsFiles(SRC)) {
+      const rel = path.relative(SRC, file);
+      if (rel.startsWith('adapters')) continue;
+      const text = fs.readFileSync(file, 'utf8');
+      let depth = 0;
+      for (const rawLine of text.split('\n')) {
+        const line = rawLine.replace(/\/\/.*$/, '');
+        if (depth === 0 && /require\(['"][^'"]*adapters\//.test(line)) {
+          if (!allowed.some((a) => rel.includes(a))) offenders.push(`${rel}: ${line.trim()}`);
+        }
+        for (const ch of line) {
+          if (ch === '{' || ch === '(') depth += 1;
+          else if (ch === '}' || ch === ')') depth = Math.max(0, depth - 1);
         }
       }
     }
@@ -159,19 +165,20 @@ describe('ADR-001/003 — request path never touches an adapter; outbox is trans
     expect(rows).toEqual([]); // both writes rolled back — no dual write
   });
 
-  test('enqueue REJECTS a PII-bearing payload (email-shaped value / PII key)', async () => {
+  test('outbox.enqueue REFUSES the pool (a dual write cannot even be expressed)', async () => {
+    // ADR-001/003: the outbox row must ride the SAME transaction as the business row, so
+    // enqueue only accepts a checked-out transaction client — handing it the pool (which
+    // would autocommit a second, independent transaction) is a type error, not a foot-gun.
+    // (PII-shape rejection for enqueue payloads is exercised exhaustively in
+    // tests/unit/outbox.test.js, "enqueue — IDs-only payload guard (ADR-003)".)
     const outbox = require('../../src/outbox/outbox');
-    await dbHelper.withRollback(async (client) => {
-      await expect(
-        outbox.enqueue(client, {
-          type: 'adrconf.test',
-          payload: { contact: 'person@example.com' },
-        })
-      ).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_PII' });
-      await expect(
-        outbox.enqueue(client, { type: 'adrconf.test', payload: { email: 'x' } })
-      ).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_PII' });
-    });
+    const pool = require('../../src/db/pool');
+    await expect(
+      outbox.enqueue(pool, { type: 'adrconf.probe', payload: { id: crypto.randomUUID() } })
+    ).rejects.toThrow(/TRANSACTION client|checked-out pg client/);
+    await expect(
+      outbox.enqueue(pool.pool, { type: 'adrconf.probe', payload: { id: crypto.randomUUID() } })
+    ).rejects.toThrow(/TRANSACTION client|checked-out pg client/);
   });
 
   test('audit: every persisted outbox payload is free of email/phone-shaped values', async () => {
@@ -207,6 +214,36 @@ describe('ADR-002 — public content is born PENDING (schema substrate)', () => 
 // ADR-004 — media by key, per-object deletion (real MinIO)
 // ------------------------------------------------------------------------------------------
 describe('ADR-004 — media stored by key; erasure deletes per object', () => {
+  test('media_objects stores a storage KEY (never bytes) and the URL is derived locally', async () => {
+    const { rows } = await dbHelper.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'media_objects' ORDER BY column_name`
+    );
+    const names = rows.map((r) => r.column_name);
+    expect(names).toContain('storage_key');
+    // No bytes column: size_bytes is metadata, not payload — the object itself lives in
+    // object storage and PostgreSQL holds only its key (ADR-004).
+    expect(names.filter((n) => /blob|bytea|payload|^data$|file_content/.test(n))).toEqual([]);
+    expect(rows.find((r) => r.column_name === 'storage_key').data_type).toBe('text');
+  });
+
+  test('WIRING GAP: nothing in src/ calls deleteForUser — the NFR-12 erasure job is wave 4', () => {
+    const callers = [];
+    for (const file of listJsFiles(SRC)) {
+      const rel = path.relative(SRC, file);
+      if (rel === path.join('modules', 'media', 'service.js')) continue;
+      const code = fs
+        .readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((l) => !l.trim().startsWith('//'))
+        .join('\n');
+      if (/deleteForUser\s*\(/.test(code)) callers.push(rel);
+    }
+    // Documented wave-4 scope: the primitive exists, the account-deletion caller does not.
+    expect(callers).toEqual([]);
+    expect(fs.existsSync(path.join(SRC, 'modules', 'privacy'))).toBe(false);
+  });
+
   test('attach records the key; deleteForUser deletes each object then its row', async () => {
     const objectStorage = require('../../src/adapters/objectStorage');
     const mediaService = require('../../src/modules/media/service');
@@ -255,6 +292,7 @@ describe('ADR-005/010 — Redis maps cache holds ONLY coarse public precision', 
     expect(second.source).toBe('cache'); // NFR-01/ADR-005: zero provider work on repeat
     expect(second.lat).toBe(first.lat);
     expect(second.lng).toBe(first.lng);
+    expect(second.precise).toBeUndefined(); // never a precise pair without the explicit opt-in
 
     // The returned default projection is ALREADY coarse: coarsening it again is a no-op.
     const recoarsened = coarsen(first.lat, first.lng);
@@ -305,13 +343,24 @@ describe('ADR-005/010 — Redis maps cache holds ONLY coarse public precision', 
     const address = '999 Exact Precision Way, San Diego, CA';
     const exact = await maps.geocode(address, { precision: 'exact' });
     expect(exact.precise).toBeDefined();
-    // The precise coordinates must not appear in any cached value.
-    const keys = await redis.keys('hp:cache:maps:*');
-    for (const key of keys) {
+    // The default public projection is genuinely COARSER than the precise pair — if
+    // coarsening were the identity, "public precision only" would be vacuous (ADR-010).
+    expect(exact.lat).not.toBe(exact.precise.lat);
+    // Neither the precise coordinates nor the street text may appear ANYWHERE in Redis —
+    // the whole keyspace is scanned, not just the maps namespace, so a leak through some
+    // other cache path cannot hide.
+    const leaks = [];
+    for (const key of await redis.keys('*')) {
+      if (key.includes('Exact Precision Way')) leaks.push(`key ${key} carries the street`);
+      if ((await redis.type(key)) !== 'string') continue;
       const raw = await redis.get(key);
-      expect(raw.includes(String(exact.precise.lat))).toBe(false);
-      expect(raw.includes(String(exact.precise.lng))).toBe(false);
+      if (!raw) continue;
+      if (raw.includes(String(exact.precise.lat)) || raw.includes(String(exact.precise.lng))) {
+        leaks.push(`value at ${key} carries precise coordinates`);
+      }
+      if (raw.includes('Exact Precision Way')) leaks.push(`value at ${key} carries the street`);
     }
+    expect(leaks).toEqual([]);
   });
 });
 
@@ -320,12 +369,18 @@ describe('ADR-005/010 — Redis maps cache holds ONLY coarse public precision', 
 // ------------------------------------------------------------------------------------------
 describe('ADR-006 — single eligibility policy, session lifecycle, login rate limit', () => {
   test('canReserveSeat / canPublishListing are implemented ONLY in eligibility/policy.js', () => {
-    const definition =
-      /(function\s+can(ReserveSeat|PublishListing)\b)|(\bcan(ReserveSeat|PublishListing)\s*[:=]\s*(async\s*)?(function\b|\())/;
+    // Union of two independently-derived definition shapes (round-1 + round-2 verifiers):
+    // `function canX`, `canX: fn` / `canX = fn` / `canX = (`, and `const|let canX =` with
+    // ANY right-hand side (arrow functions without parens included).
+    const definitions = [
+      /(function\s+can(ReserveSeat|PublishListing)\b)|(\bcan(ReserveSeat|PublishListing)\s*[:=]\s*(async\s*)?(function\b|\())/,
+      /(function|const|let)\s+(canReserveSeat|canPublishListing)\s*[=(]/,
+    ];
     const offenders = [];
     for (const file of listJsFiles(SRC)) {
       if (file.endsWith(path.join('eligibility', 'policy.js'))) continue;
-      if (definition.test(fs.readFileSync(file, 'utf8'))) {
+      const text = fs.readFileSync(file, 'utf8');
+      if (definitions.some((d) => d.test(text))) {
         offenders.push(path.relative(SRC, file));
       }
     }
@@ -395,6 +450,7 @@ describe('ADR-007 — no hardcoded provider/model/key; suite runs the mock', () 
     const config = require('../../src/config');
     expect(config.moderation.mode).toBe('mock');
     const llm = require('../../src/adapters/llmModeration');
+    expect(llm.mode).toBe('mock'); // the resolved ADAPTER agrees with config, not just config
     const adapter = llm.getAdapter ? llm.getAdapter() : llm;
     const a = await adapter.classify('hello, a perfectly benign message');
     const b = await adapter.classify('hello, a perfectly benign message');
@@ -403,6 +459,102 @@ describe('ADR-007 — no hardcoded provider/model/key; suite runs the mock', () 
     expect(['offensive', 'spam', 'fraudulent', 'benign']).toContain(a.category);
     expect(a.confidence).toBeGreaterThanOrEqual(0);
     expect(a.confidence).toBeLessThanOrEqual(1);
+  });
+
+  test('base URL, key and model id are all environment-driven and documented in .env.example', () => {
+    const schema = fs.readFileSync(path.join(SRC, 'config', 'schema.js'), 'utf8');
+    for (const v of ['LLM_MODERATION_BASE_URL', 'LLM_MODERATION_API_KEY', 'MODERATION_MODEL']) {
+      expect(schema).toContain(v);
+      expect(fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8')).toContain(v);
+    }
+    expect(require('../../src/config').moderation.mode).toBe('mock');
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// W3-ADR-02 — NODE_ENV=test refuses a live adapter (ADR-005/007/011)
+// ------------------------------------------------------------------------------------------
+// The ORIGINAL W3-ADR-02 failure scenario, re-executed in a child process: a leftover shell
+// export must not be able to flip the automated suite onto a live provider. The in-process
+// schema-level refusals live in tests/unit/config.test.js ("U1-CONFIG test environment
+// refuses live adapters"); these probes additionally prove the tests/helpers/env.js PINNING
+// works in a fresh node process, where no jest-side setup can mask a regression.
+describe('W3-ADR-02 re-verification — NODE_ENV=test refuses a live adapter', () => {
+  const probe = (extraEnv) => {
+    const script =
+      "require('./tests/helpers/env');" +
+      "const c=require('./src/config');" +
+      'console.log(JSON.stringify({moderation:c.moderation.mode,maps:c.maps.mode,transport:c.notifications.transport}));';
+    try {
+      const out = execFileSync(process.execPath, ['-e', script], {
+        cwd: ROOT,
+        env: { ...process.env, ...extraEnv },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      return { ok: true, out: out.trim() };
+    } catch (err) {
+      return { ok: false, out: `${err.stdout || ''}${err.stderr || ''}` };
+    }
+  };
+
+  test('a leftover LLM_MODERATION_MODE=live shell cannot flip the suite onto the live provider', () => {
+    const res = probe({
+      LLM_MODERATION_MODE: 'live',
+      LLM_MODERATION_BASE_URL: 'https://example.invalid/v1',
+      LLM_MODERATION_API_KEY: 'not-a-real-key',
+      MODERATION_MODEL: 'some-model-id',
+      ALLOW_LIVE_ADAPTERS_IN_TESTS: '',
+    });
+    expect(res.ok).toBe(true);
+    expect(JSON.parse(res.out).moderation).toBe('mock');
+  });
+
+  test('a leftover MAPS_MODE=live shell cannot flip the suite onto the live provider', () => {
+    const res = probe({
+      MAPS_MODE: 'live',
+      MAPS_API_KEY: 'not-a-real-key',
+      ALLOW_LIVE_ADAPTERS_IN_TESTS: '',
+    });
+    expect(res.ok).toBe(true);
+    expect(JSON.parse(res.out).maps).toBe('mock');
+  });
+
+  test('NOTIFICATIONS_TRANSPORT=sendgrid is still refused outright under NODE_ENV=test', () => {
+    const res = probe({
+      NOTIFICATIONS_TRANSPORT: 'sendgrid',
+      SENDGRID_API_KEY: 'SG.not-real',
+      SENDGRID_FROM_EMAIL: 'no@example.invalid',
+    });
+    // env.js pins the transport to mock, so the value never reaches config; either outcome is
+    // conformant as long as no live transport is selected.
+    if (res.ok) expect(JSON.parse(res.out).transport).toBe('mock');
+    else expect(res.out).toMatch(/NOTIFICATIONS_TRANSPORT must be mock/);
+  });
+
+  test('the config layer itself refuses a live adapter under NODE_ENV=test (defence in depth)', () => {
+    // Beyond the refusal itself (unit/config.test.js), the error must NAME the documented
+    // IT-03 escape hatch so an operator knows the refusal is deliberate and how to opt in.
+    const script =
+      "process.env.NODE_ENV='test';" +
+      'delete process.env.ALLOW_LIVE_ADAPTERS_IN_TESTS;' +
+      "process.env.LLM_MODERATION_MODE='live';" +
+      "process.env.LLM_MODERATION_BASE_URL='https://example.invalid/v1';" +
+      "process.env.LLM_MODERATION_API_KEY='k';" +
+      "process.env.MODERATION_MODEL='m';" +
+      "const {validateEnv}=require('./src/config/schema');" +
+      "try{validateEnv(process.env);console.log('ACCEPTED');}catch(e){console.log('REFUSED: '+e.message);}";
+    const out = execFileSync(process.execPath, ['-e', script], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        DATABASE_URL: process.env.DATABASE_URL,
+        REDIS_URL: process.env.REDIS_URL,
+      },
+      encoding: 'utf8',
+    });
+    expect(out).toMatch(/REFUSED/);
+    expect(out).toMatch(/ALLOW_LIVE_ADAPTERS_IN_TESTS/);
   });
 });
 
@@ -417,6 +569,15 @@ describe('ADR-009 — MEHKO caps in config; LA-day uniqueness backstop', () => {
       maxMealsPerDay: 30,
       maxMealsPerWeek: 90,
       timezone: 'America/Los_Angeles',
+    });
+    // ...and the locale module (the single source config reads from) agrees — the ADR-009
+    // California table lives in ONE place, not in two places that could drift apart.
+    const locale = require('../../src/config/locale');
+    expect(locale.timezone).toBe('America/Los_Angeles');
+    expect(locale.mehko).toEqual({
+      maxListingsPerHostPerDay: 1,
+      maxMealsPerHostPerDay: 30,
+      maxMealsPerHostPerWeek: 90,
     });
   });
 
@@ -554,18 +715,19 @@ describe('ADR-011 — email channel, gated push, persisted attempts, mock in sui
       params: { userId: user.id },
       idempotencyKey: key,
     });
-    expect(result.status).toBe('failed');
+    // The refusal is TYPED (reason names the gate) and the persisted row records why.
+    expect(result).toMatchObject({ status: 'failed', reason: 'push_disabled' });
     const { rows } = await dbHelper.query(
-      'SELECT status FROM notification_attempts WHERE idempotency_key = $1',
+      'SELECT status, last_error FROM notification_attempts WHERE idempotency_key = $1',
       [key]
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('failed');
+    expect(rows[0].last_error).toMatch(/push channel refused/);
   });
 
   test('end-to-end FR-10: register → worker poll → persisted email attempt', async () => {
     const dispatch = require('../../src/outbox/dispatch');
-    const worker = require('../../src/outbox/worker');
     const email = `adrconf.e2e.${Date.now()}@adrlane.homeplate.invalid`;
     const res = await request(app)
       .post('/api/auth/register')
@@ -574,13 +736,22 @@ describe('ADR-011 — email channel, gated push, persisted attempts, mock in sui
     const { rows: users } = await dbHelper.query('SELECT id FROM users WHERE email = $1', [email]);
 
     const registry = dispatch.loadHandlers();
-    // Drain the queue (other tests may have left jobs behind).
-    let stats;
-    let guard = 0;
-    do {
-      stats = await worker.pollOnce({ registry });
-      guard += 1;
-    } while (stats.claimed > 0 && guard < 10);
+    // DETERMINISM (verification-report F-01): run the worker scoped to THIS registration's
+    // verification job instead of draining the shared table on a fixed pass budget. The old
+    // `guard < 10` loop covered at most 100 rows, oldest-first across the WHOLE outbox table,
+    // so whether this job was ever claimed depended on how many pending rows sibling suites
+    // happened to leave behind — and the attempt assertion below would then fail with a story
+    // about notifications while the cause was scheduling.
+    const { rows: ownJobs } = await dbHelper.query(
+      `SELECT id FROM outbox_jobs
+        WHERE type = 'email.verification' AND payload->>'userId' = $1 AND status = 'pending'`,
+      [users[0].id]
+    );
+    expect(ownJobs).toHaveLength(1); // registration enqueued exactly one verification job
+    await pollOnlyThese(
+      ownJobs.map((j) => j.id),
+      registry
+    );
 
     const { rows: attempts } = await dbHelper.query(
       `SELECT channel, status FROM notification_attempts WHERE recipient_user_id = $1`,

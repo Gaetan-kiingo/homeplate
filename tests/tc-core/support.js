@@ -44,6 +44,21 @@ async function attachHostProfileMedia(hostId, keySuffix) {
   });
 }
 
+/**
+ * A host with a complete profile plus one approved/active/future listing, then SOFT-DELETED
+ * (users.deleted_at set directly — no v1.0 endpoint runs the U4-PRIVACY erasure yet).
+ * Returns the PRE-deletion host row, so full_name/email stay readable for the NFR-12
+ * "the erased identity never comes back on the wire" leak assertions (findings TCC-01/02,
+ * TCC-RV-02).
+ */
+async function seedDeletedHostWithListing(listingOverrides = {}) {
+  const host = await dbh.makeUser({ can_publish_listing: true });
+  await dbh.makeHostProfile({ user_id: host.id });
+  const listing = await makeApprovedListing({ host_id: host.id, ...listingOverrides });
+  await dbh.query('UPDATE users SET deleted_at = now() WHERE id = $1', [host.id]);
+  return { host, listing };
+}
+
 /** A completed booking (both flags — the 0001 CHECK demands it) for review fixtures. */
 async function makeCompletedBooking(listingId, guestId) {
   return dbh.makeBooking({
@@ -70,6 +85,7 @@ const EMAIL_SHAPE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
 module.exports = {
   cookieFor,
   makeApprovedListing,
+  seedDeletedHostWithListing,
   attachListingMedia,
   attachHostProfileMedia,
   makeCompletedBooking,

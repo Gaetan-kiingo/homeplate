@@ -7,6 +7,8 @@
 //     reports awaiting the other party — a single confirmation NEVER completes (also proven
 //     in the database, not just the response);
 //   - after BOTH confirmations status='completed' and completed_at is set;
+//   - guest and host confirming SIMULTANEOUSLY complete the booking exactly once (the
+//     transition is observed by exactly one of the two concurrent responses);
 //   - repeating a confirmation is an idempotent 200 no-op (before and after completion);
 //   - a user who is neither the guest nor the listing's host gets 403;
 //   - confirming a 'pending' or 'cancelled' booking returns 409.
@@ -107,6 +109,26 @@ describe('TC-04 / FR-04 — dual confirmation completes; single confirmation nev
     expect(second.body.booking.status).toBe('completed');
   });
 
+  test('guest and host confirming SIMULTANEOUSLY complete the booking exactly once', async () => {
+    const booking = await makeInProgressBooking();
+
+    const [a, b] = await Promise.all([
+      confirm(booking.id, guestCookie),
+      confirm(booking.id, hostCookie),
+    ]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+
+    const row = await bookingRow(booking.id);
+    expect(row.status).toBe('completed');
+    expect(row.guest_confirmed_completion).toBe(true);
+    expect(row.host_confirmed_completion).toBe(true);
+    expect(row.completed_at).not.toBeNull();
+
+    // Exactly one of the two responses observed the transition (the other is the first flag).
+    const completedResponses = [a, b].filter((r) => r.body.booking.status === 'completed');
+    expect(completedResponses).toHaveLength(1);
+  });
+
   test('repeating a confirmation is an idempotent 200 no-op (same party, still awaiting)', async () => {
     const booking = await makeInProgressBooking();
 
@@ -142,6 +164,31 @@ describe('TC-04 / FR-04 — refusals', () => {
     expect(res.status).toBe(403);
 
     const row = await bookingRow(booking.id);
+    expect(row.guest_confirmed_completion).toBe(false);
+    expect(row.host_confirmed_completion).toBe(false);
+  });
+
+  test('a guest holding a DIFFERENT booking on the same listing is not a participant of this one (403)', async () => {
+    // Participation is per-BOOKING, not per-listing: sharing a listing must not grant a
+    // guest the other party's completion switch.
+    const guestA = await dbh.makeUser();
+    const guestB = await dbh.makeUser();
+    const bookingA = await dbh.makeBooking({
+      listing_id: listing.id,
+      guest_id: guestA.id,
+      status: 'in_progress',
+    });
+    await dbh.makeBooking({
+      listing_id: listing.id,
+      guest_id: guestB.id,
+      status: 'in_progress',
+    });
+
+    const res = await confirm(bookingA.id, await support.cookieFor(guestB));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('NOT_PARTICIPANT');
+
+    const row = await bookingRow(bookingA.id);
     expect(row.guest_confirmed_completion).toBe(false);
     expect(row.host_confirmed_completion).toBe(false);
   });

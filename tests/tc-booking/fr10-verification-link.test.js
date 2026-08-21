@@ -29,6 +29,7 @@ const dispatch = require('../../src/outbox/dispatch');
 const mockTransport = require('../../src/adapters/mockTransport');
 const sendgrid = require('../../src/adapters/sendgrid');
 const { logger } = require('../../src/lib/logger');
+const { ctxFor, drainCapturingDelivery } = require('../helpers/outboxDirect');
 
 let app;
 let emailSeq = 0;
@@ -64,40 +65,10 @@ async function registerAndQueue(overrides = {}) {
   return { email, user: users[0], job: jobs[0] };
 }
 
-function ctxFor(job) {
-  return {
-    jobId: job.id,
-    type: job.type,
-    attempt: 1,
-    correlationId: job.correlation_id,
-    idempotencyKey: job.dedupe_key,
-    log: logger.child({ correlationId: job.correlation_id }),
-  };
-}
-
-/**
- * Run the real 'email.verification' handler while the ADR-011 mock adapter stands in for a
- * body-composing adapter: it declares requiresRenderContext (as src/adapters/sendgrid.js
- * does) so the transport resolves the render context, and records what the adapter received.
- * Nothing about the transport, handler or auth service is stubbed.
- */
-async function drainCapturingDelivery(job) {
-  const handler = dispatch.loadHandlers({ log: logger }).get('email.verification');
-  const realDeliver = mockTransport.adapter.deliver;
-  const received = [];
-  mockTransport.adapter.requiresRenderContext = true;
-  mockTransport.adapter.deliver = async (input) => {
-    received.push(input);
-    return realDeliver(input);
-  };
-  try {
-    const result = await handler.handle(job.payload, ctxFor(job));
-    return { result, received };
-  } finally {
-    mockTransport.adapter.deliver = realDeliver;
-    delete mockTransport.adapter.requiresRenderContext;
-  }
-}
+// ctxFor / drainCapturingDelivery (tests/helpers/outboxDirect.js) run the real
+// 'email.verification' handler with the ADR-011 mock adapter standing in for a body-composing
+// one, capturing what the adapter received. Nothing about the transport, handler or auth
+// service is stubbed.
 
 beforeAll(() => {
   app = createApp();

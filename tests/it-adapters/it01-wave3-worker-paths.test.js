@@ -48,6 +48,7 @@ const lifecycle = require('../../src/modules/bookings/lifecycle');
 const searchService = require('../../src/modules/search/service');
 const { NotFoundError, ServiceUnavailableError } = require('../../src/lib/errors');
 const dbh = require('../helpers/db');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
 const { redis, flushNamespace, closeTestRedis } = require('../helpers/redis');
 
 const TRANSPORT_ATTEMPTS = Number(process.env.ADAPTER_RETRY_MAX) + 1; // per transport.send
@@ -220,7 +221,9 @@ describe('IT-01 wave 3 · listing.geocode worker path (Maps adapter — ADR-005/
       .mockRejectedValue(
         new ServiceUnavailableError('injected Maps outage', { code: 'MAPS_UNAVAILABLE' })
       );
-    await pollOnce({ registry, log: quietLog });
+    // F-01 determinism: scope the pass so THIS job is claimable in a single poll regardless of
+    // what sibling suites left pending ahead of it in the shared table.
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog }));
 
     let row = await jobRow(job.id);
     expect(row.status).toBe('pending'); // deferred, never dropped
@@ -246,7 +249,9 @@ describe('IT-01 wave 3 · listing.geocode worker path (Maps adapter — ADR-005/
     const spy = jest
       .spyOn(maps, 'geocode')
       .mockRejectedValue(new NotFoundError('no results', { code: 'MAPS_NO_RESULTS' }));
-    await pollOnce({ registry, log: quietLog });
+    // F-01: scoped — a foreign listing.geocode row claimed in the same pass would also hit the
+    // spied adapter and break the exact call count below.
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog }));
     expect(spy).toHaveBeenCalledTimes(1);
     const row = await jobRow(job.id);
     expect(row.status).toBe('delivered'); // completed, not dead-lettered — retrying cannot help
@@ -260,7 +265,8 @@ describe('IT-01 wave 3 · listing.geocode worker path (Maps adapter — ADR-005/
       payload: { listingId: listing.id },
     });
     const spy = jest.spyOn(maps, 'geocode');
-    await drainDue();
+    // F-01: scoped — a foreign listing.geocode row drained here would call the spied adapter.
+    await withOnlyTheseDue([job.id], () => drainDue());
     expect(spy).not.toHaveBeenCalled();
     expect((await jobRow(job.id)).status).toBe('delivered');
   });
@@ -271,7 +277,9 @@ describe('IT-01 wave 3 · listing.geocode worker path (Maps adapter — ADR-005/
       type: 'listing.geocode',
       payload: { listingId: 'not-a-uuid' },
     });
-    await pollOnce({ registry, log: quietLog, maxAttempts: 1 });
+    // F-01: scoped — beyond claim determinism, the maxAttempts:1 override must never apply to
+    // (and dead-letter) a foreign row that happened to be claimed in the same pass.
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog, maxAttempts: 1 }));
     const row = await jobRow(job.id);
     expect(row.status).toBe('dead');
     expect(row.last_error).toMatch(/UUID/i);
@@ -370,9 +378,11 @@ describe('IT-01 wave 3 · notify.booking end-to-end (FR-13 — transport, ADR-01
       return j;
     });
     mockTransport.injectFailures(20);
-    await pollOnce({ registry, log: quietLog, maxAttempts: 2 }); // attempt 1 → retry
+    // F-01: scoped — our job must be claimed in each single pass, and the maxAttempts:2
+    // override must not dead-letter foreign rows claimed alongside it.
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog, maxAttempts: 2 })); // attempt 1 → retry
     await makeDue(job.id);
-    await pollOnce({ registry, log: quietLog, maxAttempts: 2 }); // attempt 2 → dead
+    await withOnlyTheseDue([job.id], () => pollOnce({ registry, log: quietLog, maxAttempts: 2 })); // attempt 2 → dead
 
     let row = await jobRow(job.id);
     expect(row.status).toBe('dead');
@@ -759,9 +769,11 @@ describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds while the
     );
     expect(scans).toHaveLength(1);
 
-    await drainDue({ maxAttempts: 2 }); // attempt 1: no handler → retry
+    // F-01: scoped — the maxAttempts:2 drain must exhaust only THIS listing's scan job, never
+    // dead-letter foreign pending rows the shared table happened to hold.
+    await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 1: no handler → retry
     await makeDue(scans[0].id);
-    await drainDue({ maxAttempts: 2 }); // attempt 2: dead-letter
+    await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 2: dead-letter
 
     const dead = await jobRow(scans[0].id);
     expect(dead.status).toBe('dead');

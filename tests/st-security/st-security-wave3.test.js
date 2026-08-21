@@ -23,38 +23,16 @@ const listingSerializers = require('../../src/modules/listings/serializers');
 const listingAccess = require('../../src/modules/listings/access');
 const hostSerializers = require('../../src/modules/hosts/serializers');
 const db = require('../helpers/db');
+const { grepSrc } = require('../helpers/srcGrep');
+const { quietLogger, serverBinder } = require('../helpers/httpHarness');
 const { closeRedis } = require('../../src/db/redis');
-
-function quietLogger() {
-  const noop = () => {};
-  const l = { info: noop, warn: noop, error: noop, debug: noop, child: () => l, audit: noop };
-  return l;
-}
 
 const app = createApp({ config, logger: quietLogger() });
 
-// ---------------------------------------------------------------------------------------------
-// DETERMINISM HARNESS (verification round 2 — finding STS-R2-01)
-// Supertest's default `request(expressApp)` binds a throwaway server to the WILDCARD address
-// ('::') and then connects to 127.0.0.1. The loopback ephemeral-port space is machine-global, and a
-// SPECIFIC 127.0.0.1 bind shadows a wildcard one for 127.0.0.1 clients, so whenever any other
-// process on the host already holds 127.0.0.1:<the port jest was handed> — a sibling verifier
-// lane, tests/rt-lt-resilience/lt01-race.test.js / lt01-run.js (both bind '127.0.0.1'), an
-// editor helper, a local model server — the request silently lands on THAT server. Observed in
-// this lane on unchanged code: `read ECONNRESET`, a 200 whose body has no `user`, and a
-// registration that created no row. Binding the specific loopback address ourselves is
-// unshadowable (a second 127.0.0.1 bind gets EADDRINUSE, so the port is never handed out twice),
-// so every request in this file goes over a socket that can only reach OUR app.
-const boundServers = [];
-function bind(target) {
-  const server = require('http').createServer(target).listen(0, '127.0.0.1');
-  boundServers.push(server);
-  return server;
-}
-afterAll(async () => {
-  for (const s of boundServers) await new Promise((resolve) => s.close(resolve));
-});
-const listener = bind(app);
+// Deterministic loopback binding — see tests/helpers/httpHarness.js (finding STS-R2-01).
+const binder = serverBinder();
+afterAll(() => binder.closeAll());
+const listener = binder.bind(app);
 const api = () => request(listener);
 
 // ---- fixtures -------------------------------------------------------------------------------
@@ -221,6 +199,34 @@ describe('ST-04 wave-3 injection: search boundary (FR-01)', () => {
     expect(flat).not.toContain('node_modules');
     expect(flat).not.toMatch(/at .*\.js:\d+/);
   });
+
+  test('SQLi/XSS in the search `location` string (Maps adapter input) never 500s and comes back inert', async () => {
+    // Merged from the wave-3 re-verification pass: `location` is the one search parameter
+    // that leaves the SQL layer entirely and reaches the Maps adapter (FR-01), so it needs
+    // its own probe — the cuisine/hostId cases above never exercise that path.
+    for (const p of [...SQLI, ...XSS]) {
+      const res = await api()
+        .get('/api/listings/search')
+        .set('Cookie', cookie)
+        .query({ location: p, radiusKm: 5, pageSize: 4 });
+      expect(res.status).not.toBe(500);
+      const flat = JSON.stringify(res.body);
+      expect(flat).not.toContain('<script');
+      expect(flat).not.toContain('<svg');
+      expect(flat).not.toMatch(/<img[^>]*onerror/i);
+    }
+    expect(await db.countRows('listings')).toBeGreaterThan(0);
+  });
+
+  test('SQLi in POST /api/bookings listingId is a 422/404 — never a query, never a 500', async () => {
+    // Merged from the wave-3 re-verification pass: the booking-create boundary (FR-04).
+    for (const p of SQLI) {
+      const res = await api().post('/api/bookings').set('Cookie', cookie).send({ listingId: p });
+      expect(res.status).not.toBe(500);
+      expect([403, 404, 422]).toContain(res.status);
+    }
+    expect(await db.countRows('bookings')).toBeGreaterThanOrEqual(0);
+  });
 });
 
 describe('ST-04 wave-3 injection: listing text boundary (FR-11/FR-02)', () => {
@@ -330,6 +336,35 @@ describe('ST-04 wave-3 injection: hosts + media boundaries (FR-03, ADR-004)', ()
     expect(res.status).toBe(422);
   });
 
+  test('SQLi in media contentType / kind is a 422, never a 500 or a stored row', async () => {
+    // Merged from the wave-3 re-verification pass.
+    // DETERMINISM (verification round 2): this assertion used to be
+    // `countRows('media_objects') === before`, a WHOLE-TABLE count. media_objects is shared
+    // state written by many sibling suites (unit/hosts-media, tc-core, coverage, adr-conformance)
+    // against the same database, so the count is not a property of this test at all and any
+    // interleaving or late-settling sibling write turned a passing security check red.
+    // Scope the claim to rows THIS test could have produced: an injected value must never reach
+    // media_objects at all — as this caller's row, or anywhere as a stored content type / kind.
+    for (const p of SQLI) {
+      const res = await api()
+        .post('/api/media/uploads')
+        .set('Cookie', cookie)
+        .send({ kind: p, contentType: p, sizeBytes: 10 });
+      expect(res.status).toBe(422);
+    }
+    const { rows: mine } = await db.query(
+      `SELECT count(*)::int c FROM media_objects WHERE owner_user_id = $1`,
+      [guest.id]
+    );
+    expect(mine[0].c).toBe(0); // the caller stored nothing at all
+    const { rows: poisoned } = await db.query(
+      `SELECT count(*)::int c FROM media_objects
+        WHERE content_type = ANY($1::text[]) OR storage_key = ANY($1::text[])`,
+      [SQLI]
+    );
+    expect(poisoned[0].c).toBe(0); // no payload persisted anywhere, by any caller
+  });
+
   test('media attach refuses traversal and malformed storage keys (4xx, never 500)', async () => {
     const hostiles = [
       '../../etc/passwd',
@@ -409,6 +444,16 @@ describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
       .query({ hostId: host.id, pageSize: 19 });
     expect(visible.status).toBe(200);
     expect(visible.body.results.map((r) => r.id)).toContain(listingId);
+  });
+
+  test('AB-01 second half: the moderation pipeline that would flag a fake listing is absent', () => {
+    // Merged from the wave-3 re-verification pass. Listings are created 'pending' (asserted
+    // above) but NOTHING approves or rejects them in wave 3 — the approval transition is
+    // wave-4 work. Every wave-3 reference to moderation_status in src/ is a READ filter
+    // (search/detail/reviews); no statement SETs it, so a pending listing can never leave the
+    // queue in this tree.
+    expect(grepSrc('SET[^;]*moderation_status[[:space:]]*=')).toBe('');
+    expect(grepSrc('moderation_decisions')).toBe('');
   });
 });
 
