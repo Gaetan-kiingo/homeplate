@@ -5,7 +5,8 @@
 //
 // Requirement traceability (SRS Appendix B): NFR-05 (auth.loginMaxAttempts/loginWindowSeconds),
 // NFR-09 (adapters.timeoutMs/retryMax/backoffBaseMs, outbox.*), NFR-12 (privacy.erasureDays/
-// inactivityMonths), NFR-13 (crypto.fieldEncryptionKeyHex, privacy.coarsenRadiusMeters),
+// inactivityMonths, backup.retentionDays — the ST-05 backup-expiry policy scripts/backup.js
+// enforces), NFR-13 (crypto.fieldEncryptionKeyHex, privacy.coarsenRadiusMeters),
 // FR-08 (moderation.* incl. confidenceThreshold), FR-10 (auth.emailTokenTtlHours),
 // FR-11 (mehko.* — ADR-009 caps), FR-12 (booking.maxConcurrentPending), FR-13 (outbox.*,
 // notifications.* — ADR-011 push gated default-false).

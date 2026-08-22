@@ -708,11 +708,12 @@ describe('POST /api/media and DELETE /api/media/:id', () => {
     expect(foreignProfile.status).toBe(403);
   });
 
-  // FR-05 / AB-08 — review photos travel through this same surface (kind='review'). The
-  // reviews MODULE ships in wave 4, but the §3.4 reviews table and the authorship rule exist
-  // today, so the rejection path is exercised here rather than left dead until wave 4. The
-  // authorship lookup itself is a repo call (mediaRepo.findReviewAuthorId — ADR-001: routes
-  // validate, repos query), not raw SQL in the route.
+  // FR-05 / AB-08 — review photos travel through this same surface (kind='review'). Since
+  // U4-REVIEWS landed (wave 4B) the authorship lookup lives in its owning module —
+  // src/modules/reviews/repo.js findReviewAuthorId, re-exported unchanged by mediaRepo for
+  // the route's pinned call site (ADR-001: routes validate, repos query; the identity of
+  // the two exports is pinned in tests/unit/reviews.test.js). The rejection paths exercised
+  // below are unchanged by the move.
   /** A review row authored by `authorId` about `targetUserId`, on its own booking. */
   async function makeReviewAuthoredBy(authorId, targetUserId) {
     const booking = await dbh.makeBooking({

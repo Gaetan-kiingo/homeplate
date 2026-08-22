@@ -24,9 +24,14 @@
 //   markDelivered / markRetrying / markFailed / markNoChannel(alertId)
 //   listModeratorIds()                                    → moderator user IDs (FR-07 notify)
 //   listForModerators({page,pageSize,status}) / countForModerators({status})
+//   unifiedQueueSupported() / fileUnifiedQueueEntry(alertId) — the U4-SAFETY-COMPLETE
+//   unified-4A-queue write model (moderation_queue rows of content_type 'safety_alert')
 'use strict';
 
 const pool = require('../../db/pool');
+// Published U4-MODERATION contract only (build-plan §5 note: 4A owns src/modules/moderation).
+// CONTENT_TYPES is the read model's declared content-type domain; nothing else is consumed.
+const moderationRepo = require('../moderation/repo');
 
 /** Alert columns that ever leave this module (never a raw row spread). */
 const ALERT_COLS = `id, booking_id, raised_by, delivery_status, delivered_at, created_at, updated_at`;
@@ -188,6 +193,72 @@ async function listForModerators({ page = 1, pageSize = 20, status } = {}) {
   return rows;
 }
 
+// ---- unified 4A queue (U4-SAFETY-COMPLETE — moderation_queue rows of type 'safety_alert') ----
+
+/** The moderation_content_type label a safety alert's unified-queue entry carries
+ *  (db/migrations/0006_safety_moderation_queue.sql). */
+const UNIFIED_QUEUE_CONTENT_TYPE = 'safety_alert';
+
+/** The moderation_queue.reason recorded on an alert's unified-queue entry. */
+const UNIFIED_QUEUE_REASON = 'safety_alert';
+
+/**
+ * Whether the U4-MODERATION unified-queue READ model can serve 'safety_alert' entries yet.
+ *
+ * The moderation module publishes its supported content-type domain as repo.CONTENT_TYPES,
+ * and its queue page loader (loadContentForQueuePage), decision writer (insertDecision) and
+ * publication gate (setModerationStatus) all hard-assert membership of that list. Until 4A
+ * declares 'safety_alert' there, a filed row would make every UNFILTERED
+ * GET /api/moderation/queue page that contains it throw — a moderator-facing 500 on the
+ * FR-08 surface. So the worker files unified-queue entries ONLY once the published contract
+ * says the read model can serve them; meanwhile GET /api/moderation/alerts (this module) is
+ * the complete FR-07 queue, exactly as shipped by wave 3 (build-plan §5: "do not regress").
+ * Evaluated per call, never cached: the moment 4A widens CONTENT_TYPES, filing turns on.
+ *
+ * @returns {boolean}
+ */
+function unifiedQueueSupported() {
+  return moderationRepo.CONTENT_TYPES.includes(UNIFIED_QUEUE_CONTENT_TYPE);
+}
+
+/**
+ * File one alert's unified-queue entry: a moderation_queue row of content_type
+ * 'safety_alert' whose content_id is the safety_alerts.id (FR-07 "moderators work one
+ * queue"). Written with this module's own SQL because 4A's insertQueueItem asserts its
+ * FR-08 content-type list (build-plan §5 U4-SAFETY-COMPLETE note: "write moderation_queue
+ * rows through the handler's own SQL if the interface does not fit").
+ *
+ * Idempotent while an open item exists for the alert: the INSERT targets 0002's
+ * moderation_queue_open_content_key partial unique index exactly as 4A's writer does, so a
+ * redelivered 'safety.alert' job can never file a duplicate (RT-02). The entry is filed by
+ * the worker BEFORE any delivery leg runs, so it exists — and remains — however delivery
+ * ends, including after the job dead-letters (FR-07 "remain visible for review").
+ *
+ * @param {string} alertId  safety_alerts.id
+ * @param {import('pg').PoolClient} [client]
+ * @returns {Promise<{item: object, created: boolean}>} the open queue row either way
+ */
+async function fileUnifiedQueueEntry(alertId, client = null) {
+  const inserted = await runner(client).query(
+    `INSERT INTO moderation_queue (content_type, content_id, reason)
+     VALUES ('safety_alert', $1, $2)
+     ON CONFLICT (content_type, content_id) WHERE status <> 'resolved' DO NOTHING
+     RETURNING id, content_type, content_id, reason, status, created_at`,
+    [alertId, UNIFIED_QUEUE_REASON]
+  );
+  if (inserted.rows.length > 0) {
+    return { item: inserted.rows[0], created: true };
+  }
+  const existing = await runner(client).query(
+    `SELECT id, content_type, content_id, reason, status, created_at
+       FROM moderation_queue
+      WHERE content_type = 'safety_alert' AND content_id = $1 AND status <> 'resolved'
+      ORDER BY created_at DESC LIMIT 1`,
+    [alertId]
+  );
+  return { item: existing.rows[0] ?? null, created: false };
+}
+
 /** Total alerts matching the queue filter (pagination metadata for the moderator view). */
 async function countForModerators({ status } = {}) {
   const params = [];
@@ -204,6 +275,8 @@ async function countForModerators({ status } = {}) {
 }
 
 module.exports = {
+  UNIFIED_QUEUE_CONTENT_TYPE,
+  UNIFIED_QUEUE_REASON,
   insertAlert,
   findById,
   loadForDelivery,
@@ -214,4 +287,6 @@ module.exports = {
   listModeratorIds,
   listForModerators,
   countForModerators,
+  unifiedQueueSupported,
+  fileUnifiedQueueEntry,
 };

@@ -256,3 +256,104 @@ describe('TC-07 · GET /api/moderation/alerts (FR-07 moderator queue)', () => {
     expect(paged.body.pageSize).toBe(1);
   });
 });
+
+// =============================================================================================
+// POST /api/moderation/alerts — AB-04 moderator escalation (U4-SAFETY-COMPLETE)
+// =============================================================================================
+describe('TC-07 · POST /api/moderation/alerts (AB-04 escalation — moderator-gated, audited, deferred)', () => {
+  test('a moderator escalates flagged content into a REAL booking-bound alert: 201, pending row, outbox row, nothing inline', async () => {
+    const booking = await dbh.makeBooking({ listing_id: listing.id, guest_id: guest.id });
+    const attemptsBefore = await dbh.countRows('notification_attempts');
+    const adaptersBefore = loadedAdapters();
+
+    const res = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', moderatorCookie)
+      .send({ bookingId: booking.id });
+    expect(res.status).toBe(201);
+
+    // A real alert on the booking, raised BY the moderator (they need not be a participant).
+    const rows = await alertRows(booking.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      booking_id: booking.id,
+      raised_by: moderator.id,
+      delivery_status: 'pending',
+      delivered_at: null,
+    });
+    expect(res.body.alert).toEqual({
+      id: rows[0].id,
+      bookingId: booking.id,
+      raisedByUserId: moderator.id,
+      deliveryStatus: 'pending',
+      deliveredAt: null,
+      createdAt: expect.any(String),
+    });
+
+    // The NORMAL delivery path: same job type, IDs-only payload, per-alert dedupe key —
+    // committed with the alert row, delivered later by the worker (ADR-001/003).
+    const jobs = await safetyJobs(rows[0].id);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].status).toBe('pending');
+    expect(jobs[0].payload).toEqual({ alertId: rows[0].id, bookingId: booking.id });
+    expect(jobs[0].dedupe_key).toBe(`safety.alert:${rows[0].id}`);
+
+    // …and nothing was sent inline: no adapter loaded, no notification attempt written.
+    expect(loadedAdapters().filter((a) => !adaptersBefore.includes(a))).toEqual([]);
+    expect(await dbh.countRows('notification_attempts')).toBe(attemptsBefore);
+
+    // The escalated alert joins the FR-07 moderator queue immediately.
+    const queue = await support.get(app, '/api/moderation/alerts?pageSize=100', moderatorCookie);
+    expect(queue.status).toBe(200);
+    const entry = queue.body.alerts.find((a) => a.id === rows[0].id);
+    expect(entry).toMatchObject({ bookingId: booking.id, raisedByUserId: moderator.id });
+
+    // NFR-13: the escalation response is the same explicit allowlist as a raised alert.
+    const body = JSON.stringify(res.body);
+    expect(body).not.toMatch(support.EMAIL_SHAPE);
+    expect(body).not.toMatch(/address|street|phone|emergency|fullName/i);
+  });
+
+  test('the escalation surface is Moderator-only: 401 unauthenticated, 403 ordinary session — no row either way', async () => {
+    const booking = await dbh.makeBooking({ listing_id: listing.id, guest_id: guest.id });
+    const before = await dbh.countRows('safety_alerts');
+
+    const anon = await request(app).post('/api/moderation/alerts').send({ bookingId: booking.id });
+    expect(anon.status).toBe(401);
+
+    // Even a PARTICIPANT without the role is refused here (their surface is the booking route).
+    const ordinary = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', guestCookie)
+      .send({ bookingId: booking.id });
+    expect(ordinary.status).toBe(403);
+    expect(ordinary.body.error.code).toBe('NOT_MODERATOR');
+
+    expect(await dbh.countRows('safety_alerts')).toBe(before);
+  });
+
+  test('an unknown booking is 404 and a malformed body is 422 — never a 500, nothing written (AB-06)', async () => {
+    const before = await dbh.countRows('safety_alerts');
+
+    const missing = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', moderatorCookie)
+      .send({ bookingId: UNKNOWN_UUID });
+    expect(missing.status).toBe(404);
+    expect(missing.body.error.code).toBe('BOOKING_NOT_FOUND');
+
+    const noBody = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', moderatorCookie)
+      .send({});
+    expect(noBody.status).toBe(422);
+
+    const hostile = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', moderatorCookie)
+      .send({ bookingId: "1' OR '1'='1" });
+    expect(hostile.status).toBe(422);
+
+    expect(await dbh.countRows('safety_alerts')).toBe(before);
+  });
+});

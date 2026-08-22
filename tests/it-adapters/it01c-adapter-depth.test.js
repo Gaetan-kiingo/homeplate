@@ -14,10 +14,10 @@
 //   IT-01 · booking.promote IT3-F1 depth — a SECOND consecutive early delivery must still
 //           leave exactly one live promote row (the first fix could have been single-shot).
 //   IT-03 · NFR-10 measurement readiness — executable proof that no measurement can be
-//           claimed today: the ADR-008 versioned eval set now exists but its labels are
-//           unreviewed, there is no results file with a human sign-off, no deterministic
-//           pre-filter and no moderation.scan handler, and the ADR-007 MOCK classifier is
-//           demonstrably no substitute for the measured pipeline.
+//           claimed today: the ADR-008 eval set exists with a SIGNED-OFF label review, the
+//           U4-MODERATION pipeline stages (pre-filter + moderation.scan handler + scoring
+//           harness) exist — but no live run has been recorded (no results file), and the
+//           ADR-007 MOCK classifier is demonstrably no substitute for the measured pipeline.
 //   IT-04 · FR-07 delivery-leg substrate — the alert row, both email templates and the
 //           retry/dead-letter behaviour of the emergency-contact + moderator notifications
 //           are exercised through the ADR-011 MOCK transport (NOTIFICATION_ATTEMPT rows),
@@ -777,21 +777,24 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
     expect(viaMock.reasons.join(' ')).toMatch(/mock/i);
   });
 
-  test('the ADR-002 pipeline stages the measurement must run through do not exist yet', () => {
-    expect(fs.existsSync(path.join(REPO_ROOT, 'src', 'modules', 'moderation'))).toBe(false);
-    expect(registry.has('moderation.scan')).toBe(false);
-    // Stage 1 of ADR-002 (deterministic blocklist/regex/rate-limit pre-filter) has no module.
-    const srcFiles = [];
-    const walk = (dir) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(full);
-        else if (entry.name.endsWith('.js')) srcFiles.push(full);
-      }
-    };
-    walk(path.join(REPO_ROOT, 'src'));
-    const prefilter = srcFiles.filter((f) => /prefilter|pre-filter|blocklist/i.test(f));
-    expect(prefilter).toEqual([]);
+  test('the ADR-002 pipeline stages the measurement runs through now EXIST (U4-MODERATION)', () => {
+    // This probe asserted the pipeline's absence until U4-MODERATION landed; per build-plan
+    // §4A it is inverted, not deleted: the same three preconditions are now pinned POSITIVE.
+    expect(fs.existsSync(path.join(REPO_ROOT, 'src', 'modules', 'moderation'))).toBe(true);
+    expect(registry.has('moderation.scan')).toBe(true);
+    // Stage 1 of ADR-002 (deterministic blocklist/regex/rate-limit pre-filter) is a module
+    // with the FR-08 taxonomy, and scripts/it03-eval.js runs the REAL prefilter→classifier
+    // order (harness mechanics proven in tests/it-adapters/it03-moderation-eval.test.js).
+    const prefilter = require('../../src/modules/moderation/prefilter');
+    expect(typeof prefilter.check).toBe('function');
+    expect(prefilter.check('kill yourself')).toMatchObject({
+      verdict: 'blocked',
+      category: 'offensive',
+    });
+    expect(prefilter.check('a friendly homemade dinner')).toEqual({ verdict: 'pass' });
+    expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'it03-eval.js'))).toBe(true);
+    // What still keeps NFR-10 open is the missing LIVE RUN (wave 7) — asserted by the
+    // hasResults/no-results-file checks in the first test of this describe, which stand.
   });
 
   test('the ADR-007 MOCK classifier cannot stand in for the measurement: it is a fixture matcher, not a classifier', async () => {

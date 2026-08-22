@@ -27,6 +27,14 @@ const raiseAlertParams = z.object({
 /** The alert body carries nothing: IDs only (§3.4). Declared so the route is enumerable. */
 const raiseAlertBody = z.object({});
 
+/** POST /api/moderation/alerts — the AB-04 moderator escalation: the booking behind the
+ *  flagged content, and NOTHING else. Free text is deliberately absent (§3.4 SAFETY_ALERT
+ *  carries no content column, and any note would itself need FR-08 moderation); unknown
+ *  keys are stripped by the shared middleware. */
+const escalateAlertBody = z.object({
+  bookingId: common.uuid,
+});
+
 /** Input-less GET routes still declare a query validator (NFR-11 route enumeration). */
 const noInput = z.object({});
 
@@ -47,6 +55,7 @@ const alertQueueQuery = common.pagination.extend({
 module.exports = {
   raiseAlertParams,
   raiseAlertBody,
+  escalateAlertBody,
   noInput,
   alertQueueQuery,
   ALERT_DELIVERY_STATUSES,

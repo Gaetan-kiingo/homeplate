@@ -10,14 +10,19 @@
 //   NFR-11 (ST-04) — every statement is parameterized ($n placeholders via src/db/pool);
 //                    no caller value is ever interpolated into SQL text. This module is the
 //                    ONLY place in the media unit that talks to PostgreSQL: routes validate,
-//                    the service orchestrates, the repo queries (ADR-001 layering). That is
-//                    why findReviewAuthorId lives here transitionally — see its docblock.
+//                    the service orchestrates, the repo queries (ADR-001 layering).
+//   FR-05 / AB-08  — review authorship (findReviewAuthorId) MOVED to its owning module in
+//                    wave 4B, exactly as its former TRANSITIONAL HOME docblock instructed:
+//                    the SQL now lives in src/modules/reviews/repo.js and this module
+//                    imports that published interface, re-exporting it unchanged — see the
+//                    note at the export below.
 //
 // All functions accept an optional pg client so callers can compose them into a
 // withTransaction unit of work (ADR-001 — one transaction, no dual writes).
 'use strict';
 
 const { query } = require('../../db/pool');
+const reviewsRepo = require('../reviews/repo');
 
 /** media_objects.entity_type enum values (db/migrations/0001_core_schema.sql, ADR-004). */
 const MEDIA_KINDS = Object.freeze(['listing', 'review', 'host_profile']);
@@ -128,23 +133,6 @@ async function removeById(id, client = null) {
   return result.rowCount === 1;
 }
 
-/**
- * Authorship of one review, for the FR-05 / AB-08 attach check ("a photo can only be attached
- * to a review the caller wrote"). TRANSITIONAL HOME: the reviews module (U4-REVIEWS) ships in
- * wave 4; until its repo exists this lookup lives here so ALL SQL stays in a repo layer and
- * never in a route handler (ADR-001 layering; NFR-11 — parameterized, no interpolation). When
- * U4-REVIEWS lands, move this function to src/modules/reviews/repo.js and delete it here.
- *
- * @returns {Promise<{authorId: string|null}|null>} null when no such review exists (→ 404);
- *   otherwise the author id, which is null for a review whose author was anonymized by the
- *   NFR-12 erasure path — such a review is attachable by nobody (→ 403).
- */
-async function findReviewAuthorId(reviewId, client = null) {
-  const { rows } = await run(`SELECT author_id FROM reviews WHERE id = $1`, [reviewId], client);
-  if (rows.length === 0) return null;
-  return { authorId: rows[0].author_id };
-}
-
 module.exports = {
   MEDIA_KINDS,
   toMediaObject,
@@ -154,5 +142,11 @@ module.exports = {
   findOwnedById,
   markDeleted,
   removeById,
-  findReviewAuthorId,
+  // Authorship of one review, for the FR-05 / AB-08 attach check. U4-REVIEWS landed its
+  // owning repo, so the SQL moved to src/modules/reviews/repo.js (its former TRANSITIONAL
+  // HOME docblock here instructed exactly that); this export is that PUBLISHED interface
+  // re-exported UNCHANGED, so the media route's pinned repo-layer call site
+  // (mediaRepo.findReviewAuthorId — tests/adr-conformance/route-layer-db-access.test.js)
+  // keeps resolving through a repo, never through raw SQL in a route (ADR-001 layering).
+  findReviewAuthorId: reviewsRepo.findReviewAuthorId,
 };

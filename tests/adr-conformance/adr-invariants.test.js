@@ -113,10 +113,11 @@ describe('ADR-001/003 — request path never touches an adapter; outbox is trans
       }
     }
     // ADR-001/003: ONLY outbox handlers (worker-only code) may consume the delivery
-    // transport. Wave 3 added bookingNotifications.js and wave 4 safetyAlert.js — outbox
-    // handlers, i.e. exactly the sanctioned location class. Anything outside
-    // src/outbox/handlers/ is a violation.
+    // transport. Wave 3 added bookingNotifications.js, wave 4 safetyAlert.js and
+    // accountErasure.js (the NFR-12 inactivity notice) — outbox handlers, i.e. exactly the
+    // sanctioned location class. Anything outside src/outbox/handlers/ is a violation.
     expect(importers.sort()).toEqual([
+      path.join('outbox', 'handlers', 'accountErasure.js'),
       path.join('outbox', 'handlers', 'bookingNotifications.js'),
       path.join('outbox', 'handlers', 'emailVerification.js'),
       path.join('outbox', 'handlers', 'safetyAlert.js'),
@@ -227,7 +228,11 @@ describe('ADR-004 — media stored by key; erasure deletes per object', () => {
     expect(rows.find((r) => r.column_name === 'storage_key').data_type).toBe('text');
   });
 
-  test('WIRING GAP: nothing in src/ calls deleteForUser — the NFR-12 erasure job is wave 4', () => {
+  test('deleteForUser is wired to EXACTLY the worker-only erasure handler (NFR-12 landed)', () => {
+    // Converted from the wave-3 "WIRING GAP" probe when U4-PRIVACY landed: the NFR-12
+    // erasure job now calls the ADR-004 primitive — but ONLY from the outbox handler, which
+    // injects it into the privacy service (the request path stays adapter-free, ADR-001/003,
+    // and no second caller may reimplement or shortcut the delete-by-key contract).
     const callers = [];
     for (const file of listJsFiles(SRC)) {
       const rel = path.relative(SRC, file);
@@ -239,9 +244,15 @@ describe('ADR-004 — media stored by key; erasure deletes per object', () => {
         .join('\n');
       if (/deleteForUser\s*\(/.test(code)) callers.push(rel);
     }
-    // Documented wave-4 scope: the primitive exists, the account-deletion caller does not.
-    expect(callers).toEqual([]);
-    expect(fs.existsSync(path.join(SRC, 'modules', 'privacy'))).toBe(false);
+    expect(callers).toEqual([path.join('outbox', 'handlers', 'accountErasure.js')]);
+    // The privacy module is on disk (build-plan §4D) and its request-reachable files never
+    // touch the media service or an adapter — the erasure hook arrives by injection only.
+    expect(fs.existsSync(path.join(SRC, 'modules', 'privacy'))).toBe(true);
+    for (const f of ['service.js', 'routes.js', 'repo.js']) {
+      const src = fs.readFileSync(path.join(SRC, 'modules', 'privacy', f), 'utf8');
+      expect(src).not.toMatch(/require\(['"][^'"]*media\/service['"]\)/);
+      expect(src).not.toMatch(/require\(['"][^'"]*adapters\//);
+    }
   });
 
   test('attach records the key; deleteForUser deletes each object then its row', async () => {

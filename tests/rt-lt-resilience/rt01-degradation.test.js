@@ -751,9 +751,10 @@ describe('RT-01 drill 7 — moderation LLM outage against POST /api/listings (FR
     );
     expect(created[0].moderation_status).toBe('pending'); // born pending (ADR-002)
 
-    // The moderation.scan job is committed and deferred — a worker cycle during the outage
-    // must leave it queued (wave 3 has no moderation handler yet; either way it may NOT
-    // complete as an approval) and the listing must still be pending afterwards.
+    // The moderation.scan job is committed and deferred. The REAL U4-MODERATION handler now
+    // runs it (this drill was re-pointed when the handler landed): with the provider down,
+    // the first cycle reaches the classifier, gets the typed retryable error and RETRIES —
+    // it may NOT complete as an approval, and the listing must still be pending afterwards.
     const { rows: scanJobs } = await dbh.query(
       `SELECT * FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
       [listingId]
@@ -768,18 +769,45 @@ describe('RT-01 drill 7 — moderation LLM outage against POST /api/listings (FR
     );
     expect(afterPoll[0].moderation_status).toBe('pending'); // NEVER published unreviewed
     const { rows: scanAfter } = await dbh.query(
-      `SELECT status FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      `SELECT status, attempt_count, last_error FROM outbox_jobs
+        WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
       [listingId]
     );
     expect(scanAfter[0].status).toBe('pending'); // deferred, not dropped, not dead yet
+    expect(scanAfter[0].attempt_count).toBe(1); // the handler RAN and deferred (NFR-09)
+    expect(scanAfter[0].last_error).toMatch(/Moderation provider unavailable/i);
 
-    // Publicly invisible while pending: search never returns it (FR-08/ADR-002).
+    // Provider failure for ALL remaining attempts: the job dead-letters with the typed
+    // error and the listing is pending FOREVER — never published unreviewed (ADR-002).
+    for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
+      await dbh.query(
+        `UPDATE outbox_jobs SET available_at = now() - interval '1 hour'
+          WHERE id = $1 AND status = 'pending'`,
+        [scanJobs[0].id]
+      );
+      await pollOnce({ registry, log: quiet });
+    }
+    const { rows: deadScan } = await dbh.query(
+      `SELECT status, last_error FROM outbox_jobs WHERE id = $1`,
+      [scanJobs[0].id]
+    );
+    expect(deadScan[0].status).toBe('dead');
+    expect(deadScan[0].last_error).toMatch(/Moderation provider unavailable/i);
+    const { rows: finalListing } = await dbh.query(
+      `SELECT moderation_status FROM listings WHERE id = $1`,
+      [listingId]
+    );
+    expect(finalListing[0].moderation_status).toBe('pending');
+
+    // Publicly invisible while pending: search never returns it, detail is 404 (FR-08/ADR-002).
     const search = await request(app)
       .get('/api/listings/search')
       .query({ cuisine: 'rt01llmdrill' })
       .set('Cookie', guestCookie);
     expect(search.status).toBe(200);
     expect(search.body.results).toHaveLength(0);
+    const detail = await request(app).get(`/api/listings/${listingId}`).set('Cookie', guestCookie);
+    expect(detail.status).toBe(404);
   }, 30000);
 });
 

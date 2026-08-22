@@ -92,8 +92,15 @@ afterAll(async () => {
   delete process.env.ADAPTER_BACKOFF_BASE_MS;
   jest.restoreAllMocks();
   mockTransport.reset();
-  await dbh.closeDb();
-  await closeTestRedis();
+  try {
+    // Net for the unified-queue describe below: no 'safety_alert' moderation_queue row may
+    // outlive this suite while the 4A read model cannot serve the type (an unfiltered
+    // GET /api/moderation/queue page containing one would 500 in a sibling suite).
+    await dbh.query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
+  } finally {
+    await dbh.closeDb();
+    await closeTestRedis();
+  }
 });
 
 // ---- helpers ---------------------------------------------------------------------------------
@@ -349,5 +356,163 @@ describe('IT-04 · provider outage — retried, visible throughout, completed on
     const entry = queue.body.alerts.find((a) => a.id === alertId);
     expect(entry).toBeDefined();
     expect(entry.deliveryStatus).toBe('failed');
+  });
+});
+
+// =============================================================================================
+describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation delivery', () => {
+  // DEVIATION NOTE (read by tomorrow's verify run): the build-plan acceptance wants a drained
+  // alert visible as a moderation_queue row via GET /api/moderation/queue. The write model is
+  // complete (migration 0006 + safetyRepo.fileUnifiedQueueEntry, exercised below through the
+  // REAL worker), but 4A's read model (src/modules/moderation/repo.js) hard-asserts its
+  // CONTENT_TYPES list, which does not yet include 'safety_alert' — an unfiltered
+  // GET /api/moderation/queue page containing such a row throws today. U4-SAFETY-COMPLETE
+  // owns no moderation/* file, so the worker gates filing on that PUBLISHED contract
+  // (safetyRepo.unifiedQueueSupported); these tests simulate the post-repair contract with
+  // jest.replaceProperty, assert row existence in SQL (the route cannot serve the type yet),
+  // and clean their rows up so no sibling suite can trip on them.
+  const moderationRepo = require('../../src/modules/moderation/repo');
+
+  /** Simulate the post-repair 4A contract: CONTENT_TYPES declares 'safety_alert'. */
+  const widen = () =>
+    jest.replaceProperty(
+      moderationRepo,
+      'CONTENT_TYPES',
+      Object.freeze([...moderationRepo.CONTENT_TYPES, 'safety_alert'])
+    );
+
+  async function unifiedRowsFor(alertId) {
+    const { rows } = await dbh.query(
+      `SELECT id, status, reason FROM moderation_queue
+        WHERE content_type = 'safety_alert' AND content_id = $1
+        ORDER BY created_at ASC, id ASC`,
+      [alertId]
+    );
+    return rows;
+  }
+
+  afterEach(async () => {
+    await dbh.query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
+  });
+
+  test('with 4A support declared, the worker drain files ONE open entry per alert — idempotent across redelivery', async () => {
+    widen();
+    const { booking, cookie } = await makeWorld({ contactEmail: 'it04-unified@kin.invalid' });
+    const { alertId, job } = await raiseAlert(booking, cookie);
+
+    await withOnlyTheseDue([job.id], () => drainDue());
+
+    expect((await alertRow(alertId)).delivery_status).toBe('delivered');
+    const rows = await unifiedRowsFor(alertId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: 'open', reason: 'safety_alert' });
+
+    // Crash-redelivery of the same job cannot file a second open entry (RT-02).
+    await dbh.query(
+      `UPDATE outbox_jobs SET status = 'pending', available_at = now(), delivered_at = NULL
+        WHERE id = $1`,
+      [job.id]
+    );
+    await withOnlyTheseDue([job.id], () => drainDue());
+    expect(await unifiedRowsFor(alertId)).toHaveLength(1);
+  });
+
+  test('a dead-lettered alert KEEPS its unified-queue entry, and GET /api/moderation/alerts stays intact', async () => {
+    widen();
+    const { booking, cookie } = await makeWorld({ contactEmail: 'it04-unified-dead@kin.invalid' });
+    const { alertId, job } = await raiseAlert(booking, cookie);
+    const moderator = await dbh.makeUser({ roles: ['user', 'moderator'] });
+    const moderatorCookie = await cookieFor(moderator);
+
+    injectEmergencyOutage();
+    // F-01 determinism: scoped (see the dead-letter test above for the makeDue rationale).
+    await withOnlyTheseDue([job.id], async () => {
+      for (let i = 0; i < config.outbox.maxAttempts; i += 1) {
+        await makeDue(job.id);
+        await pollOnce({ registry, log: quietLog });
+      }
+    });
+
+    const dead = await jobRow(job.id);
+    expect(dead.status).toBe('dead');
+    expect(dead.attempt_count).toBe(config.outbox.maxAttempts); // budget exhausted at 8
+    expect((await alertRow(alertId)).delivery_status).toBe('failed');
+
+    // The unified-queue entry was filed BEFORE the failing legs and survives the dead letter
+    // (FR-07 "failed delivery … shall remain visible for review").
+    const rows = await unifiedRowsFor(alertId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('open');
+
+    // …and the FR-07 alerts queue route still lists the failed alert.
+    const queue = await request(app)
+      .get('/api/moderation/alerts?pageSize=100')
+      .set('Cookie', moderatorCookie);
+    expect(queue.status).toBe(200);
+    expect(queue.body.alerts.find((a) => a.id === alertId)).toMatchObject({
+      deliveryStatus: 'failed',
+    });
+  });
+
+  test('while 4A support is ABSENT (today), a drain files no queue row and delivery is untouched', async () => {
+    const { booking, cookie } = await makeWorld({ contactEmail: 'it04-ungated@kin.invalid' });
+    const { alertId, job } = await raiseAlert(booking, cookie);
+
+    await withOnlyTheseDue([job.id], () => drainDue());
+
+    expect((await jobRow(job.id)).status).toBe('delivered');
+    expect((await alertRow(alertId)).delivery_status).toBe('delivered');
+    expect(await unifiedRowsFor(alertId)).toEqual([]); // the gate held — nothing 4A cannot serve
+  });
+
+  test('AB-04: a moderator escalation follows the NORMAL delivery path end to end', async () => {
+    const contact = 'it04-escalation-contact@kin.invalid';
+    const moderator = await dbh.makeUser({
+      roles: ['user', 'moderator'],
+      emergency_contact_email_enc: encrypt(contact),
+    });
+    const moderatorCookie = await cookieFor(moderator);
+    const guest = await dbh.makeUser();
+    const booking = await dbh.makeBooking({ listing_id: listing.id, guest_id: guest.id });
+
+    // The moderator-gated escalation route (U4-SAFETY-COMPLETE public interface).
+    const res = await request(app)
+      .post('/api/moderation/alerts')
+      .set('Cookie', moderatorCookie)
+      .send({ bookingId: booking.id });
+    expect(res.status).toBe(201);
+    const alertId = res.body.alert.id;
+    const { rows: jobs } = await dbh.query(
+      `SELECT * FROM outbox_jobs WHERE type = 'safety.alert' AND payload->>'alertId' = $1`,
+      [alertId]
+    );
+    expect(jobs).toHaveLength(1); // committed with the alert — the same deferred contract
+
+    const real = mockTransport.adapter.deliver.bind(mockTransport.adapter);
+    const seen = [];
+    jest.spyOn(mockTransport.adapter, 'deliver').mockImplementation(async (input) => {
+      seen.push({ template: input.template, to: input.recipientEmail });
+      return real(input);
+    });
+
+    await withOnlyTheseDue([jobs[0].id], () => drainDue());
+
+    expect((await jobRow(jobs[0].id)).status).toBe('delivered');
+    expect((await alertRow(alertId)).delivery_status).toBe('delivered');
+    const attempts = await attemptsFor(alertId);
+    const moderatorRows = attempts.filter((a) => a.template === MODERATOR_TEMPLATE);
+    const emergencyRows = attempts.filter((a) => a.template === EMERGENCY_TEMPLATE);
+    expect(moderatorRows.length).toBeGreaterThan(0); // every moderator notified — escalator included
+    expect(moderatorRows.every((r) => r.status === 'sent')).toBe(true);
+    expect(emergencyRows).toHaveLength(1);
+    expect(emergencyRows[0]).toMatchObject({
+      recipient_user_id: moderator.id, // the escalating moderator is the raiser (§3.4 IDs only)
+      status: 'sent',
+      idempotency_key: `safety.alert:${alertId}:emergency`,
+    });
+    // The emergency leg resolved the RAISER's (the escalating moderator's) stored contact.
+    const emergency = seen.find((s) => s.template === EMERGENCY_TEMPLATE);
+    expect(emergency.to).toBe(contact);
+    expect(JSON.stringify(attempts)).not.toMatch(EMAIL_SHAPE);
   });
 });

@@ -27,9 +27,10 @@
 // Data access note (ADR-001 layering): this file executes NO SQL. Every read it needs comes
 // from a repo — media_objects through src/modules/media/repo.js (findOwnedById / markDeleted),
 // listings through the listings repo, review authorship through mediaRepo.findReviewAuthorId.
-// That last one is a transitional tenant of the media repo because U4-REVIEWS ships in wave 4;
-// when it lands, the function moves to src/modules/reviews/repo.js and the call here re-points
-// at it (tracked in build-plan §4, U4-REVIEWS). Nothing on this path changes behaviourally.
+// That last one is, since U4-REVIEWS landed (wave 4B), the reviews module's PUBLISHED
+// interface (src/modules/reviews/repo.js — the SQL's owning home), re-exported unchanged by
+// the media repo so this route keeps one stable repo-layer call site
+// (tests/adr-conformance/route-layer-db-access.test.js pins it). Behaviour is identical.
 'use strict';
 
 const express = require('express');
@@ -76,9 +77,9 @@ async function assertEntityAttachable(userId, kind, entityId) {
   }
 
   if (kind === 'review') {
-    // Authorship comes from the repo layer (mediaRepo hosts it until U4-REVIEWS lands — see
-    // header note). null row → the review does not exist; a null authorId (NFR-12 anonymized
-    // author) matches no caller, so such a review is attachable by nobody.
+    // Authorship comes from the repo layer (the reviews repo's published lookup, re-exported
+    // by mediaRepo — see header note). null row → the review does not exist; a null authorId
+    // (NFR-12 anonymized author) matches no caller, so such a review is attachable by nobody.
     const review = await mediaRepo.findReviewAuthorId(entityId);
     if (!review) throw new NotFoundError('Review not found');
     if (review.authorId !== userId) {

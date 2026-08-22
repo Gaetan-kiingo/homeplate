@@ -6,7 +6,8 @@
 //   NFR-03, AB-05  — HTTPS/TLS enforcement flag fails closed in production
 //   NFR-04, NFR-05 — login rate-limit knobs (5 attempts / 10 minutes)
 //   NFR-09         — external-adapter timeout/retry knobs, outbox retry/backoff (ADR-003)
-//   NFR-12         — erasure and inactivity retention windows
+//   NFR-12         — erasure and inactivity retention windows; BACKUP_RETENTION_DAYS is the
+//                    ST-05 backup-expiry policy scripts/backup.js enforces (U4-PRIVACY)
 //   NFR-13, ST-06  — field-level AES-256-GCM key (32 bytes hex) for §3.4 PII columns; the
 //                    placeholder key shipped in .env.example is REFUSED in production
 //   AB-08          — the default MinIO object-storage credentials are refused in production
@@ -127,6 +128,11 @@ const rawSchema = z.object({
   PRIVACY_ERASURE_DAYS: intWithDefault(30),
   PRIVACY_INACTIVITY_MONTHS: intWithDefault(24),
   PRIVACY_COARSEN_RADIUS_METERS: intWithDefault(300),
+
+  // NFR-12 (ST-05) — "database backups containing deleted data shall expire within 30 days".
+  // The validated retention window scripts/backup.js enforces against the dump directory;
+  // U4-PRIVACY made the policy executable (finding STS-W3-03 / F-03).
+  BACKUP_RETENTION_DAYS: intWithDefault(30),
 
   // external adapter resilience (NFR-09, ADR-005)
   ADAPTER_TIMEOUT_MS: intWithDefault(3000),
@@ -399,6 +405,10 @@ function validateEnv(rawEnv) {
       erasureDays: e.PRIVACY_ERASURE_DAYS,
       inactivityMonths: e.PRIVACY_INACTIVITY_MONTHS,
       coarsenRadiusMeters: e.PRIVACY_COARSEN_RADIUS_METERS,
+    },
+    backup: {
+      // NFR-12 backup-expiry policy (ST-05): scripts/backup.js prunes dumps older than this.
+      retentionDays: e.BACKUP_RETENTION_DAYS,
     },
     adapters: {
       timeoutMs: e.ADAPTER_TIMEOUT_MS,

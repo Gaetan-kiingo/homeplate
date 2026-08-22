@@ -693,61 +693,227 @@ describe('ST-04 injection defenses (NFR-11, AB-06)', () => {
       expect(res.status).not.toBe(500);
     });
   });
+
+  // Added by U4-REVIEWS (wave 4B): the FR-05 review boundary — SRS AB-06 names reviews an
+  // injection surface, so the ST-04 corpus fires at POST /api/bookings/:id/reviews too.
+  describe('review boundary (POST /api/bookings/:id/reviews — FR-05 / AB-06)', () => {
+    let reviewer;
+    let reviewerCookie;
+    let listing;
+
+    beforeAll(async () => {
+      reviewer = await db.makeUser();
+      reviewerCookie = await cookieFor(reviewer);
+      const host = await db.makeUser({ can_publish_listing: true });
+      listing = await db.makeListing({ host_id: host.id, moderation_status: 'approved' });
+    });
+
+    /** One completed booking per submission: FR-05 allows one review per author per booking. */
+    async function completedBooking() {
+      return db.makeBooking({
+        listing_id: listing.id,
+        guest_id: reviewer.id,
+        status: 'completed',
+        host_confirmed_completion: true,
+        guest_confirmed_completion: true,
+      });
+    }
+
+    test('SQLi payloads in the comment never 500, and the reviews table survives intact', async () => {
+      const before = await db.countRows('reviews');
+      for (const p of SQLI) {
+        const booking = await completedBooking();
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/reviews`)
+          .set('Cookie', reviewerCookie)
+          .send({ rating: 3, comment: p });
+        expect(res.status).not.toBe(500);
+        expect([201, 422]).toContain(res.status); // inert data or shape refusal — never a crash
+      }
+      // Parameterized SQL everywhere: the table is still queryable and did not collapse.
+      expect(await db.countRows('reviews')).toBeGreaterThanOrEqual(before);
+    });
+
+    test('XSS payloads in the comment are stored ESCAPED — no markup survives, born pending (FR-08)', async () => {
+      for (const p of XSS) {
+        const booking = await completedBooking();
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/reviews`)
+          .set('Cookie', reviewerCookie)
+          .send({ rating: 2, comment: `Meal note ${p}` });
+        expect(res.status).toBe(201);
+        // First-order: the API echo of the caller's own submission is already inert.
+        expect(res.body.review.comment).not.toContain('<');
+        // Stored form is inert too, and the hostile review is NOT publishable (pending).
+        const { rows } = await db.query(
+          `SELECT body, moderation_status FROM reviews WHERE id = $1`,
+          [res.body.review.id]
+        );
+        expect(rows[0].body).not.toContain('<script');
+        expect(rows[0].body).not.toMatch(/<img[^>]*onerror/i);
+        expect(rows[0].body).not.toContain('<svg');
+        expect(rows[0].moderation_status).toBe('pending'); // AB-01/AB-04: never live unreviewed
+      }
+    });
+
+    test('hostile ratings are 422 shape violations, never SQL (NFR-11)', async () => {
+      const booking = await completedBooking();
+      for (const rating of ["5' OR '1'='1", { $gt: 0 }, [5], '5; DROP TABLE reviews']) {
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/reviews`)
+          .set('Cookie', reviewerCookie)
+          .send({ rating, comment: 'hostile rating probe' });
+        expect(res.status).toBe(422);
+      }
+      expect(await db.countRows('reviews')).toBeGreaterThanOrEqual(0); // table intact
+    });
+  });
+
+  // Added by U4-MESSAGING (wave 4C): the FR-06 chat boundary — SRS AB-06 names messages an
+  // injection surface, so the ST-04 corpus fires at POST /api/bookings/:id/messages too.
+  describe('message boundary (POST /api/bookings/:id/messages — FR-06 / AB-06)', () => {
+    let chatGuest;
+    let chatGuestCookie;
+    let chatListing;
+
+    beforeAll(async () => {
+      chatGuest = await db.makeUser();
+      chatGuestCookie = await cookieFor(chatGuest);
+      const chatHost = await db.makeUser({ can_publish_listing: true });
+      chatListing = await db.makeListing({ host_id: chatHost.id, moderation_status: 'approved' });
+    });
+
+    /** One open booking per probe run (any non-cancelled status opens the thread). */
+    async function openBooking() {
+      return db.makeBooking({ listing_id: chatListing.id, guest_id: chatGuest.id });
+    }
+
+    test('SQLi payloads in the body never 500, and the messages table survives intact', async () => {
+      const booking = await openBooking();
+      const before = await db.countRows('messages');
+      for (const p of SQLI) {
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/messages`)
+          .set('Cookie', chatGuestCookie)
+          .send({ body: p });
+        expect(res.status).not.toBe(500);
+        expect([201, 422]).toContain(res.status); // inert data or shape refusal — never a crash
+      }
+      // Parameterized SQL everywhere: the table is still queryable and did not collapse.
+      expect(await db.countRows('messages')).toBeGreaterThanOrEqual(before);
+    });
+
+    test('XSS payloads are stored ESCAPED and echo back inert — delivered with the scan pending', async () => {
+      const booking = await openBooking();
+      for (const p of XSS) {
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/messages`)
+          .set('Cookie', chatGuestCookie)
+          .send({ body: `Chat note ${p}` });
+        expect(res.status).toBe(201);
+        // First-order: the 201 echo of the caller's own message is already inert.
+        expect(res.body.message.body).not.toContain('<');
+        // Stored form is inert too; the message is DELIVERED (pending = scan outstanding,
+        // ADR-002 — never withheld) and second-order reads through the thread are inert.
+        const { rows } = await db.query(
+          `SELECT body, moderation_status FROM messages WHERE id = $1`,
+          [res.body.message.id]
+        );
+        expect(rows[0].body).not.toContain('<script');
+        expect(rows[0].body).not.toMatch(/<img[^>]*onerror/i);
+        expect(rows[0].body).not.toContain('<svg');
+        expect(rows[0].moderation_status).toBe('pending');
+      }
+      const thread = await api()
+        .get(`/api/bookings/${booking.id}/messages?page=1&pageSize=100`)
+        .set('Cookie', chatGuestCookie);
+      expect(thread.status).toBe(200);
+      const flat = JSON.stringify(thread.body);
+      expect(flat).not.toContain('<script');
+      expect(flat).not.toMatch(/<img[^>]*onerror/i);
+      expect(flat).not.toContain('<svg');
+    });
+
+    test('hostile body shapes are 422 shape violations, never SQL (NFR-11)', async () => {
+      const booking = await openBooking();
+      for (const body of [42, { $gt: 0 }, ['x'], null, '', 'x'.repeat(2001)]) {
+        const res = await api()
+          .post(`/api/bookings/${booking.id}/messages`)
+          .set('Cookie', chatGuestCookie)
+          .send({ body });
+        expect(res.status).toBe(422);
+      }
+      expect(await db.countRows('messages')).toBeGreaterThanOrEqual(0); // table intact
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
-// ST-05 — Account deletion / erasure (NFR-12, ADR-004)  [wave-4 U4-PRIVACY endpoint/job]
+// ST-05 — Account deletion / erasure (NFR-12, ADR-004)  [U4-PRIVACY landed — wave 4D]
+// The full ST-05 acceptance — DELETE → 202 + scheduled job, clock-injected erasure emptying
+// every §3.4 column, media 404 from MinIO by key, full-database PII scan, review retained
+// anonymized, backup expiry — is the canonical lane file
+// tests/st-security/st05-st06-privacy.test.js (plus tests/unit/privacy.test.js for the
+// exact-instant equalities). What stays HERE are the converted invariants the old absence
+// probes protected: the mounted surface, the registered job types, the documented policy
+// knobs, and the erasure columns having EXACTLY ONE writer.
 // ---------------------------------------------------------------------------------------------
-describe('ST-05 erasure (NFR-12) — endpoint/job are wave-4; primitives exist', () => {
-  // (The media-erasure primitive itself — put -> deleteForUser -> per-key delete -> object
-  // 404s, rows gone — is exercised against real MinIO in tests/adr-conformance/
-  // adr-invariants.test.js, ADR-004 suite.)
-
-  test('no account-deletion endpoint is mounted on any verb of /api/users/me', async () => {
-    // Merged from the wave-3 re-verification pass: probed authenticated (so a session wall
-    // cannot mask a mounted handler) and on POST as well as DELETE.
+describe('ST-05 erasure (NFR-12) — U4-PRIVACY surface and invariants', () => {
+  test('DELETE /api/users/me is mounted and session-gated; POST stays a proper 405', async () => {
+    // Unauthenticated: the deletion endpoint exists but never acts without a session.
+    expect((await api().delete('/api/users/me')).status).toBe(401);
+    // Authenticated: 202 Accepted — deletion marked now, erasure scheduled (NFR-12).
     const user = await db.makeUser({});
     const cookie = await cookieFor(user);
     const del = await api().delete('/api/users/me').set('Cookie', cookie);
-    expect([404, 405]).toContain(del.status);
+    expect(del.status).toBe(202);
+    expect(del.body.request.kind).toBe('erasure');
+    // POST /api/users/me is still no route — a mounted deletion adds no write-shaped verb.
     const post = await api().post('/api/users/me').set('Cookie', cookie).send({});
-    expect([404, 405]).toContain(post.status);
+    expect(post.status).toBe(405);
   });
 
-  test('no erasure/retention job type is registered with the outbox dispatcher', () => {
+  test('the erasure/export job types are registered — and no OTHER lifecycle type appeared', () => {
     const dispatch = require('../../src/outbox/dispatch');
-    const types = Object.keys(dispatch.buildRegistry ? dispatch.buildRegistry() : {});
-    const registry = types.length
-      ? types
-      : fs.readdirSync(path.join(ROOT, 'src', 'outbox', 'handlers'));
-    expect(registry.join(',')).not.toMatch(/eras|retent|delete|anonym/i);
+    const registry = dispatch.loadHandlers({});
+    expect(registry.has('account.erasure')).toBe(true);
+    expect(registry.has('data.export')).toBe(true);
+    // The converted invariant: exactly these two lifecycle types — a third eras/retention
+    // handler appearing unreviewed would widen the deletion surface silently.
+    const lifecycle = registry.types().filter((t) => /eras|retent|delete|anonym|export/i.test(t));
+    expect(lifecycle.sort()).toEqual(['account.erasure', 'data.export']);
   });
 
-  test('backup-expiry is a documented 30-day config policy; no retention/backup script exists yet', () => {
-    // ST-05 verifies backup expiry as configuration review (build-plan open item 8). The
-    // policy's documented home is the config template (.env.example, NFR-12) — the 2026-08-14
-    // plan revision no longer spells out the literal phrase, the configuration does.
+  test('backup expiry is validated config WITH an executable object (scripts/backup.js)', () => {
     expect(baseConfig.privacy.erasureDays).toBe(30);
     expect(baseConfig.privacy.inactivityMonths).toBe(24);
+    expect(baseConfig.backup.retentionDays).toBe(30); // NFR-12: backups expire within 30 days
     const envExample = fs.readFileSync(path.join(ROOT, '.env.example'), 'utf8');
     expect(envExample).toMatch(/^PRIVACY_ERASURE_DAYS=30$/m);
-    // A live retention sweep / backup script is a wave-4 U4-PRIVACY deliverable — not in this
-    // run — and no backup-retention knob is documented before the code that honors it exists.
-    expect(fs.existsSync(path.join(ROOT, 'scripts', 'retention.js'))).toBe(false);
-    expect(fs.existsSync(path.join(ROOT, 'scripts', 'backup.js'))).toBe(false);
-    expect(envExample).not.toMatch(/BACKUP_RETENTION|BACKUP_EXPIR/i);
+    expect(envExample).toMatch(/^BACKUP_RETENTION_DAYS=30$/m);
+    // The executable object (finding STS-W3-03 closed): the prune script exists and its
+    // behaviour — old dump pruned, fresh kept, clock-injected — is executed in
+    // tests/st-security/st05-st06-privacy.test.js and tests/unit/privacy.test.js.
+    expect(fs.existsSync(path.join(ROOT, 'scripts', 'backup.js'))).toBe(true);
+    expect(typeof require('../../scripts/backup').pruneBackups).toBe('function');
   });
 
-  test('the NFR-12 erasure columns exist on users but are never written by wave-3 code', async () => {
+  test('the NFR-12 erasure columns have EXACTLY ONE writer: the privacy repo', async () => {
     const { rows } = await db.query(
       `SELECT count(*)::int c FROM information_schema.columns
         WHERE table_name = 'users' AND column_name IN ('deleted_at','anonymized_at')`
     );
     expect(rows[0].c).toBe(2);
-    // The only wave-3 reference is a READ in the eligibility repo's guard clause; nothing
-    // SETS deleted_at/anonymized_at, so no erasure can happen today.
-    expect(grepSrc('UPDATE users[^;]*SET[^;]*(anonymized_at|deleted_at)')).toBe('');
-    expect(grepSrc('anonymized_at[[:space:]]*=[[:space:]]*(now|\\$)')).toBe('');
+    // Converted from the wave-3 "nothing writes them" probe: now something MUST write them —
+    // but only src/modules/privacy/repo.js may (one enforcement point for erasure, like the
+    // ADR-009 caps). Any second writer is a review finding, not a convenience.
+    const writers = grepSrc('UPDATE users[^;]*SET[^;]*(anonymized_at|deleted_at)')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split(':')[0]);
+    expect([...new Set(writers)]).toEqual([
+      path.join(ROOT, 'src', 'modules', 'privacy', 'repo.js'),
+    ]);
   });
 });
 
@@ -870,13 +1036,19 @@ describe('ST-06 data protection (NFR-13)', () => {
     expect(rows[0].whole).not.toContain('Somewhere St');
   });
 
-  test('no CCPA export path is mounted on any verb (wave-4 U4-PRIVACY)', async () => {
+  test('the CCPA export path is mounted, session-gated, and 30-day-due (U4-PRIVACY landed)', async () => {
+    // Converted from the wave-3 absence probe. The full ST-06 export acceptance (register
+    // completeness, owner-only scope, IDs-only payloads) is the canonical lane file
+    // tests/st-security/st05-st06-privacy.test.js; here the old probe's surface flips.
+    expect((await api().post('/api/users/me/export')).status).toBe(401); // never unauthenticated
     const { cookie } = await registerAndLogin();
-    for (const verb of ['post', 'get']) {
-      const res = await api()[verb]('/api/users/me/export').set('Cookie', cookie);
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      expect([404, 405]).toContain(res.status);
-    }
+    const res = await api().post('/api/users/me/export').set('Cookie', cookie);
+    expect(res.status).toBe(202);
+    expect(res.body.request.kind).toBe('export');
+    expect(new Date(res.body.request.dueAt).getTime()).toBeGreaterThan(Date.now()); // SLA ahead
+    // A collection GET is still no route: 405 naming POST, never a silent handler.
+    const get = await api().get('/api/users/me/export').set('Cookie', cookie);
+    expect(get.status).toBe(405);
   });
 
   test('access_log has exactly ONE writer: the ADR-010 access decision module (wave-3 landed)', async () => {
@@ -885,15 +1057,33 @@ describe('ST-06 data protection (NFR-13)', () => {
     );
     expect(rows[0].c).toBe(1); // schema is present (U1-DB)
     // Wave 3 landed the required NFR-13 writer: src/modules/listings/access.js logs the
-    // moderator FR-07 precise-location read. It must stay the ONLY chokepoint that writes
+    // moderator FR-07 precise-location read. It must stay the ONLY chokepoint that WRITES
     // access_log (a second writer would fragment the audit trail). Behavior is executed in
     // tests/st-security/st-security-wave3.test.js (ST-06 moderator suite).
-    const found = require('child_process')
+    const writers = grepSrc('INSERT INTO access_log')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split(':')[0]);
+    expect([...new Set(writers)]).toEqual([
+      path.join(ROOT, 'src', 'modules', 'listings', 'access.js'),
+    ]);
+    // U4-PRIVACY added the one sanctioned READER: the CCPA export copies the user's own
+    // access-log entries (§3.4 "logs" register class, NFR-13 "access shall be logged" made
+    // visible to the data subject). SELECT-only — the file must contain no INSERT.
+    const mentions = require('child_process')
       .execFileSync('grep', ['-rl', 'access_log', path.join(ROOT, 'src')], { encoding: 'utf8' })
       .trim()
       .split('\n')
       .sort();
-    expect(found).toEqual([path.join(ROOT, 'src', 'modules', 'listings', 'access.js')]);
+    expect(mentions).toEqual([
+      path.join(ROOT, 'src', 'modules', 'listings', 'access.js'),
+      path.join(ROOT, 'src', 'modules', 'privacy', 'repo.js'),
+    ]);
+    const privacyRepoSrc = fs.readFileSync(
+      path.join(ROOT, 'src', 'modules', 'privacy', 'repo.js'),
+      'utf8'
+    );
+    expect(privacyRepoSrc).not.toMatch(/INSERT INTO access_log/);
   });
 
   // Finding STS-W3-02 (FIXED): the config layer fails CLOSED on every other production-unsafe
@@ -1042,8 +1232,32 @@ describe('ST-06 data protection (NFR-13)', () => {
     // The ratified answer still refuses real user content on the free tier (option (a) + (b)).
     expect(text).toMatch(/Live mode approved for real user content\?\s*\|\s*\*\*No\*\*/);
 
-    // And the tree still cannot send real content anywhere: no moderation module exists.
-    expect(fs.existsSync(path.join(ROOT, 'src', 'modules', 'moderation'))).toBe(false);
+    // U4-MODERATION landed, so the absence probe that stood here is inverted, not deleted:
+    // the module now EXISTS and must implement the ratified gate. Live classification is
+    // gated on the RECORDED RATIFICATION plus the content itself (ADR-007: "gate live
+    // classification on the signature and the content, never on the mere existence of the
+    // review file"): prefilter.liveContentGate refuses personal-shaped content, and the
+    // pipeline escalates a gate failure to the human Moderator queue instead of calling the
+    // provider (behaviour proven in tests/unit/moderation.test.js).
+    expect(fs.existsSync(path.join(ROOT, 'src', 'modules', 'moderation'))).toBe(true);
+    const prefilter = require('../../src/modules/moderation/prefilter');
+    expect(prefilter.DATA_USE_REVIEW.ratified).toBe(true);
+    expect(prefilter.DATA_USE_REVIEW.signedBy).toBe('Gaetan Rieben');
+    expect(prefilter.DATA_USE_REVIEW.signedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(prefilter.DATA_USE_REVIEW.countersignedBy).toBe('Nam Tran');
+    expect(prefilter.DATA_USE_REVIEW.document).toBe('docs/adr007-data-use-review.md');
+    // Option (a)+(b): personal-shaped content may NEVER reach the live provider.
+    expect(prefilter.liveContentGate('contact me at someone@example.com for a deal').allowed).toBe(
+      false
+    );
+    expect(prefilter.liveContentGate('call me at +14155550100 tonight').allowed).toBe(false);
+    expect(prefilter.liveContentGate('a lovely synthetic tamales listing').allowed).toBe(true);
+    // The gate is consulted by the pipeline exactly where ADR-007 requires (live mode only):
+    const serviceSrc = fs.readFileSync(
+      path.join(ROOT, 'src', 'modules', 'moderation', 'service.js'),
+      'utf8'
+    );
+    expect(serviceSrc).toMatch(/liveContentGate/);
   });
 
   test('STS-W3-05 (round 2): the README deployment note documents volume/disk encryption', () => {
@@ -1101,14 +1315,133 @@ describe('Abuse cases AB-01..AB-08', () => {
     expect(true).toBe(true); // marker — see ST-04 assertions
   });
 
-  test('AB-04 abuse cases depend on wave-4 features not built in this run', () => {
-    // AB-01 fake host/listing, AB-02 hoarding bookings and AB-03 spam listings become
-    // verifiable as wave 3 lands (build-plan §7 — this run); the wave-3 verifiers extend this
-    // lane with those cases. AB-04 abusive chat/reviews needs messaging+reviews+moderation,
-    // which stay wave 4: their route modules must not be mounted in this run.
-    for (const name of ['reviews', 'messaging', 'moderation']) {
+  test('AB-04 abusive content in chat and reviews: filtered before publication, retracted from chat, decisions logged', async () => {
+    // The full AB-04 abuse case, executable now that reviews (4B), messaging (4C) and the
+    // FR-08 pipeline (4A) all exist. Both directions run through the REAL moderation
+    // pipeline (mock classifier — ADR-007: the suite never calls a live provider) and the
+    // REAL Moderator HTTP surface — no direct SQL verdicts.
+    // eslint-disable-next-line global-require
+    const { loadHandlers } = require('../../src/outbox/dispatch');
+    // eslint-disable-next-line global-require
+    const { pollOnlyThese } = require('../helpers/outboxScope');
+    const quiet = { info: () => {}, warn: () => {}, error: () => {}, child: () => quiet };
+    const registry = loadHandlers({ log: quiet });
+
+    const host = await db.makeUser({ can_publish_listing: true });
+    await db.makeHostProfile({ user_id: host.id });
+    const guest = await db.makeUser();
+    const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
+    const hostCookie = await cookieFor(host);
+    const guestCookie = await cookieFor(guest);
+    const moderatorCookie = await cookieFor(moderator);
+    const listing = await db.makeListing({ host_id: host.id, moderation_status: 'approved' });
+    const booking = await db.makeBooking({
+      listing_id: listing.id,
+      guest_id: guest.id,
+      status: 'completed',
+      host_confirmed_completion: true,
+      guest_confirmed_completion: true,
+    });
+
+    const scanJobFor = async (contentId) => {
+      const { rows } = await db.query(
+        `SELECT id FROM outbox_jobs
+          WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+        [contentId]
+      );
+      return rows[0];
+    };
+    const openQueueItemFor = async (contentType, contentId) => {
+      const { rows } = await db.query(
+        `SELECT id FROM moderation_queue
+          WHERE content_type = $1 AND content_id = $2 AND status <> 'resolved'`,
+        [contentType, contentId]
+      );
+      return rows[0];
+    };
+    const decisionsFor = async (contentType, contentId) => {
+      const { rows } = await db.query(
+        `SELECT outcome, decided_by, category FROM moderation_decisions
+          WHERE content_type = $1 AND content_id = $2 ORDER BY created_at, id`,
+        [contentType, contentId]
+      );
+      return rows;
+    };
+    const rejectViaModerator = async (queueItemId) => {
+      const res = await api()
+        .post(`/api/moderation/queue/${queueItemId}/decision`)
+        .set('Cookie', moderatorCookie)
+        .send({ decision: 'reject', category: 'offensive' });
+      expect(res.status).toBe(200);
+    };
+    const publicReviewIds = async () => {
+      const res = await api()
+        .get(`/api/hosts/${host.id}/reviews?page=1&pageSize=100`)
+        .set('Cookie', guestCookie);
+      expect(res.status).toBe(200);
+      return res.body.reviews.map((r) => r.id);
+    };
+    const threadIds = async (cookie) => {
+      const res = await api()
+        .get(`/api/bookings/${booking.id}/messages?page=1&pageSize=100`)
+        .set('Cookie', cookie);
+      expect(res.status).toBe(200);
+      return res.body.items.map((m) => m.id);
+    };
+
+    // --- Abusive REVIEW: pending → flagged → rejected; NEVER publicly visible (FR-05/FR-08).
+    const review = await api()
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .set('Cookie', guestCookie)
+      .send({ rating: 1, comment: 'offensive-fixture harassment aimed at the host' });
+    expect(review.status).toBe(201);
+    const reviewId = review.body.review.id;
+    expect(await publicReviewIds()).not.toContain(reviewId); // born pending — invisible
+    await pollOnlyThese([(await scanJobFor(reviewId)).id], registry);
+    expect(await publicReviewIds()).not.toContain(reviewId); // flagged/escalated — still invisible
+    await rejectViaModerator((await openQueueItemFor('review', reviewId)).id);
+    expect(await publicReviewIds()).not.toContain(reviewId); // rejected — invisible forever
+    const { rows: rejectedReview } = await db.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(rejectedReview[0].moderation_status).toBe('rejected');
+
+    // --- Abusive MESSAGE: delivered immediately (ADR-002), then flagged → rejected → hidden.
+    const message = await api()
+      .post(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', hostCookie)
+      .send({ body: 'an offensive-fixture insult in chat' });
+    expect(message.status).toBe(201);
+    const messageId = message.body.message.id;
+    expect(await threadIds(guestCookie)).toContain(messageId); // delivered before any scan
+    await pollOnlyThese([(await scanJobFor(messageId)).id], registry);
+    await rejectViaModerator((await openQueueItemFor('message', messageId)).id);
+    expect(await threadIds(guestCookie)).not.toContain(messageId); // retracted for the guest
+    expect(await threadIds(hostCookie)).not.toContain(messageId); // …and for the sender
+
+    // --- MODERATION_DECISION rows logged for BOTH surfaces: the pipeline flag + the human
+    // rejection each wrote one (FR-08; NFR-08 audit trail).
+    for (const [contentType, contentId] of [
+      ['review', reviewId],
+      ['message', messageId],
+    ]) {
+      const decisions = await decisionsFor(contentType, contentId);
+      expect(decisions).toEqual([
+        expect.objectContaining({ outcome: 'escalated', decided_by: 'llm', category: 'offensive' }),
+        expect.objectContaining({ outcome: 'rejected', decided_by: 'human' }),
+      ]);
+    }
+
+    // AB-08 discipline on all three landed surfaces: every route sits behind requireSession
+    // and imports no adapter (ADR-001/003); the moderator queue additionally enforces the
+    // role in its service (401/403 behaviour asserted in tc08 / tc05 / tc06).
+    for (const name of ['moderation', 'reviews', 'messaging']) {
       const routesPath = path.join(ROOT, 'src', 'modules', name, 'routes.js');
-      expect(fs.existsSync(routesPath)).toBe(false);
+      expect(fs.existsSync(routesPath)).toBe(true);
+      const routesSrc = fs.readFileSync(routesPath, 'utf8');
+      expect(routesSrc).toMatch(/requireSession/);
+      expect(routesSrc).not.toMatch(/require\(['"][^'"]*adapters\//); // ADR-001/003
     }
   });
 });

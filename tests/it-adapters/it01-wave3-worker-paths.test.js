@@ -17,8 +17,9 @@
 //        redelivery; self-repairing reschedule when the listing's start moves later.
 //   NFR-09 (RT-01 subset) — Maps on the FR-01 search read path: degraded pass-through is never
 //        cached; outage with no cached area is a typed 503 SEARCH_DEGRADED, never a 500.
-//   FR-08 substrate — 'moderation.scan' has NO handler until wave 4: the job retries then
-//        dead-letters and the listing STAYS pending (the ADR-002 safe direction).
+//   FR-08 — 'moderation.scan' runs the U4-MODERATION pipeline; under an injected provider
+//        outage the job retries then dead-letters and the listing STAYS pending (the ADR-002
+//        safe direction, now proven through the real handler).
 'use strict';
 
 // Fast resilience knobs for THIS FILE ONLY (Jest module registry is per-file; restored in
@@ -738,8 +739,8 @@ describe('IT-01/RT-01 wave 3 · Maps adapter on the FR-01 search read path (NFR-
 });
 
 // ==============================================================================================
-describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds while the pipeline is wave 4', () => {
-  test('moderation.scan dead-letters harmlessly; the listing STAYS pending and never surfaces', async () => {
+describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds through the REAL handler', () => {
+  test('moderation.scan under a provider outage retries then dead-letters; the listing STAYS pending and never surfaces', async () => {
     const host = await dbh.makeUser({ can_publish_listing: true });
     const scheduledStart = new Date(Date.now() + 300 * 24 * 3600 * 1000).toISOString();
     const created = await listingsService.createListing(
@@ -769,35 +770,46 @@ describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds while the
     );
     expect(scans).toHaveLength(1);
 
-    // F-01: scoped — the maxAttempts:2 drain must exhaust only THIS listing's scan job, never
-    // dead-letter foreign pending rows the shared table happened to hold.
-    await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 1: no handler → retry
-    await makeDue(scans[0].id);
-    await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 2: dead-letter
+    // U4-MODERATION landed the handler, so the wave-3 "no handler" dead-letter is history:
+    // the same safe direction is now proven through the REAL pipeline under an injected
+    // ADR-007 provider outage (the mock's typed retryable error, exactly what the live
+    // adapter raises).
+    const llmMock = require('../../src/adapters/llmModeration.mock');
+    llmMock.setOutage(true);
+    try {
+      // F-01: scoped — the maxAttempts:2 drain must exhaust only THIS listing's scan job,
+      // never dead-letter foreign pending rows the shared table happened to hold.
+      await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 1: outage → retry
+      await makeDue(scans[0].id);
+      await withOnlyTheseDue([scans[0].id], () => drainDue({ maxAttempts: 2 })); // attempt 2: dead-letter
+    } finally {
+      llmMock.reset();
+    }
 
     const dead = await jobRow(scans[0].id);
     expect(dead.status).toBe('dead');
-    expect(dead.last_error).toMatch(/no outbox handler registered/);
+    expect(dead.last_error).toMatch(/Moderation provider unavailable/i);
     // The ADR-002 safe direction: content stays pending and never publishes unreviewed.
     expect((await listingRow(created.id)).moderation_status).toBe('pending');
     const page = await searchService.searchListings({ page: 1, pageSize: 20, hostId: host.id });
     expect(page.results).toHaveLength(0);
   });
 
-  test('WAVE-4 GAP: the eval set exists, but the pipeline to score it through does not', () => {
+  test('the eval set exists AND the pipeline to score it through now exists; only the live run is missing', () => {
     // NFR-10/ADR-008: a versioned ≥200-item labelled set under tests/fixtures/moderation-eval/vN/
-    // scored through the REAL pipeline, with a recorded human sign-off. The SET landed (IT-F1,
-    // U4-EVALSET) — ADR-008 requires it before the classifier prompt exists, so that building the
-    // pipeline cannot tune the target to the result. The PIPELINE has not: no moderation.scan
-    // handler, so nothing can score it and NFR-10 stays not_implemented (build-plan §7), never
-    // "passed". When U4-MODERATION lands, this probe FAILS by design: replace it with the real
-    // IT-03 measurement harness (score the set, print FP/FN rates, assert < 0.05, check sign-off).
+    // scored through the REAL pipeline, with a recorded human sign-off. The SET landed first
+    // (U4-EVALSET — ADR-008 requires it before the classifier prompt exists), and U4-MODERATION
+    // landed the pipeline + scoring harness (scripts/it03-eval.js; mechanics proven in
+    // tests/it-adapters/it03-moderation-eval.test.js). What still keeps NFR-10 open is the
+    // LIVE IT-03 run (wave 7, U7-MODERATION-MEASURE): no measurement has been recorded, so no
+    // FP/FN rate exists anywhere in this tree and none may be quoted from the mock.
     const evalDir = path.join(__dirname, '..', 'fixtures', 'moderation-eval');
     expect(fs.existsSync(evalDir)).toBe(true);
     const set = require(evalDir).loadSet('v1');
     expect(set.items.length).toBeGreaterThanOrEqual(200);
     expect(set.hasResults).toBe(false); // no measurement has been recorded against it
-    expect(registry.has('moderation.scan')).toBe(false);
+    expect(registry.has('moderation.scan')).toBe(true); // the pipeline is scoreable now
+    expect(fs.existsSync(path.join(__dirname, '..', '..', 'scripts', 'it03-eval.js'))).toBe(true);
   });
 });
 

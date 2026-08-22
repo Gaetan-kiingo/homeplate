@@ -1,6 +1,6 @@
 {
  "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4; acceptance criteria additionally bound by ADR-001..011",
- "generated": "2026-08-18 (rev D — ADR-009 weekly window ratified; weekly cap corrected to 90 per AB 1325)",
+ "generated": "2026-08-21 (rev E — wave-4 build plan; statusAt_eebd638 added from docs/verification-report.md §3.4: 23 met / 5 partial / 7 not_implemented at the verified, pushed baseline eebd638)",
  "requirements": [
   {
    "id": "FR-01",
@@ -38,7 +38,8 @@
    "reverification": {
     "unit": "W3-RV-CORE",
     "mustProve": "Re-execute TCC-02 (a soft-deleted host's approved listings must not stay discoverable) and TCC-05 (the page-cache existence assertion must survive >512 keys in the Redis index — full SCAN cursor loop or EXISTS, never a single-pass SCAN). Re-read the Redis result/geocode cache directly and assert public precision only (ADR-010)."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-02",
@@ -56,7 +57,8 @@
    "reverification": {
     "unit": "W3-RV-CORE + W3-FIX-REVIEWPAGE",
     "mustProve": "Re-execute TCC-01 (host summary fallback when the host row is soft-deleted or has no host_profiles row must not be host:null). TCC-04 is OPEN: the reviews array is truncated to 5 with no total and no cursor, so the FR-02 acceptance clause \"the approved reviews for that host\" is only partly served."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-03",
@@ -74,7 +76,8 @@
    "reverification": {
     "unit": "W3-RV-CORE",
     "mustProve": "Re-execute the ADR-010 public-serializer assertions on GET /api/hosts/:id and the key-allowlist assertion (no email/phone/emergency contact/password hash), plus 401 for an unauthenticated caller (AB-08)."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-04",
@@ -92,7 +95,8 @@
    "reverification": {
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute TCB-W3-02: move a listing's scheduled_start EARLIER and prove the booking.promote job is rescheduled so the booking reaches in_progress and both parties can confirm completion. Plus concurrent dual confirmation and the 403/409 branches."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-05",
@@ -110,6 +114,11 @@
    "reverification": {
     "unit": "(none — wave 4)",
     "mustProve": "Not implemented. Assert absence by probe: the review endpoints answer a structured 404 and src/modules/reviews does not exist. Do not build."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-REVIEWS",
+    "mustDeliver": "Build FR-05 end to end: reviews on completed bookings only, born pending, published only after moderation approval; take over findReviewAuthorId from the media repo."
    }
   },
   {
@@ -128,6 +137,11 @@
    "reverification": {
     "unit": "(none — wave 4)",
     "mustProve": "Not implemented. Assert absence by probe. Do not build."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-MESSAGING",
+    "mustDeliver": "Build FR-06: participant-only thread on pending/in_progress/completed bookings; deliver immediately; same-transaction moderation.scan row; flagged message hidden and queued."
    }
   },
   {
@@ -147,6 +161,11 @@
    "reverification": {
     "unit": "W3-RV-OBS-SAFETY",
     "mustProve": "DONE (2026-08-17, finding TCC-RV-03). Re-executed end to end against the module that landed in f7f954c: 201 with no inline SendGrid call, worker delivers the emergency-contact email through the ADR-011 mock transport, NOTIFICATION_ATTEMPT rows exist, an injected failure produces retrying -> backoff -> dead-letter while the alert stays visible in the queue, and no_channel when the raiser has no emergency contact. The moderator-queue route GET /api/moderation/alerts named in the criterion DOES exist (src/modules/safety/routes.js, mounted by src/routes/index.js) and was exercised for 401/403/200, the status filter and the pageSize cap — the rev-C claim that it was wave 4 was wrong. Not to be confused with the FR-08 moderation queue over listing/review/message content, which is still wave 4 and not implemented."
+   },
+   "statusAt_eebd638": "met",
+   "wave4": {
+    "unit": "U4-SAFETY-COMPLETE",
+    "mustDeliver": "Already MET — do not regress. Unify the moderator surface with the 4A queue (moderation_queue entry per alert, enum extended append-only) and add the moderator-escalation clause."
    }
   },
   {
@@ -166,6 +185,11 @@
    "reverification": {
     "unit": "(none — wave 4)",
     "mustProve": "Not implemented. Prove only the safe failure direction: an unhandled moderation.scan job dead-letters and public content stays PENDING and invisible. No NFR-10 number may be quoted."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-MODERATION",
+    "mustDeliver": "Build the full ADR-002 pipeline (pre-filter → LLM adapter → decision record → human queue) and the moderation.scan handler; REQUEUE the wave-3 dead letters via outbox.requeueDeadLetter and prove they drain."
    }
   },
   {
@@ -184,7 +208,8 @@
    "reverification": {
     "unit": "W3-RV-FR10",
     "mustProve": "Re-execute the both-states truth table and the repository-wide grep proving one policy module. Additionally prove the FR-10 consequence chain: after verifying through the DELIVERED link, canReserveSeat flips to true."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-10",
@@ -208,7 +233,8 @@
    "reverification": {
     "unit": "W3-RV-FR10",
     "mustProve": "HIGHEST PRIORITY. Prove end to end that the value the ADR-011 mock transport actually DELIVERED (render context / message body) verifies the account: register -> drain the outbox -> read the recorded delivery -> extract the link/token -> submit exactly that value -> users.email_verified = true. A token taken from an in-process return value proves nothing (this is exactly how waves 1-2 mis-reported FR-10 as PASS). Also re-assert ADR-003: no persisted artefact carries the usable raw token."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-11",
@@ -235,7 +261,8 @@
     "capCorrection": "Ratification also corrected the weekly cap from 60 to 90 meals: AB 626 set 60, Assembly Bill 1325 raised it to 90. The former value was over-restrictive (it refused listings a host is legally entitled to post), so it created no compliance exposure, but it was wrong. Changed in src/config/locale.js plus the six assertions that pinned 60.",
     "acceptedResidualRisk": "A calendar week is by construction spreadable across its boundary: filling Sat+Sun of one week and Mon+Tue of the next places twice the weekly cap inside a single 7-day span. This follows from the statute’s own calendar-week basis and is accepted, not a defect.",
     "cdrConsequence": "A TC-11 pass is now evidence against a RATIFIED requirement, so the FR-11 weekly clause may be cited as AB 626 / AB 1325 weekly-compliance evidence. Before 2026-08-18 it could not."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-12",
@@ -254,7 +281,8 @@
    "reverification": {
     "unit": "W3-DET-CONCURRENCY",
     "mustProve": "The 40-concurrent-guest race assertion (3x201 / 37x409 / seats 0) must produce the same result on 5 consecutive full-suite runs. Fix the cause of any variance (connection-pool saturation, shared-state assertion), never by retries, sleeps or a weakened assertion."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-13",
@@ -273,7 +301,8 @@
    "reverification": {
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute TCB-W3-03 (pending -> in_progress must enqueue a notification), TCB-W3-04 (every template id emitted by an outbox handler exists in the SendGrid subject registry — assert the registry lookup, not just a send), IT-F4 (neither SendGrid nor FCM can reach a live provider under NODE_ENV=test) and COV-03 (lifecycle.isLivePendingJob's decisive branch is actually executed)."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "FR-14",
@@ -291,7 +320,8 @@
    "reverification": {
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute cancel -> atomic seat restore -> notification outbox rows, idempotent double-cancel, and seats_remaining never exceeding seat_capacity under concurrent cancels."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-01",
@@ -309,7 +339,8 @@
    "reverification": {
     "unit": "(report only — RTLT-02)",
     "mustProve": "k6 is not installed on this host, so the instrument the criterion names cannot be run. Report the existing Node-loopback measurement (p95 253.7 ms at 200 VUs over 791,709 requests, 0 errors) as EVIDENCE, explicitly not as a pass, and record RTLT-02 as untestable here. Do not vendor k6."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-02",
@@ -327,7 +358,8 @@
    "reverification": {
     "unit": "(report only — RTLT-02)",
     "mustProve": "Same k6 caveat. The volume dataset (10,000 users / 1,000 listings / 1,000 bookings) loads and the latency budget still holds under the substitute harness; index usage must be re-asserted by EXPLAIN if claimed."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-03",
@@ -345,7 +377,8 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-01 against a real https.Server started through src/server.js: cleartext refused, TLS 1.0/1.1 refused, 1.2/1.3 accepted, HSTS present."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-04",
@@ -363,7 +396,8 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-02: Argon2id parameters, no plaintext in any column, redaction proven by executing the logger and the validator rather than by grep alone."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-05",
@@ -381,7 +415,8 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-03: the exact 5-in-10-minutes boundary (attempt 5 invalid, attempt 6 locked out with Retry-After), per-account AND per-source-IP counters, reset on success."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-06",
@@ -400,7 +435,8 @@
    "reverification": {
     "unit": "W3-RV-FR10",
     "mustProve": "Re-execute the IT-02 truth table and the persisted-flag equality after every mutation, and prove the flags recompute after email verification through the delivered link."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-07",
@@ -418,7 +454,8 @@
    "reverification": {
     "unit": "(none — waves 5-6)",
     "mustProve": "Not implemented: client/ does not exist and no .jsx/.tsx file exists in the repository. npm run test:a11y fails on purpose so its presence is never read as coverage. The 5-participant study is a human activity."
-   }
+   },
+   "statusAt_eebd638": "not_implemented"
   },
   {
    "id": "NFR-08",
@@ -436,6 +473,11 @@
    "reverification": {
     "unit": "W3-RV-OBS-SAFETY",
     "mustProve": "Re-execute MT-01 for registration, booking create/cancel/complete/promote and media attach/delete: one structured record each with event, correlation ID, actor, subject, outcome, timestamp; correlation ID propagating into the outbox row and back out on the worker line; MTUT-W3-02 (the worker-initiated booking.promoted record must name an actor); and the PII sweep over two captured corpora. The moderation-decision action remains unperformable (FR-08 is wave 4)."
+   },
+   "statusAt_eebd638": "partial",
+   "wave4": {
+    "unit": "U4-MODERATION",
+    "mustDeliver": "Close the last MT-01 clause: a human moderation decision emits a structured audit record with correlation ID; PII-free."
    }
   },
   {
@@ -454,7 +496,8 @@
    "reverification": {
     "unit": "W3-RV-CORE + W3-RV-BOOKING",
     "mustProve": "Re-execute the RT-01 per-adapter outage drills including the ADR-002 property that a moderation outage leaves public content PENDING, and the three distinct FR-01 degraded cases the corrected TCC-03 criterion distinguishes."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "NFR-10",
@@ -472,6 +515,11 @@
    "reverification": {
     "unit": "(none — wave 4, fenced)",
     "mustProve": "Unmeasurable in this tree. The ADR-008 v1 set exists (224 synthetic items) but there is no pre-filter, no LLM stage, no moderation.scan handler, no results file and no human label sign-off. NO NUMBER MAY BE QUOTED, and scoring the set through the deterministic mock adapter is not a measurement (IT-F1)."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-MODERATION",
+    "mustDeliver": "Pipeline + scripts/it03-eval.js harness only. NFR-10 stays UNCLAIMABLE: the live IT-03 run, model id + prompt version, RESULTS.md and both rates < 0.05 are wave 7. claimability()===true means preconditions only. No number may be quoted from the mock."
    }
   },
   {
@@ -490,6 +538,11 @@
    "reverification": {
     "unit": "W3-DET-GLOBALSTATE + W3-FIX-MEDIASQL",
     "mustProve": "Re-execute the ST-04 payload suite at every wave-0..3 boundary and the parameterized-SQL grep. The ST-04 media contentType/kind assertion must become deterministic (it counts rows in the whole media_objects table). W3-ADR-04 / COV-07: the raw SELECT in src/modules/media/routes.js:81 moves into the media repo so no DB access remains in the route layer."
+   },
+   "statusAt_eebd638": "met",
+   "wave4": {
+    "unit": "U4-REVIEWS + U4-MESSAGING + U4-MODERATION + U4-PRIVACY",
+    "mustDeliver": "Each new boundary (review, chat, moderation note/decision, privacy endpoints) declares schemas and joins the ST-04 payload suite."
    }
   },
   {
@@ -508,6 +561,11 @@
    "reverification": {
     "unit": "(none — wave 4, fenced)",
     "mustProve": "Not implemented: no deletion endpoint, no erasure/anonymisation job, no backup-expiry configuration (STS-W3-03). The media delete-by-key primitive works against MinIO but nothing in src/ calls it. Report not_implemented with evidence; do not build wave 4."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-PRIVACY",
+    "mustDeliver": "DELETE /api/users/me + account.erasure handler verified by CLOCK INJECTION at now()+config.privacy.erasureDays; media deleted BY KEY via the existing ADR-004 primitive; reviews retained anonymized; 24-month inactivity sweep with notice; BACKUP_RETENTION_DAYS + scripts/backup.js (closes F-03, F-07)."
    }
   },
   {
@@ -526,6 +584,11 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute STS-W3-02 (production config must refuse the committed sample FIELD_ENCRYPTION_KEY and the minioadmin credentials), STS-W3-01 (serializeUser must not 500 the owner on a non-canonical *_enc column) and STS-W3-05 (the two ST-06 documentation clauses). The CCPA export path still does not exist, so NFR-13 stays PARTIAL."
+   },
+   "statusAt_eebd638": "partial",
+   "wave4": {
+    "unit": "U4-PRIVACY",
+    "mustDeliver": "POST /api/users/me/export: data_requests row with 30-day due date asserted; machine-readable copy of every §3.4 register class, requesting user only."
    }
   },
   {
@@ -548,6 +611,11 @@
    "reverification": {
     "unit": "W3-RV-CORE",
     "mustProve": "The eligibility gate and pending-until-approved invisibility are re-executed; the moderation half (FR-08) and mutual reviews (FR-05) are wave 4, so AB-01 stays PARTIAL."
+   },
+   "statusAt_eebd638": "partial",
+   "wave4": {
+    "unit": "U4-MODERATION + U4-REVIEWS",
+    "mustDeliver": "The moderation half (flagged listing routed to queue, never published) and mutual reviews complete AB-01."
    }
   },
   {
@@ -568,7 +636,8 @@
    "reverification": {
     "unit": "W3-DET-CONCURRENCY + W3-RV-BOOKING",
     "mustProve": "Re-execute the per-guest concurrent-pending cap sequentially AND under concurrency, and the never-overbook race assertion."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "AB-03",
@@ -589,6 +658,11 @@
    "reverification": {
     "unit": "W3-RV-OBS-SAFETY",
     "mustProve": "Re-execute the (host_id, local_date) unique-index proof (10 concurrent creations -> exactly 1 row). The moderation half is wave 4 and the weekly cap carries the FR-11 ambiguity, so AB-03 stays PARTIAL."
+   },
+   "statusAt_eebd638": "partial",
+   "wave4": {
+    "unit": "U4-MODERATION",
+    "mustDeliver": "Spam samples from the eval set rejected by pre-filter or queued and never published (asserted via the mock's deterministic fixtures, not as an NFR-10 number)."
    }
   },
   {
@@ -611,6 +685,11 @@
    "reverification": {
     "unit": "(none — wave 4)",
     "mustProve": "Depends on FR-05, FR-06 and FR-08, none of which exist. Report not_implemented."
+   },
+   "statusAt_eebd638": "not_implemented",
+   "wave4": {
+    "unit": "U4-MESSAGING (final) with U4-MODERATION + U4-REVIEWS",
+    "mustDeliver": "Abusive review never publicly visible; abusive message delivered then hidden once flagged and queued; decisions logged; escalation via U4-SAFETY-COMPLETE."
    }
   },
   {
@@ -631,7 +710,8 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-01/ST-02/ST-03 plus session-token entropy, HttpOnly/Secure/SameSite cookie attributes and logout invalidation."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "AB-06",
@@ -649,6 +729,11 @@
    "reverification": {
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "The targeted SQLi/XSS suite is re-executed. The OWASP ZAP baseline clause has a CI workflow and a documented procedure but has NEVER been run, so no report exists and AB-06 stays PARTIAL."
+   },
+   "statusAt_eebd638": "partial",
+   "wave4": {
+    "unit": "U4-REVIEWS + U4-MESSAGING (partial close)",
+    "mustDeliver": "ST-04 payloads at the new chat/review/moderation boundaries. Stays PARTIAL: the ZAP crawl over a rendered client is waves 5-6."
    }
   },
   {
@@ -669,7 +754,8 @@
    "reverification": {
     "unit": "W3-RV-OBS-SAFETY",
     "mustProve": "Re-execute the unique-verified-email proof (duplicate registration -> 409, no row) and the single server-side daily enforcement point grep. Multi-account evasion remains an accepted v1.0 residual per ADR-009."
-   }
+   },
+   "statusAt_eebd638": "met"
   },
   {
    "id": "AB-08",
@@ -688,7 +774,8 @@
    "reverification": {
     "unit": "W3-DET-GLOBALSTATE + W3-RV-CORE",
     "mustProve": "Re-execute the ADR-010 public-serializer sweep over every read path. COV-01 (the canary that matched random UUIDs) appears already rewritten to leaf-scoped assertions on disk — confirm by execution and close it, or reopen it."
-   }
+   },
+   "statusAt_eebd638": "met"
   }
  ],
  "adrs": [
@@ -786,5 +873,25 @@
   "not_implemented": "No implementing code in waves 0-3. Asserted absent by 404-probe tests. Never reported as a pass and never a reason to start building a later wave.",
   "unverifiable_here": "Cannot be measured in this environment or by an agent (host prerequisite, or a human act such as the ADR-008 label sign-off).",
   "met": "Re-verified in this run: the original failure scenario was re-executed against the current tree and no longer reproduces, on a suite whose runs are identical."
+ },
+ "wave4BuildRun": {
+  "date": "2026-08-21",
+  "baselineCommit": "eebd638",
+  "baseline": "52 suites / 1179 tests, exit 0 under TEST_STRICT_HANDLES=1, ~88 s; lint+build clean; coverage stmts 94.01 / branches 84.08 / funcs 97.69 / lines 94.80 — DO NOT REGRESS",
+  "mode": "implement-only; a separate mode:'verify' run re-derives everything tomorrow",
+  "order": [
+   "4A: U4-MODERATION",
+   "4B: U4-REVIEWS ∥ U4-SAFETY-COMPLETE",
+   "4C: U4-MESSAGING",
+   "4D: U4-PRIVACY"
+  ],
+  "bindingNotes": [
+   "Sub-waves are strictly ordered so the shared scope-guard files (coverage-lane, st-security, tc05-07-wave4-status) are edited serially; the unit that lands a module converts every absence probe naming it in the same change.",
+   "U4-MODERATION requeues the wave-3 moderation.scan dead letters via outbox.requeueDeadLetter on landing and proves the drain by execution.",
+   "The automated suite never makes a live provider call (ADR-007/ADR-011); NODE_ENV=test pins the mock; the IT-03 live measurement run is wave 7 and is NOT run in this build.",
+   "NFR-12 is verified by clock injection, never by waiting; media erasure uses the existing ADR-004 delete-by-key primitive.",
+   "Migrations append-only from 0005; no git commit/push — the human team commits."
+  ],
+  "detail": "docs/_generated/build-plan.md rev E (2026-08-21)"
  }
 }

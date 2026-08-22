@@ -385,6 +385,27 @@ describe('ADR-001/003 — wave-3 request paths are adapter-free', () => {
       request(app).get('/api/moderation/alerts').set('Cookie', moderatorCookie)
     );
 
+    // --- FR-08 moderator surface (landed in U4-MODERATION — enters the audit the day it
+    // mounts, same rule that added safety). The decision path runs the FULL human-decision
+    // transaction (decision row + status flip + queue resolve) with zero adapter loads:
+    // the LLM stage lives exclusively in the worker handler (ADR-001/003).
+    const queueItem = await dbh.insertRow('moderation_queue', {
+      content_type: 'listing',
+      content_id: listingId,
+      reason: 'flagged',
+    });
+    const queuePage = await check('GET /api/moderation/queue', () =>
+      request(app).get('/api/moderation/queue').set('Cookie', moderatorCookie)
+    );
+    expect(queuePage.status).toBe(200);
+    const decided = await check('POST /api/moderation/queue/:id/decision', () =>
+      request(app)
+        .post(`/api/moderation/queue/${queueItem.id}/decision`)
+        .set('Cookie', moderatorCookie)
+        .send({ decision: 'approve', category: 'benign' })
+    );
+    expect(decided.status).toBe(200);
+
     // --- completion + cancel ---
     await check('POST /api/bookings/:id/confirm-completion', () =>
       request(app)
@@ -798,12 +819,14 @@ describe('ADR-002 — unapproved listings are invisible and unbookable until app
     expect(rows[0].n).toBe(2); // create + material edit
   });
 
-  test('a moderation-provider outage (no handler at all) leaves the listing PENDING, never published', async () => {
-    // FR-08 failure direction: when the scan job cannot complete — here because the wave-4
-    // handler does not exist yet, so it retries and DEAD-LETTERS — the content must stay
-    // pending throughout. Dead-lettering may lose the scan; it may never publish unreviewed.
-    // (A single-poll deferral under a mocked provider outage is drilled separately in
-    // tests/rt-lt-resilience/rt01-wave3-degradation.test.js drill 3.)
+  test('a moderation-provider outage through the REAL handler leaves the listing PENDING, never published', async () => {
+    // FR-08 failure direction, re-pointed at the U4-MODERATION handler (this test previously
+    // proved the same invariant via the wave-3 "no handler" dead-letter): with the provider
+    // down for EVERY attempt, the scan job retries, backs off and finally DEAD-LETTERS with
+    // the typed provider error — and the content stays pending throughout. Dead-lettering
+    // may strand the scan (scripts/requeue-dead-letters.js re-opens it); it may never
+    // publish unreviewed (ADR-002).
+    const llmMock = require('../../src/adapters/llmModeration.mock');
     const host = await makeEligibleHost();
     const created = await request(app)
       .post('/api/listings')
@@ -828,31 +851,44 @@ describe('ADR-002 — unapproved listings are invisible and unbookable until app
         WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
       [listingId]
     );
-    await withOnlyTheseDue(
-      ownScans.map((r) => r.id),
-      async () => {
-        for (let i = 0; i < config.outbox.maxAttempts + 2; i += 1) {
-          await dbh.query(
-            `UPDATE outbox_jobs SET available_at = now() - interval '1 hour'
-              WHERE type = 'moderation.scan' AND payload->>'contentId' = $1 AND status = 'pending'`,
-            [listingId]
-          );
-          await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
+    llmMock.setOutage(true); // provider down for the WHOLE retry budget
+    try {
+      await withOnlyTheseDue(
+        ownScans.map((r) => r.id),
+        async () => {
+          for (let i = 0; i < config.outbox.maxAttempts + 2; i += 1) {
+            await dbh.query(
+              `UPDATE outbox_jobs SET available_at = now() - interval '1 hour'
+                WHERE type = 'moderation.scan' AND payload->>'contentId' = $1 AND status = 'pending'`,
+              [listingId]
+            );
+            await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
+          }
         }
-      }
-    );
+      );
+    } finally {
+      llmMock.reset();
+    }
     const { rows } = await dbh.query(
       `SELECT status, last_error FROM outbox_jobs
         WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
       [listingId]
     );
     expect(rows[0].status).toBe('dead');
-    expect(rows[0].last_error).toMatch(/no outbox handler registered/);
+    // The typed, retryable ADR-007 provider error is the recorded reason — not a missing
+    // handler: the pipeline ran and DEFERRED (dead-letter-deferral, NFR-09 visibility).
+    expect(rows[0].last_error).toMatch(/Moderation provider unavailable/i);
 
     const listing = await dbh.query(`SELECT moderation_status FROM listings WHERE id = $1`, [
       listingId,
     ]);
     expect(listing.rows[0].moderation_status).toBe('pending');
+    // No decision row was fabricated during the outage — the provider never answered.
+    const { rows: decisions } = await dbh.query(
+      `SELECT outcome FROM moderation_decisions WHERE content_type = 'listing' AND content_id = $1`,
+      [listingId]
+    );
+    expect(decisions).toEqual([]);
   });
 });
 
@@ -1529,6 +1565,10 @@ describe('Redis role — wave-3 flows added only session/rate-limit/cache keys',
         path.join('modules', 'auth', 'rateLimit.js'),
         path.join('modules', 'auth', 'sessions.js'),
         path.join('modules', 'search', 'service.js'),
+        // U4-PRIVACY (NFR-12/AB-05): destroySessionsForUser SCANs hp:session:* to revoke a
+        // deleted account's remaining sessions — session-namespace DELETES only, no business
+        // state (the runtime keyspace audit above still proves the namespaces).
+        path.join('modules', 'privacy', 'service.js'),
       ].sort()
     );
   });

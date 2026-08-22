@@ -10,9 +10,11 @@
 // Of MT-01's four named actions, BOOKING CREATION and BOOKING CANCELLATION land in wave 3
 // (U3-BOOKINGS), with LISTING CREATION (U3-LISTINGS) as the fixture path — itself an
 // "important action" whose audit record AB-03's acceptance requires ("listing creations are
-// logged with host ID and local date"). The MODERATION DECISION action is wave 4
-// (U4-MODERATION); its absence is PROBED below so "not implemented" stays a measured fact,
-// not an assumption. The FR-07 safety module (src/modules/safety/*,
+// logged with host ID and local date"). The MODERATION DECISION action landed with
+// U4-MODERATION: the probe that measured its absence is now the real thing — a human
+// moderator decides a genuinely queued item and ONE moderation.decision audit record with
+// the request's correlation ID is found (the last NFR-08 clause). The FR-07 safety module
+// (src/modules/safety/*,
 // src/outbox/handlers/safetyAlert.js) landed AFTER the round-1 lane ran (git diff
 // 3136b91..bc27199); raising a safety alert is unambiguously one of NFR-08's "important
 // actions", and it is the only flow here that decrypts a THIRD PARTY's personal data (the
@@ -26,8 +28,8 @@
 //      outcome and timestamp (NFR-08).
 //   2. The request's correlation ID propagates onto every outbox row the transaction wrote
 //      AND into the worker's log lines for those jobs — same ID on both sides — including on
-//      FAILING jobs (moderation.scan has no wave-3 handler; its retry line must still carry
-//      the originating request's ID) and on WORKER-INITIATED transitions (booking.promote has
+//      the U4-MODERATION moderation.scan handler (its delivery line and its audit record
+//      carry the listing-creating request's ID) and on WORKER-INITIATED transitions (booking.promote has
 //      no HTTP request behind it; its audit record must name the system actor — MTUT-W3-02).
 //   3. AB-03's LOCAL DATE is a YYYY-MM-DD MEHKO calendar day equal to
 //      mehko.localDateFor(scheduledStart), not merely "a string" (finding W3-MT-01).
@@ -55,6 +57,8 @@ const mehko = require('../../src/modules/listings/mehko');
 const mediaUrls = require('../../src/lib/mediaUrls');
 const { query, closeDb } = require('../helpers/db');
 const { closeRedis } = require('../../src/db/redis');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
+const { pollOnce } = require('../../src/outbox/worker');
 const { makeRecordingLogger, drainOutboxUntil } = require('./support');
 
 // ---- recording logger (the exact bytes a log aggregator would receive) ----------------------
@@ -93,6 +97,14 @@ const MODERATOR = {
   password: 'CorrectHorse!42w3m',
   fullName: 'Rosalind Nightjar-Moderator',
   phone: '+14155550944',
+};
+// U4-MODERATION: the moderator who performs the MT-01 action-4 human decision (a separate
+// identity from the FR-07 MODERATOR so neither describe depends on the other's ordering).
+const DECIDER = {
+  email: `mt01w3.decider.${RUN}@mt01-lane.homeplate.invalid`,
+  password: 'CorrectHorse!42w3d',
+  fullName: 'Wilhelmina Ocelot-Decider',
+  phone: '+14155550955',
 };
 // FR-07: a THIRD PARTY's personal data, decrypted inside the worker to deliver an alert.
 // Every value is distinctive enough that a substring sweep over the captured corpus cannot
@@ -296,22 +308,148 @@ describe('MT-01 / NFR-08 / AB-03 — listing lifecycle is audited and traceable'
 });
 
 // =============================================================================================
-// MT-01 action 4 — moderation decision (wave 4): measured absence, not assumed
+// MT-01 action 4 — moderation decision (U4-MODERATION): the real thing, no longer a probe
 // =============================================================================================
-describe('MT-01 action 4 — a moderation decision cannot be performed in this build', () => {
-  test('no moderation decision surface is mounted (probed, not assumed)', async () => {
-    const probes = [
-      ['get', '/api/moderation/queue'],
-      ['post', '/api/moderation/decisions'],
-      ['post', `/api/moderation/items/${listingId}/approve`],
-      ['post', `/api/listings/${listingId}/moderate`],
-    ];
-    for (const [method, path] of probes) {
-      const res = await request(app)[method](path).set('Cookie', hostCookie).send();
-      expect([404, 405]).toContain(res.status);
-    }
-    // No moderation.decision audit event can exist anywhere in the corpus.
-    expect(auditRecords().filter((r) => String(r.event).startsWith('moderation.'))).toHaveLength(0);
+describe('MT-01 action 4 — a human moderation decision is performed and audited (NFR-08)', () => {
+  const MODQ_CID = `mt01w3-modqueue-${RUN}`;
+  const DECIDE_CID = `mt01w3-moddecide-${RUN}`;
+  let deciderCookie;
+  let deciderId;
+  let queuedListingId;
+  let queueItemId;
+
+  beforeAll(async () => {
+    // A dedicated moderator (the safety describe registers its own later — one identity per
+    // block so neither depends on the other's ordering). Role BEFORE login: sessions
+    // snapshot roles at login (see the safety beforeAll note).
+    const reg = await request(app).post('/api/auth/register').send(DECIDER);
+    expect(reg.status).toBe(201);
+    deciderId = reg.body.user.id;
+    await query(
+      `UPDATE users SET email_verified = true, roles = ARRAY['user','moderator'] WHERE id = $1`,
+      [deciderId]
+    );
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: DECIDER.email, password: DECIDER.password });
+    expect(login.status).toBe(200);
+    deciderCookie = login.headers['set-cookie'].join(';');
+  });
+
+  test('a low-confidence scan escalates to the queue, audited with the CREATING request correlation ID', async () => {
+    // Own probe listing on its own LA day; the LOW_CONFIDENCE sentinel drives the ADR-007
+    // mock below any sane threshold, so the REAL pipeline files it for human review.
+    const created = await request(app)
+      .post('/api/listings')
+      .set('Cookie', hostCookie)
+      .set('X-Correlation-Id', MODQ_CID)
+      .send(
+        listingBody(daysOut(25), {
+          title: 'MT01 Wave3 Moderation Queue Probe',
+          description: 'Audit probe meal [[LOW_CONFIDENCE]] for the human review stage.',
+        })
+      );
+    expect(created.status).toBe(201);
+    queuedListingId = created.body.listing.id;
+
+    const { rows: scans } = await query(
+      `SELECT id FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [queuedListingId]
+    );
+    expect(scans).toHaveLength(1);
+    // One scoped pass on the RECORDING logger (pollOnlyThese would poll on the default
+    // logger, and this test asserts on the recorded audit bytes).
+    const registry = loadHandlers({ log: recLogger });
+    await withOnlyTheseDue([scans[0].id], () => pollOnce({ registry, log: recLogger }));
+
+    // NFR-08 both sides: the scan's audit record carries the ORIGINATING request's ID.
+    const scanned = auditsFor('moderation.scanned', MODQ_CID);
+    expect(scanned).toHaveLength(1);
+    expect(scanned[0].outcome).toBe('escalated');
+    expect(scanned[0].entityType).toBe('listing');
+    expect(scanned[0].entityId).toBe(queuedListingId);
+    expect(scanned[0].reason).toBe('low_confidence');
+    expect(scanned[0].actorUserId).toBeNull();
+    expect(scanned[0].actor).toBe('system:moderation');
+
+    const { rows: items } = await query(
+      `SELECT id, status FROM moderation_queue WHERE content_type = 'listing' AND content_id = $1`,
+      [queuedListingId]
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].status).toBe('open');
+    queueItemId = items[0].id;
+  });
+
+  test('the moderator decides via POST /api/moderation/queue/:id/decision; ONE complete audit record', async () => {
+    // The queue lists the item for the Moderator role (surface behaviour is tc08's; here the
+    // audit trail is the subject).
+    const page = await request(app)
+      .get('/api/moderation/queue')
+      .set('Cookie', deciderCookie)
+      .query({ status: 'open', pageSize: 100 });
+    expect(page.status).toBe(200);
+    expect(page.body.items.map((i) => i.id)).toContain(queueItemId);
+
+    const res = await request(app)
+      .post(`/api/moderation/queue/${queueItemId}/decision`)
+      .set('Cookie', deciderCookie)
+      .set('X-Correlation-Id', DECIDE_CID)
+      .send({ decision: 'approve', category: 'benign' });
+    expect(res.status).toBe(200);
+
+    // MT-01 action 4: ONE structured moderation.decision audit record — event, correlation
+    // ID, actor user ID, subject entity ID, outcome, timestamp.
+    const audits = auditsFor('moderation.decision', DECIDE_CID);
+    expect(audits).toHaveLength(1);
+    const rec = audits[0];
+    expect(rec.outcome).toBe('success');
+    expect(rec.actorUserId).toBe(deciderId);
+    expect(rec.entityType).toBe('listing');
+    expect(rec.entityId).toBe(queuedListingId);
+    expect(rec.queueItemId).toBe(queueItemId);
+    expect(rec.decision).toBe('approved');
+    expect(typeof rec.decisionId).toBe('string');
+    expect(Number.isNaN(Date.parse(rec.time))).toBe(false);
+
+    // The record refers to persisted reality: human decision row + resolved queue item +
+    // the publication gate actually flipped.
+    const { rows: decisions } = await query(
+      `SELECT decided_by, decided_by_user_id, outcome FROM moderation_decisions WHERE id = $1`,
+      [rec.decisionId]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].decided_by).toBe('human');
+    expect(decisions[0].decided_by_user_id).toBe(deciderId);
+    expect(decisions[0].outcome).toBe('approved');
+    const { rows: resolved } = await query(
+      `SELECT status, resolved_at FROM moderation_queue WHERE id = $1`,
+      [queueItemId]
+    );
+    expect(resolved[0].status).toBe('resolved');
+    expect(resolved[0].resolved_at).not.toBeNull();
+    const { rows: listing } = await query(`SELECT moderation_status FROM listings WHERE id = $1`, [
+      queuedListingId,
+    ]);
+    expect(listing[0].moderation_status).toBe('approved');
+  });
+
+  test('a non-moderator decision attempt is refused 403 and audited as a failure', async () => {
+    const cid = `mt01w3-moddeny-${RUN}`;
+    const res = await request(app)
+      .post(`/api/moderation/queue/${queueItemId}/decision`)
+      .set('Cookie', hostCookie)
+      .set('X-Correlation-Id', cid)
+      .send({ decision: 'reject', category: 'spam' });
+    expect(res.status).toBe(403);
+    // The refusal is traceable (request_error carries the correlation ID and status), and no
+    // success record exists under this ID.
+    const errs = records().filter((r) => r.event === 'request_error' && r.correlationId === cid);
+    expect(errs.length).toBeGreaterThanOrEqual(1);
+    expect(errs[0].status).toBe(403);
+    expect(
+      auditRecords().filter((r) => r.correlationId === cid && r.outcome === 'success')
+    ).toEqual([]);
   });
 });
 
@@ -422,26 +560,38 @@ describe('MT-01 / NFR-08 — booking creation is audited end to end', () => {
     expect(attemptsText).not.toContain(STREET);
   });
 
-  test('a FAILING job (moderation.scan, handler lands wave 4) still logs with the originating correlation ID', async () => {
-    // The drain above claimed the due moderation.scan job at least once; no handler is
-    // registered until U4-MODERATION, so its retry/dead-letter line must still be traceable
-    // to the listing-creation request (NFR-08 — errors carry the correlation ID).
-    const scanLines = records().filter(
+  test('the DELIVERED moderation.scan job logs with the originating correlation ID and respects the prior decision', async () => {
+    // Converted no-handler probe (U4-MODERATION): the drain above delivered the scan job
+    // through the REAL handler. Its worker delivery line must be traceable to the
+    // listing-creation request (NFR-08 — same ID on both sides), and because this fixture
+    // had already been approved (direct SQL above), the handler must record a SKIP rather
+    // than re-deciding — a scan job can never override an existing decision (RT-02).
+    const deliveredLines = records().filter(
       (r) =>
-        (r.event === 'outbox_job_retry' || r.event === 'outbox_job_dead_letter') &&
+        r.event === 'outbox_job_delivered' &&
         r.jobType === 'moderation.scan' &&
         r.correlationId === LISTING_CID
     );
-    expect(scanLines.length).toBeGreaterThanOrEqual(1);
-    expect(scanLines[0].err && typeof scanLines[0].err.message).toBe('string');
-    // And the row is still queryable, not lost, still pending-or-dead (FR-08 safe direction).
+    expect(deliveredLines.length).toBe(1);
     const scan = await query(
       `SELECT status FROM outbox_jobs
        WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
       [listingId]
     );
     expect(scan.rows).toHaveLength(1);
-    expect(['pending', 'dead']).toContain(scan.rows[0].status);
+    expect(scan.rows[0].status).toBe('delivered');
+    // The handler's own audit record: skipped, already decided — with the SAME correlation ID.
+    const skips = auditsFor('moderation.scanned', LISTING_CID).filter(
+      (r) => r.entityId === listingId
+    );
+    expect(skips).toHaveLength(1);
+    expect(skips[0].outcome).toBe('skipped');
+    expect(skips[0].reason).toBe('ALREADY_DECIDED');
+    // …and the listing kept the decision it already had (never walked back to pending).
+    const { rows } = await query(`SELECT moderation_status FROM listings WHERE id = $1`, [
+      listingId,
+    ]);
+    expect(rows[0].moderation_status).toBe('approved');
   });
 
   test('a REFUSED booking (own listing, 409) is audited with outcome failure + machine reason (AB-02)', async () => {
@@ -1006,7 +1156,7 @@ describe('MT-01 — cause reconstruction and the SRS §3.4 PII register', () => 
   test('captured log output holds user IDs only — no email, password, name, phone, address or postal code', () => {
     const blob = lines.join('\n');
     expect(lines.length).toBeGreaterThan(30); // the scan runs over a real corpus
-    for (const identity of [HOST, GUEST, INTRUDER, OUTSIDER, MODERATOR]) {
+    for (const identity of [HOST, GUEST, INTRUDER, OUTSIDER, MODERATOR, DECIDER]) {
       expect(blob).not.toContain(identity.email);
       expect(blob).not.toContain(identity.password);
       expect(blob).not.toContain(identity.fullName);
@@ -1020,6 +1170,8 @@ describe('MT-01 — cause reconstruction and the SRS §3.4 PII register', () => 
     expect(blob).not.toContain('Zizania');
     expect(blob).not.toContain('Pangolin');
     expect(blob).not.toContain('Quillfeather');
+    expect(blob).not.toContain('Ocelot'); // the U4-MODERATION decider
+
     expect(blob).not.toContain(STREET);
     expect(blob).not.toContain('Sagebrush');
     expect(blob).not.toContain(SAFETY_STREET);

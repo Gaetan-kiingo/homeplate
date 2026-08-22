@@ -6,6 +6,14 @@
 // Requirement / decision traceability (SRS Appendix B):
 //   FR-07 (TC-07, IT-04) — the deferred half of "persist the alert, notify the moderator, and
 //            attempt delivery to the user's approved emergency-contact channel":
+//              (0) U4-SAFETY-COMPLETE: the alert's UNIFIED-queue entry — a moderation_queue
+//                  row of content_type 'safety_alert' (migration 0006) — is filed FIRST,
+//                  before any delivery leg, so it exists and remains however delivery ends,
+//                  including after the job dead-letters. Filing is idempotent per open item
+//                  (RT-02) and gated on the 4A read model declaring support for the type
+//                  (safetyRepo.unifiedQueueSupported — see the rationale there); until then
+//                  the safety_alerts row itself, at GET /api/moderation/alerts, is the
+//                  complete FR-07 queue and nothing is lost;
 //              (a) every Moderator (SRS §2.3) is emailed 'safety-alert-moderator'; the alert
 //                  row itself is the queue entry they act on (GET /api/moderation/alerts),
 //                  which exists from the moment the request committed — so an alert is
@@ -252,6 +260,7 @@ module.exports = {
       log.info({ event: 'safety_alert_noop', alertId, reason: 'missing' }, 'safety_alert_noop');
       return { status: 'noop' };
     }
+
     if (alert.delivery_status === 'delivered' || alert.delivery_status === 'no_channel') {
       // Terminal already: a redelivered job must not send twice (RT-02).
       log.info(
@@ -262,6 +271,33 @@ module.exports = {
     }
 
     try {
+      // (0) Unified 4A queue (U4-SAFETY-COMPLETE): file the moderation_queue entry BEFORE
+      // any delivery leg, so the entry exists — and survives — however delivery ends, dead
+      // letter included (every non-terminal attempt refiles it, idempotent per open item,
+      // RT-02). Inside this try on purpose: a filing failure marks the alert
+      // retrying/failed below instead of leaving it silently 'pending'. Gated on the
+      // published 4A contract: while the unified read model cannot serve 'safety_alert'
+      // rows, filing one would 500 every unfiltered GET /api/moderation/queue page
+      // containing it, so until 4A declares support the alert stays queued solely via
+      // GET /api/moderation/alerts (which lists it either way — nothing is lost).
+      if (safetyRepo.unifiedQueueSupported()) {
+        const { item, created } = await safetyRepo.fileUnifiedQueueEntry(alertId);
+        log.info(
+          {
+            event: 'safety_alert_unified_queue_entry',
+            alertId,
+            queueItemId: item ? item.id : null,
+            created,
+          },
+          'safety_alert_unified_queue_entry'
+        );
+      } else {
+        log.info(
+          { event: 'safety_alert_unified_queue_unsupported', alertId },
+          'safety_alert_unified_queue_unsupported'
+        );
+      }
+
       const moderatorsNotified = await notifyModerators({ alert, alertId, log });
       return await deliverToEmergencyContact({ alert, alertId, moderatorsNotified, log });
     } catch (err) {

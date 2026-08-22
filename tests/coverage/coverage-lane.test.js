@@ -63,13 +63,135 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
     expect(offenders).toEqual([]);
   });
 
-  test('wave 4-6 modules are NOT on disk yet (scope guard — SRS §1.2 / build-plan §4)', () => {
+  test('wave 5-6 surfaces are NOT on disk yet (scope guard — SRS §1.2 / build-plan §4)', () => {
     // `safety` left this list when U4-SAFETY landed (FR-07): its coverage is asserted by
     // tests/unit/safety.test.js, tc07-safety.test.js and it04-safety-delivery.test.js.
-    for (const mod of ['reviews', 'messaging', 'moderation', 'privacy']) {
-      expect(fs.existsSync(path.join(ROOT, 'src', 'modules', mod))).toBe(false);
-    }
+    // `moderation` left it when U4-MODERATION landed (FR-08) — the positive assertion is in
+    // the next test and its coverage in tests/unit/moderation.test.js + tc08.
+    // `reviews` left it when U4-REVIEWS landed (FR-05, wave 4B) — positive assertion two
+    // tests down; coverage in tests/unit/reviews.test.js + tc05-reviews.test.js.
+    // `messaging` left it when U4-MESSAGING landed (FR-06, wave 4C) — positive assertion
+    // three tests down; coverage in tests/unit/messaging.test.js + tc06-messaging.test.js.
+    // `privacy` left it when U4-PRIVACY landed (NFR-12/NFR-13, wave 4D) — positive
+    // assertion below; coverage in tests/unit/privacy.test.js + st05-st06-privacy.test.js.
+    // The responsive React client is waves 5-6 (SRS §2.1.2).
     expect(fs.existsSync(path.join(ROOT, 'client'))).toBe(false);
+  });
+
+  test('U4-PRIVACY is ON disk with its full published surface (NFR-12/13 / build-plan §4D)', () => {
+    const moduleDir = path.join(ROOT, 'src', 'modules', 'privacy');
+    for (const f of ['repo.js', 'service.js', 'routes.js']) {
+      expect(fs.existsSync(path.join(moduleDir, f))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'src', 'schemas', 'privacy.js'))).toBe(true);
+    for (const handler of ['accountErasure.js', 'dataExport.js']) {
+      expect(fs.existsSync(path.join(ROOT, 'src', 'outbox', 'handlers', handler))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'scripts', 'backup.js'))).toBe(true);
+    // The published wave-4D contract (build-plan §4D): job-type strings + service surface.
+    const service = require('../../src/modules/privacy/service');
+    expect(service.ERASURE_JOB_TYPE).toBe('account.erasure');
+    expect(service.EXPORT_JOB_TYPE).toBe('data.export');
+    for (const fn of [
+      service.requestDeletion,
+      service.processErasure,
+      service.requestExport,
+      service.processExport,
+      service.getExportForUser,
+      service.runInactivitySweep,
+    ]) {
+      expect(typeof fn).toBe('function');
+    }
+    // config.backup.retentionDays joined the validated config (ST-05 backup expiry).
+    const config = require('../../src/config');
+    expect(config.backup.retentionDays).toBeGreaterThanOrEqual(1);
+    // ADR-001/003: the request-reachable module files import NO adapter and no transport —
+    // media deletion and the notice email live exclusively in the worker handlers.
+    for (const f of ['service.js', 'routes.js', 'repo.js']) {
+      const src = fs.readFileSync(path.join(moduleDir, f), 'utf8');
+      expect(src).not.toMatch(/require\(['"][^'"]*adapters\//);
+      expect(src).not.toMatch(/require\(['"][^'"]*notifications\/transport/);
+      expect(src).not.toMatch(/require\(['"][^'"]*media\/service/);
+    }
+  });
+
+  test('U4-MODERATION is ON disk with its full published surface (FR-08 / build-plan §4A)', () => {
+    const moduleDir = path.join(ROOT, 'src', 'modules', 'moderation');
+    for (const f of ['prefilter.js', 'repo.js', 'service.js', 'routes.js']) {
+      expect(fs.existsSync(path.join(moduleDir, f))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'src', 'schemas', 'moderation.js'))).toBe(true);
+    expect(
+      fs.existsSync(path.join(ROOT, 'src', 'outbox', 'handlers', 'moderationScan.js'))
+    ).toBe(true);
+    // The published wave-4A contract (build-plan §7): job-type string + service surface.
+    const service = require('../../src/modules/moderation/service');
+    expect(service.JOB_TYPE).toBe('moderation.scan');
+    for (const fn of [service.submitForReview, service.processScan, service.listQueue,
+      service.decide]) {
+      expect(typeof fn).toBe('function');
+    }
+    // ADR-001/003: neither the service nor the routes may import an adapter — the LLM stage
+    // lives exclusively in the worker handler.
+    for (const f of ['service.js', 'routes.js', 'repo.js', 'prefilter.js']) {
+      const src = fs.readFileSync(path.join(moduleDir, f), 'utf8');
+      expect(src).not.toMatch(/require\(['"][^'"]*adapters\//);
+    }
+  });
+
+  test('U4-REVIEWS is ON disk with its full published surface (FR-05 / build-plan §4B)', () => {
+    const moduleDir = path.join(ROOT, 'src', 'modules', 'reviews');
+    for (const f of ['repo.js', 'service.js', 'routes.js']) {
+      expect(fs.existsSync(path.join(moduleDir, f))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'src', 'schemas', 'reviews.js'))).toBe(true);
+    // The published wave-4B contract (build-plan §4B): the review-create service and the
+    // authorship lookup the media module consumes — MOVED here from the media repo, which
+    // re-exports it unchanged for its route's pinned call site.
+    const service = require('../../src/modules/reviews/service');
+    expect(typeof service.createReview).toBe('function');
+    const reviewsRepo = require('../../src/modules/reviews/repo');
+    const mediaRepo = require('../../src/modules/media/repo');
+    expect(typeof reviewsRepo.findReviewAuthorId).toBe('function');
+    expect(mediaRepo.findReviewAuthorId).toBe(reviewsRepo.findReviewAuthorId);
+    // ADR-001/003: no adapter import anywhere in the reviews module — the scan runs in the
+    // worker; the request path only writes rows.
+    for (const f of ['service.js', 'routes.js', 'repo.js']) {
+      const src = fs.readFileSync(path.join(moduleDir, f), 'utf8');
+      expect(src).not.toMatch(/require\(['"][^'"]*adapters\//);
+    }
+  });
+
+  test('U4-MESSAGING is ON disk with its full published surface (FR-06 / build-plan §4C)', () => {
+    const moduleDir = path.join(ROOT, 'src', 'modules', 'messaging');
+    for (const f of ['repo.js', 'service.js', 'routes.js']) {
+      expect(fs.existsSync(path.join(moduleDir, f))).toBe(true);
+    }
+    expect(fs.existsSync(path.join(ROOT, 'src', 'schemas', 'messaging.js'))).toBe(true);
+    // The published wave-4C contract (build-plan §4C): post + thread-read service surface
+    // and the NFR-13 message serializer (sender id, body, createdAt — never email/phone/
+    // address, no listing location on a message payload).
+    const service = require('../../src/modules/messaging/service');
+    for (const fn of [service.postMessage, service.listMessages, service.serializeMessage]) {
+      expect(typeof fn).toBe('function');
+    }
+    expect(
+      Object.keys(
+        service.serializeMessage({
+          id: 'x',
+          booking_id: 'x',
+          sender_id: 'x',
+          body: 'x',
+          created_at: 'x',
+        })
+      ).sort()
+    ).toEqual(['id', 'bookingId', 'senderId', 'body', 'createdAt'].sort());
+    // ADR-001/003: no adapter import anywhere in the messaging module — the scan runs in
+    // the worker; the request path only writes/reads rows.
+    for (const f of ['service.js', 'routes.js', 'repo.js']) {
+      const src = fs.readFileSync(path.join(moduleDir, f), 'utf8');
+      expect(src).not.toMatch(/require\(['"][^'"]*adapters\//);
+    }
   });
 });
 
@@ -276,7 +398,7 @@ describe('coverage lane — every published wave-3 contract exists with real exp
     }
   });
 
-  test('outbox handler registry now serves the four wave 0-3 job types', () => {
+  test('outbox handler registry serves the wave 0-4A job types including moderation.scan', () => {
     const dispatch = require('../../src/outbox/dispatch');
     const registry = dispatch.loadHandlers();
     const types = registry.types();
@@ -284,9 +406,12 @@ describe('coverage lane — every published wave-3 contract exists with real exp
       'booking.promote']) {
       expect(types).toContain(t);
     }
-    // moderation.scan is enqueued by wave 3 but its handler is wave-4 (build-plan §6.2):
-    // jobs dead-letter and content stays pending — assert no handler pretends otherwise.
-    expect(types).not.toContain('moderation.scan');
+    // moderation.scan was enqueued by wave 3 with NO handler (jobs dead-lettered, failing
+    // safe). U4-MODERATION landed the handler: the wave-3 payload contract is consumed by
+    // the real FR-08 pipeline now — tc08 proves the behaviour, this pins the registration.
+    expect(types).toContain('moderation.scan');
+    const handler = registry.get('moderation.scan');
+    expect(typeof handler.handle).toBe('function');
   });
 });
 
@@ -349,18 +474,50 @@ describe('coverage lane — mounted HTTP surface matches the wave-3 plan', () =>
     expect((await request(app).delete(`/api/media/${UUID}`)).status).toBe(401);
   });
 
-  test('wave 4-6 modules are NOT mounted (404); the landed FR-07 surface is session-gated', async () => {
-    for (const p of ['/api/reviews', '/api/messaging', '/api/moderation', '/api/safety',
-      '/api/privacy']) {
+  test('remaining wave 4-6 modules are NOT mounted (404); landed FR-05..FR-08 + NFR-12/13 surfaces are session-gated', async () => {
+    // /api/reviews and /api/messaging stay 404 BY DESIGN even though U4-REVIEWS and
+    // U4-MESSAGING landed: each module mounts its full path(s) under /api/bookings/:id only
+    // (build-plan §4B/§4C — no public review-listing route, no standalone messaging noun,
+    // and no moderator thread-reading route beyond the moderation queue — NFR-13).
+    // /api/privacy stays 404 BY DESIGN too: U4-PRIVACY mounts its full paths under
+    // /api/users/me (deletion and export are actions on the ACCOUNT — build-plan §4D).
+    for (const p of ['/api/reviews', '/api/messaging', '/api/safety', '/api/privacy']) {
       const res = await request(app).get(p);
       expect(res.status).toBe(404);
     }
-    // U4-SAFETY mounts exactly two FULL paths (never a bare /api/safety or /api/moderation):
+    // U4-PRIVACY's NFR-12/NFR-13 surface is mounted and session-gated (401, never 404):
+    // DELETE falls through the users router into the privacy router (registry mount order).
+    expect((await request(app).delete('/api/users/me')).status).toBe(401);
+    expect((await request(app).post('/api/users/me/export').send({})).status).toBe(401);
+    expect((await request(app).get(`/api/users/me/export/${UUID}`)).status).toBe(401);
+    // No collection GET is declared for /me/export — a proper 405 naming POST, not a 404.
+    const exportCollection = await request(app).get('/api/users/me/export');
+    expect(exportCollection.status).toBe(405);
+    expect(exportCollection.headers.allow).toContain('POST');
+    // U4-REVIEWS' FR-05 surface is mounted and session-gated (401, never 404).
+    expect(
+      (await request(app).post(`/api/bookings/${UUID}/reviews`).send({})).status
+    ).toBe(401);
+    // U4-MESSAGING's FR-06 surface is mounted and session-gated on BOTH verbs (401, never 404).
+    expect(
+      (await request(app).post(`/api/bookings/${UUID}/messages`).send({})).status
+    ).toBe(401);
+    expect((await request(app).get(`/api/bookings/${UUID}/messages`)).status).toBe(401);
+    // /api/moderation itself declares no collection route: the module mounts /queue and
+    // /queue/:id/decision only, so the bare path stays a structured 404.
+    expect((await request(app).get('/api/moderation')).status).toBe(404);
+    // U4-SAFETY mounts exactly two FULL paths (never a bare /api/safety), and /alerts must
+    // keep FALLING THROUGH the moderation router to safety's router (registry mount order):
     // they answer 401 unauthenticated, which is what proves they are mounted at all.
     expect((await request(app).get('/api/moderation/alerts')).status).toBe(401);
     expect((await request(app).post(`/api/bookings/${UUID}/safety-alerts`).send({})).status).toBe(
       401
     );
+    // U4-MODERATION's FR-08 moderator surface is mounted and session-gated (401, never 404).
+    expect((await request(app).get('/api/moderation/queue')).status).toBe(401);
+    expect(
+      (await request(app).post(`/api/moderation/queue/${UUID}/decision`).send({})).status
+    ).toBe(401);
   });
 });
 

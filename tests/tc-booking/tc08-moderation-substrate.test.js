@@ -1,16 +1,24 @@
-// tests/tc-booking/tc08-moderation-substrate.test.js — VERIFIER lane "tc-booking", TC-08 (FR-08,
-// ADR-002/007).
+// tests/tc-booking/tc08-moderation-substrate.test.js — VERIFIER lane "tc-booking", TC-08
+// (FR-08, ADR-002/007) — THE REAL PIPELINE ACCEPTANCE. Until U4-MODERATION landed, this file
+// verified the wave-2 substrate and documented the flow's absence; the flow exists now, so
+// the substrate checks remain and the absence probes became the end-to-end acceptance:
 //
-// The moderation FLOW (pre-filter, worker scan, moderator queue, publication policy) is a
-// wave-4 unit and is NOT built in this run. This file verifies the wave-2 substrate FR-08
-// will stand on, and documents the flow's absence:
-//  - ADR-007: the automated suite resolves the DETERMINISTIC MOCK adapter; classify()
-//    returns {category, confidence, model} with valid category/confidence; a forced outage
-//    surfaces as a typed retryable error (so wave 4 can keep public content pending);
-//  - no provider name, model id, or API key is hardcoded in either adapter source file;
-//  - ADR-002 schema backstop: listings.moderation_status DEFAULTS to 'pending' — content
-//    is born unpublished;
-//  - moderation flow endpoints/modules do not exist yet (documented gap).
+//   - deterministic pre-filter: a blocklist hit rejects with decided_by='pre_filter' and
+//     ZERO LLM calls; the content never publishes;
+//   - LLM stage through the ADR-007 adapter (deterministic mock in the suite): benign at
+//     high confidence auto-approves and the listing becomes publicly visible;
+//   - confidence routing: flagged or low-confidence content files ONE moderator-queue item
+//     and stays pending + invisible;
+//   - human stage: GET /api/moderation/queue (401/403/200) and
+//     POST /api/moderation/queue/:id/decision — approve publishes, reject never does;
+//   - the CRITICAL wave-3 backlog: moderation.scan jobs dead-lettered with no handler are
+//     requeued by scripts/requeue-dead-letters.js and PROVEN drained by execution through
+//     the real handler to real decisions.
+//
+// Requirement traceability (SRS Appendix B): FR-08 (TC-08), NFR-08 (decision audit lives in
+// mt-ut-quality), NFR-09 (outage legs live in rt01/adr-conformance/it01 — dead-letter +
+// pending-forever), NFR-11 (422 on hostile decision bodies), AB-01/AB-03/AB-04 (fake, spam
+// and abusive content never reaches guests unreviewed), AB-08 (moderator-only surface).
 'use strict';
 
 const fs = require('fs');
@@ -24,12 +32,28 @@ const { closeTestRedis } = require('../helpers/redis');
 const { pollOnlyThese } = require('../helpers/outboxScope');
 const config = require('../../src/config');
 const sessions = require('../../src/modules/auth/sessions');
-const { loadHandlers } = require('../../src/outbox/dispatch');
+const { loadHandlers, createRegistry } = require('../../src/outbox/dispatch');
+const {
+  requeueDeadLetters,
+  parseArgs,
+  main: requeueMain,
+} = require('../../scripts/requeue-dead-letters');
 
 let app;
+let registry;
+
+const quietLog = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child() {
+    return this;
+  },
+};
 
 beforeAll(() => {
   app = createApp();
+  registry = loadHandlers({ log: quietLog });
 });
 
 afterAll(async () => {
@@ -38,7 +62,86 @@ afterAll(async () => {
   await closeTestRedis();
 });
 
-describe('FR-08 / TC-08 — moderation substrate (wave-2 scope)', () => {
+async function cookieFor(user) {
+  const { token } = await sessions.createSession(user);
+  return `${config.auth.sessionCookieName}=${token}`;
+}
+
+/** A fresh eligible host (one per listing: the FR-11 daily cap is one listing/host/day). */
+async function makeHost() {
+  const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-fixture' });
+  await makeHostProfile({ user_id: host.id });
+  return host;
+}
+
+let daySeq = 30; // unique future LA day per API-created listing (clears the FR-11 daily cap)
+let cuisineSeq = 0;
+
+/** A unique cuisine tag per test: the U3-SEARCH result-page cache keys on the normalized
+ *  query, so re-using one cuisine across tests would serve a stale cached page (TTL 60 s)
+ *  and hide a listing approved after the first search. */
+function uniqueCuisine() {
+  cuisineSeq += 1;
+  return `tc08lane${process.pid}x${cuisineSeq}`;
+}
+
+/** Create a listing through the REAL API; returns { host, cookie, listingId, scanJobId, cuisine }. */
+async function createListingViaApi(textOverrides = {}) {
+  const host = await makeHost();
+  const cookie = await cookieFor(host);
+  daySeq += 1;
+  const res = await request(app)
+    .post('/api/listings')
+    .set('Cookie', cookie)
+    .send({
+      title: 'TC08 pipeline meal',
+      description: 'A tc08 acceptance listing.',
+      ingredients: ['rice'],
+      allergens: ['none'],
+      cuisine: uniqueCuisine(),
+      scheduledStart: new Date(Date.now() + daySeq * 24 * 3600 * 1000).toISOString(),
+      durationMinutes: 90,
+      seatCapacity: 4,
+      addressLine1: '9 Pipeline Street',
+      city: 'San Diego',
+      region: 'CA',
+      postalCode: '92101',
+      ...textOverrides,
+    });
+  expect(res.status).toBe(201);
+  expect(res.body.listing.moderationStatus).toBe('pending'); // born pending (ADR-002)
+  const listingId = res.body.listing.id;
+  const { rows } = await query(
+    `SELECT id FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+    [listingId]
+  );
+  expect(rows).toHaveLength(1);
+  return { host, cookie, listingId, scanJobId: rows[0].id, cuisine: res.body.listing.cuisine };
+}
+
+async function moderationStatusOf(listingId) {
+  const { rows } = await query(`SELECT moderation_status FROM listings WHERE id = $1`, [listingId]);
+  return rows[0].moderation_status;
+}
+
+async function decisionsFor(listingId) {
+  const { rows } = await query(
+    `SELECT category, confidence, outcome, decided_by, model_id FROM moderation_decisions
+      WHERE content_type = 'listing' AND content_id = $1 ORDER BY created_at`,
+    [listingId]
+  );
+  return rows;
+}
+
+async function makeModeratorCookie() {
+  const moderator = await makeUser({ roles: ['user', 'moderator'] });
+  return { moderator, cookie: await cookieFor(moderator) };
+}
+
+// ----------------------------------------------------------------------------------------------
+// Substrate (kept from the wave-2 revision — every invariant still binds)
+// ----------------------------------------------------------------------------------------------
+describe('FR-08 / TC-08 — moderation substrate (ADR-007 adapter contract, ADR-002 schema)', () => {
   test('ADR-007: NODE_ENV=test resolves the deterministic mock; classify returns {category, confidence, model}', async () => {
     const result = await llm.classify('a perfectly friendly home-cooked meal description');
     expect(['offensive', 'spam', 'fraudulent', 'benign']).toContain(result.category);
@@ -51,9 +154,9 @@ describe('FR-08 / TC-08 — moderation substrate (wave-2 scope)', () => {
     expect(again).toEqual(result);
   });
 
-  test('ADR-007: low-confidence sentinel yields confidence below any sane threshold (routes to human review in wave 4)', async () => {
+  test('ADR-007: low-confidence sentinel yields confidence below the routing threshold', async () => {
     const low = await llm.classify(`review text ${mockLlm.LOW_CONFIDENCE_SENTINEL}`);
-    expect(low.confidence).toBeLessThan(0.8);
+    expect(low.confidence).toBeLessThan(config.moderation.confidenceThreshold);
   });
 
   test('ADR-002/NFR-09: a provider outage is a typed retryable failure, never a fake "approved"', async () => {
@@ -87,103 +190,302 @@ describe('FR-08 / TC-08 — moderation substrate (wave-2 scope)', () => {
     expect(rows[0].column_default).toMatch(/pending/);
   });
 
-  test('WAVE-4 GAP (documented): no moderation module, routes, decision writer, or moderation.scan handler exists yet', () => {
+  test('U4-MODERATION landed: module, handler and moderator routes exist (converted absence probe)', async () => {
     const modulesDir = path.join(__dirname, '..', '..', 'src', 'modules');
-    expect(fs.existsSync(path.join(modulesDir, 'moderation'))).toBe(false);
-    // …and the outbox worker has NO handler for the scan jobs listings enqueue (the safe
-    // failure direction of that absence is proven in the next describe).
-    const registry = loadHandlers();
-    expect(registry.types()).not.toContain('moderation.scan');
-    expect(registry.get('moderation.scan')).toBeFalsy();
-    // moderation_decisions / moderation_queue tables exist (schema-first), but nothing
-    // writes them yet — assert they are empty of application writes in this run.
+    expect(fs.existsSync(path.join(modulesDir, 'moderation'))).toBe(true);
+    expect(registry.types()).toContain('moderation.scan');
+    expect(typeof registry.get('moderation.scan').handle).toBe('function');
+    // The surface is mounted and session-gated (AB-08): 401 anonymous, never 404.
+    expect((await request(app).get('/api/moderation/queue')).status).toBe(401);
   });
 });
 
 // ----------------------------------------------------------------------------------------------
-// FR-08's safe failure direction — merged from the wave-3 re-verification files: with no
-// moderation handler built, an unhandled scan job must strand content INVISIBLE, never publish it.
+// The FR-08 pipeline end to end (TC-08 acceptance)
 // ----------------------------------------------------------------------------------------------
-
-describe('FR-08 — an unhandled moderation.scan dead-letters and the content never publishes itself', () => {
-  async function cookieFor(user) {
-    const { token } = await sessions.createSession(user);
-    return `${config.auth.sessionCookieName}=${token}`;
-  }
-
-  test('the scan job retries then DEAD-LETTERS, and the listing stays pending and invisible to non-owners', async () => {
-    const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-fixture' });
-    await makeHostProfile({ user_id: host.id });
-    const cookie = await cookieFor(host);
-    const created = await request(app)
-      .post('/api/listings')
-      .set('Cookie', cookie)
-      .send({
-        title: 'Reverify probe meal',
-        description: 'A verifier-lane probe listing for the FR-08 safe-direction assertion.',
-        ingredients: ['rice'],
-        allergens: ['none'],
-        cuisine: 'test',
-        scheduledStart: new Date(Date.UTC(2030, 5, 17, 20, 0, 0)).toISOString(),
-        durationMinutes: 90,
-        seatCapacity: 4,
-        addressLine1: '9 Probe Street',
-        city: 'San Diego',
-        region: 'CA',
-        postalCode: '92101',
-      });
-    expect(created.status).toBe(201);
-    const listingId = created.body.listing.id;
-    expect(created.body.listing.moderationStatus).toBe('pending');
-
-    const { rows: scan } = await query(
-      `SELECT id FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
-      [listingId]
-    );
-    expect(scan).toHaveLength(1);
-
-    // Burn the retry budget with the REAL registry (no moderation handler is registered).
-    const registry = loadHandlers();
-    for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
-      await query('UPDATE outbox_jobs SET available_at = now() WHERE id = $1', [scan[0].id]);
-      await pollOnlyThese([scan[0].id], registry, 1);
+describe('TC-08 — pre-filter stage: blocklist hit rejects with ZERO LLM calls', () => {
+  test('an obviously abusive listing is rejected by the pre-filter and never surfaces (AB-04)', async () => {
+    const { cookie, listingId, scanJobId, cuisine } = await createListingViaApi({
+      title: 'Abusive probe meal',
+      description: 'If you complain about my food you should go die, all of you.',
+    });
+    const spy = jest.spyOn(llm, 'classify');
+    try {
+      await pollOnlyThese([scanJobId], registry, 1);
+      expect(spy).not.toHaveBeenCalled(); // stage 1 decided — the provider was never involved
+    } finally {
+      spy.mockRestore();
     }
-    const { rows: dead } = await query('SELECT status, last_error FROM outbox_jobs WHERE id = $1', [
-      scan[0].id,
-    ]);
-    expect(dead[0].status).toBe('dead');
-    expect(dead[0].last_error).toMatch(/no outbox handler registered/i);
-
-    // FR-08's required failure direction: the content NEVER publishes itself.
-    const { rows: still } = await query('SELECT moderation_status FROM listings WHERE id = $1', [
-      listingId,
-    ]);
-    expect(still[0].moderation_status).toBe('pending');
-
-    // …and it is invisible to every read path a non-owner can reach. (AB-08: both read
-    // routes require a session — anonymous callers get 401, which is also invisibility.)
-    expect((await request(app).get(`/api/listings/${listingId}`)).status).toBe(401);
-    expect((await request(app).get('/api/listings/search').query({ q: 'Reverify' })).status).toBe(
-      401
-    );
-
-    const browser = await makeUser({ phone_enc: 'enc:v1:tc08-fixture' });
+    expect(await moderationStatusOf(listingId)).toBe('rejected');
+    const decisions = await decisionsFor(listingId);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      outcome: 'rejected',
+      decided_by: 'pre_filter',
+      category: 'offensive',
+      model_id: null,
+    });
+    // Never on a public read path: detail 404 to a stranger, absent from search.
+    const browser = await makeUser({});
     const browserCookie = await cookieFor(browser);
-    const detail = await request(app)
-      .get(`/api/listings/${listingId}`)
-      .set('Cookie', browserCookie);
-    expect(detail.status).toBe(404); // pending content is indistinguishable from missing
-
+    expect(
+      (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+    ).toBe(404);
     const search = await request(app)
       .get('/api/listings/search')
       .set('Cookie', browserCookie)
-      .query({ city: 'San Diego', pageSize: 50 });
+      .query({ cuisine, pageSize: 100 });
     expect(search.status).toBe(200);
     expect(JSON.stringify(search.body)).not.toContain(listingId);
-
-    // The owner still sees their own pending listing (not a publication).
+    // The owner still sees their own listing, un-published (not a disclosure).
     const ownerView = await request(app).get(`/api/listings/${listingId}`).set('Cookie', cookie);
     expect(ownerView.status).toBe(200);
-    expect(ownerView.body.listing.moderationStatus).toBe('pending');
+    expect(ownerView.body.listing.moderationStatus).toBe('rejected');
+  });
+});
+
+describe('TC-08 — LLM stage: benign content auto-approves and PUBLISHES', () => {
+  test('a benign listing scans clean and appears on the public read paths', async () => {
+    const { listingId, scanJobId, cuisine } = await createListingViaApi({
+      title: 'Friendly tamales evening',
+      description: 'Six seats of homemade tamales with salsa verde.',
+    });
+    await pollOnlyThese([scanJobId], registry, 1);
+    expect(await moderationStatusOf(listingId)).toBe('approved');
+    const decisions = await decisionsFor(listingId);
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      outcome: 'approved',
+      decided_by: 'llm',
+      category: 'benign',
+      model_id: mockLlm.model, // ADR-007: the model id is recorded with the decision
+    });
+    // Publicly visible now: search finds it, a stranger's detail read is 200.
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+    const search = await request(app)
+      .get('/api/listings/search')
+      .set('Cookie', browserCookie)
+      .query({ cuisine, pageSize: 100 });
+    expect(search.status).toBe(200);
+    expect(search.body.results.map((r) => r.id)).toContain(listingId);
+    expect(
+      (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+    ).toBe(200);
+  });
+});
+
+describe('TC-08 — confidence routing + the human stage (FR-08, AB-08)', () => {
+  test('flagged content queues for human review; APPROVE publishes it', async () => {
+    // "wire transfer" is a deterministic mock fixture (fraudulent, 0.93) that the blocklist
+    // deliberately does not cover — the LLM stage flags it, ADR-002 routes it to a human.
+    const { listingId, scanJobId, cuisine } = await createListingViaApi({
+      description: 'Payment by wire transfer preferred for this dinner.',
+    });
+    await pollOnlyThese([scanJobId], registry, 1);
+    expect(await moderationStatusOf(listingId)).toBe('pending'); // a flag is not a verdict
+    const [escalation] = await decisionsFor(listingId);
+    expect(escalation).toMatchObject({
+      outcome: 'escalated',
+      decided_by: 'llm',
+      category: 'fraudulent',
+    });
+    const { rows: items } = await query(
+      `SELECT id, reason, status FROM moderation_queue
+        WHERE content_type = 'listing' AND content_id = $1`,
+      [listingId]
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ reason: 'flagged', status: 'open' });
+
+    // Invisible while queued (never published unreviewed).
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+    expect(
+      (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+    ).toBe(404);
+
+    // The queue surface: 401 anonymous, 403 ordinary session, 200 moderator with the item.
+    expect((await request(app).get('/api/moderation/queue')).status).toBe(401);
+    expect(
+      (await request(app).get('/api/moderation/queue').set('Cookie', browserCookie)).status
+    ).toBe(403);
+    const { cookie: moderatorCookie } = await makeModeratorCookie();
+    const page = await request(app)
+      .get('/api/moderation/queue')
+      .set('Cookie', moderatorCookie)
+      .query({ status: 'open', contentType: 'listing', pageSize: 100 });
+    expect(page.status).toBe(200);
+    const entry = page.body.items.find((i) => i.id === items[0].id);
+    expect(entry).toBeDefined();
+    expect(entry.contentId).toBe(listingId);
+    expect(entry.excerpt).toContain('wire transfer');
+    expect(entry.latestDecision).toMatchObject({ category: 'fraudulent', outcome: 'escalated' });
+    // ADR-010: the queue read model exposes NO location data of the listing.
+    expect(JSON.stringify(page.body)).not.toContain('Pipeline Street');
+
+    // Human APPROVE → the content appears on the public read paths.
+    const decided = await request(app)
+      .post(`/api/moderation/queue/${items[0].id}/decision`)
+      .set('Cookie', moderatorCookie)
+      .send({ decision: 'approve', category: 'benign', note: 'legitimate menu wording' });
+    expect(decided.status).toBe(200);
+    expect(decided.body.item.status).toBe('resolved');
+    expect(await moderationStatusOf(listingId)).toBe('approved');
+    expect(
+      (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+    ).toBe(200);
+    const search = await request(app)
+      .get('/api/listings/search')
+      .set('Cookie', browserCookie)
+      .query({ cuisine, pageSize: 100 });
+    expect(search.body.results.map((r) => r.id)).toContain(listingId);
+  });
+
+  test('low-confidence content queues; REJECT keeps it unpublished forever', async () => {
+    const { listingId, scanJobId, cuisine } = await createListingViaApi({
+      description: `An ambiguous description ${mockLlm.LOW_CONFIDENCE_SENTINEL} for review.`,
+    });
+    await pollOnlyThese([scanJobId], registry, 1);
+    expect(await moderationStatusOf(listingId)).toBe('pending');
+    const { rows: items } = await query(
+      `SELECT id, reason FROM moderation_queue WHERE content_type = 'listing' AND content_id = $1`,
+      [listingId]
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].reason).toBe('low_confidence');
+
+    const { cookie: moderatorCookie } = await makeModeratorCookie();
+    const decided = await request(app)
+      .post(`/api/moderation/queue/${items[0].id}/decision`)
+      .set('Cookie', moderatorCookie)
+      .send({ decision: 'reject', category: 'spam' });
+    expect(decided.status).toBe(200);
+    expect(await moderationStatusOf(listingId)).toBe('rejected');
+    const human = (await decisionsFor(listingId)).find((d) => d.decided_by === 'human');
+    expect(human).toMatchObject({ outcome: 'rejected', category: 'spam' });
+    // Never on a public read path.
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+    expect(
+      (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+    ).toBe(404);
+    const search = await request(app)
+      .get('/api/listings/search')
+      .set('Cookie', browserCookie)
+      .query({ cuisine, pageSize: 100 });
+    expect(JSON.stringify(search.body)).not.toContain(listingId);
+  });
+
+  test('NFR-11: hostile decision input is a 422 with field-level errors, never a 500', async () => {
+    const { cookie: moderatorCookie } = await makeModeratorCookie();
+    const bad = await request(app)
+      .post(`/api/moderation/queue/not-a-uuid/decision`)
+      .set('Cookie', moderatorCookie)
+      .send({ decision: 'publish', category: "'; DROP TABLE moderation_queue; --" });
+    expect(bad.status).toBe(422);
+    expect(bad.body.error.code).toBe('VALIDATION_FAILED');
+    expect(Array.isArray(bad.body.error.fields)).toBe(true);
+    // The table survived the injection string (parameterized SQL + schema rejection).
+    const { rows } = await query(`SELECT count(*)::int AS n FROM moderation_queue`);
+    expect(rows[0].n).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// The CRITICAL wave-3 backlog: dead-lettered scans are requeued and PROVEN drained (FR-08,
+// NFR-09 — build-plan §4A "requeue the wave-3 dead letters, verify the requeue actually
+// drains them")
+// ----------------------------------------------------------------------------------------------
+describe('FR-08 — wave-3 dead-lettered moderation.scan jobs requeue and drain to decisions', () => {
+  test('dead letters (no-handler era) → scripts/requeue-dead-letters.js → real handler drains them', async () => {
+    // 1. Recreate the exact wave-3 failure mode: scans enqueued, NO handler registered.
+    const a = await createListingViaApi({ description: 'Backlog meal one, perfectly benign.' });
+    const b = await createListingViaApi({ description: 'Backlog meal two, also benign.' });
+    const emptyRegistry = createRegistry([]); // wave 3's worker had no moderation handler
+    for (const scanJobId of [a.scanJobId, b.scanJobId]) {
+      for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
+        await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = $1`, [scanJobId]);
+        await pollOnlyThese([scanJobId], emptyRegistry, 1);
+      }
+      const { rows } = await query(`SELECT status, last_error FROM outbox_jobs WHERE id = $1`, [
+        scanJobId,
+      ]);
+      expect(rows[0].status).toBe('dead');
+      expect(rows[0].last_error).toMatch(/no outbox handler registered/i);
+    }
+    // Failing safe all along: both listings still pending, never published.
+    expect(await moderationStatusOf(a.listingId)).toBe('pending');
+    expect(await moderationStatusOf(b.listingId)).toBe('pending');
+
+    // 2. The operator script requeues the type's dead letters (fresh budget, available now).
+    //    In-process call: a standalone child process would contend on the suite advisory
+    //    lock (tests/helpers/env.js concurrency rule); the CLI arg surface is pinned below.
+    const result = await requeueDeadLetters({ type: 'moderation.scan', log: { log: () => {} } });
+    const requeuedIds = result.requeued.map((r) => String(r.id));
+    expect(requeuedIds).toEqual(expect.arrayContaining([String(a.scanJobId), String(b.scanJobId)]));
+    for (const row of result.requeued) {
+      expect(row.type).toBe('moderation.scan'); // --type filters; nothing else was touched
+      expect(row.status).toBe('pending');
+      expect(row.attempt_count).toBe(0); // a FRESH retry budget (outbox.requeueDeadLetter)
+    }
+
+    // 3. PROVEN DRAINED BY EXECUTION: the real registry delivers both jobs to real decisions.
+    await pollOnlyThese([a.scanJobId, b.scanJobId], registry, 2);
+    for (const { listingId, scanJobId } of [a, b]) {
+      const { rows } = await query(`SELECT status FROM outbox_jobs WHERE id = $1`, [scanJobId]);
+      expect(rows[0].status).toBe('delivered');
+      expect(await moderationStatusOf(listingId)).toBe('approved'); // benign backlog published
+      const decisions = await decisionsFor(listingId);
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]).toMatchObject({ decided_by: 'llm', outcome: 'approved' });
+    }
+  });
+
+  test('the CLI argument surface is pinned (operator contract)', () => {
+    expect(parseArgs(['--type', 'moderation.scan'])).toMatchObject({
+      type: 'moderation.scan',
+      limit: 500,
+      dryRun: false,
+    });
+    expect(parseArgs(['--type=moderation.scan', '--limit=10', '--dry-run'])).toMatchObject({
+      type: 'moderation.scan',
+      limit: 10,
+      dryRun: true,
+    });
+    expect(parseArgs(['--all'])).toMatchObject({ all: true });
+    expect(() => parseArgs([])).toThrow(/--type/);
+    expect(() => parseArgs(['--frobnicate'])).toThrow(/unknown argument/);
+    expect(() => parseArgs(['--type', 'x', '--limit', '0'])).toThrow(/--limit/);
+  });
+
+  test('the CLI entry point runs end to end; --dry-run requeues NOTHING', async () => {
+    // A fresh dead scan the dry run must see but not touch.
+    const probe = await createListingViaApi({ description: 'Dry-run probe meal, benign.' });
+    const emptyRegistry = createRegistry([]);
+    for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
+      await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = $1`, [probe.scanJobId]);
+      await pollOnlyThese([probe.scanJobId], emptyRegistry, 1);
+    }
+    const io = { log: jest.fn(), error: jest.fn() };
+    const result = await requeueMain(['--type', 'moderation.scan', '--dry-run'], io);
+    expect(result.matched).toBeGreaterThanOrEqual(1);
+    expect(result.requeued).toEqual([]); // dry run: nothing re-opened
+    const { rows } = await query(`SELECT status FROM outbox_jobs WHERE id = $1`, [probe.scanJobId]);
+    expect(rows[0].status).toBe('dead'); // untouched
+    expect(io.log).toHaveBeenCalled();
+    // --all --dry-run lists every dead type without touching any (operator overview lane).
+    const allDry = await requeueMain(['--all', '--dry-run'], { log: jest.fn(), error: jest.fn() });
+    expect(allDry.requeued).toEqual([]);
+    expect(allDry.matched).toBeGreaterThanOrEqual(1); // at least our probe is listed
+    // A non-matching type requeues nothing even without --dry-run (the filter is real).
+    const noneSuchIo = { log: jest.fn(), error: jest.fn() };
+    const noneSuch = await requeueMain(['--type', 'no.such.type'], noneSuchIo);
+    expect(noneSuch.matched).toBe(0);
+    expect(noneSuch.requeued).toEqual([]);
+    // Clean up: really requeue and drain it so no dead row leaks into sibling suites' scans.
+    await requeueDeadLetters({ type: 'moderation.scan', log: { log: () => {} } });
+    await pollOnlyThese([probe.scanJobId], registry, 2);
+    expect(await moderationStatusOf(probe.listingId)).toBe('approved');
   });
 });

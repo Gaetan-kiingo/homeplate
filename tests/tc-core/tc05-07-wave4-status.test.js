@@ -5,15 +5,20 @@
 // land in wave 4 (build-plan §7: FR-05/06/07 remain `not_implemented`, never skipped/failed).
 // This suite therefore:
 //
-//   1. PROVES BY EXECUTION which of the FR-05..FR-07 endpoints are still absent — each probe
-//      asserts src/modules/<name>/routes.js is not on disk, then that the live app answers
-//      with the structured JSON 404 envelope (NFR-08). The paths nest under /api/bookings,
+//   1. PROVES BY EXECUTION the wave-4 status of every FR-05..FR-07 endpoint — originally each
+//      probe asserted src/modules/<name>/routes.js was not on disk and that the live app
+//      answered the structured JSON 404 envelope (NFR-08). The paths nest under /api/bookings,
 //      which IS mounted since wave 3 — multi-segment suffixes like /:id/reviews match none of
-//      the bookings router's routes and must still fall through to the registry 404.
+//      the bookings router's routes and fall through to the module that declares them (or,
+//      before it landed, to the registry 404).
 //      When a wave-4 module lands, the routes.js-absence assertion fails LOUDLY, telling this
-//      lane to replace the probes with the real TC-05..TC-07 acceptance tests. FR-07 has
-//      already made that transition: U4-SAFETY shipped, so its probe now asserts the mounted,
-//      session-gated surface and the acceptance test lives in tc07-safety.test.js.
+//      lane to replace the probes with the real TC-05..TC-07 acceptance tests. FR-07 made
+//      that transition first (U4-SAFETY → tc07-safety.test.js), FR-05 followed in wave 4B
+//      (U4-REVIEWS → tc05-reviews.test.js), and FR-06 completed the set in wave 4C:
+//      U4-MESSAGING shipped, so its probe now asserts the mounted, session-gated surface
+//      and the acceptance test lives in tc06-messaging.test.js. No absence probe remains —
+//      every FR-05..FR-07 surface is landed and its probe converted (build-plan §4
+//      probe-conversion rule).
 //
 //   2. PROVES the §3.4 schema substrate for FR-05..FR-07 holds its invariants against the
 //      real database (SRS §4.1):
@@ -47,18 +52,7 @@ const {
 const MODULES_DIR = path.join(__dirname, '..', '..', 'src', 'modules');
 const SOME_UUID = '00000000-0000-4000-8000-000000000000';
 
-/** Fails loudly when a wave-4 module has landed: these probes must then be replaced. */
-function assertModuleStillAbsent(name) {
-  const routesPath = path.join(MODULES_DIR, name, 'routes.js');
-  if (fs.existsSync(routesPath)) {
-    throw new Error(
-      `src/modules/${name}/routes.js now exists — wave 4 has landed. Replace the tc-core ` +
-        'wave-4 status probes with the real TC acceptance tests for this module.'
-    );
-  }
-}
-
-/** "Endpoint not implemented yet": structured JSON 404 envelope, never HTML (NFR-08). */
+/** "No route mounted here": structured JSON 404 envelope, never HTML (NFR-08). */
 function expectStructuredNotFound(res) {
   expect(res.status).toBe(404);
   expect(res.headers['content-type']).toMatch(/application\/json/);
@@ -78,25 +72,43 @@ afterAll(async () => {
 });
 
 // ------------------------------------------------------------------------------------------
-// 1. FR-05..FR-07 endpoint surface — wave 4 pending, proven live.
+// 1. FR-05..FR-07 endpoint surface — all landed in wave 4, proven live.
 // ------------------------------------------------------------------------------------------
-describe('FR-05..FR-07 endpoint surface (wave 4 pending)', () => {
-  test('TC-05 / FR-05 — POST /api/bookings/:id/reviews is not implemented yet', async () => {
-    assertModuleStillAbsent('reviews');
+describe('FR-05..FR-07 endpoint surface (wave 4 landed)', () => {
+  test('TC-05 / FR-05 — the review endpoint HAS landed (U4-REVIEWS); probe replaced', async () => {
+    // This probe used to assert the FR-05 surface was absent. U4-REVIEWS landed it, so per
+    // this file's header the real acceptance test now lives in tests/tc-core/tc05-reviews.test.js
+    // (with the service/repo/schema legs in tests/unit/reviews.test.js). What remains here is
+    // the boundary fact that the path is mounted and session-gated (401, not 404), which is
+    // what distinguishes "implemented" from "still missing" for the wave-4 status sweep.
+    expect(fs.existsSync(path.join(MODULES_DIR, 'reviews', 'routes.js'))).toBe(true);
     const res = await request(app)
       .post(`/api/bookings/${SOME_UUID}/reviews`)
       .send({ rating: 5, comment: 'probe' });
-    expectStructuredNotFound(res);
+    expect(res.status).toBe(401);
+    // …while nothing mounts a public collection at /api/reviews (build-plan §4B: approved
+    // reviews are read through the EXISTING hosts/listings read paths only).
+    expectStructuredNotFound(await request(app).get('/api/reviews'));
   });
 
-  test('TC-06 / FR-06 — booking messages endpoints are not implemented yet', async () => {
-    assertModuleStillAbsent('messaging');
+  test('TC-06 / FR-06 — the booking-messages endpoints HAVE landed (U4-MESSAGING); probe replaced', async () => {
+    // This probe used to assert the FR-06 surface was absent. U4-MESSAGING landed it, so per
+    // this file's header the real acceptance test now lives in tests/tc-core/
+    // tc06-messaging.test.js (with the service/repo/schema legs in tests/unit/
+    // messaging.test.js). What remains here is the boundary fact that BOTH verbs are mounted
+    // and session-gated (401, not 404), which is what distinguishes "implemented" from
+    // "still missing" for the wave-4 status sweep.
+    expect(fs.existsSync(path.join(MODULES_DIR, 'messaging', 'routes.js'))).toBe(true);
     const post = await request(app)
       .post(`/api/bookings/${SOME_UUID}/messages`)
       .send({ body: 'probe' });
-    expectStructuredNotFound(post);
+    expect(post.status).toBe(401);
     const get = await request(app).get(`/api/bookings/${SOME_UUID}/messages`);
-    expectStructuredNotFound(get);
+    expect(get.status).toBe(401);
+    // …while nothing mounts a collection at /api/messaging (build-plan §4C: the thread is
+    // an object ON A BOOKING; there is no standalone messaging noun, and no moderator
+    // thread-reading route exists beyond the moderation queue — NFR-13).
+    expectStructuredNotFound(await request(app).get('/api/messaging'));
   });
 
   test('TC-07 / FR-07 — the safety-alert endpoints HAVE landed (U4-SAFETY); probes replaced', async () => {

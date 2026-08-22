@@ -1,15 +1,17 @@
 // src/modules/safety/routes.js — U4-SAFETY: the FR-07 HTTP surface (mounted by the U1-HTTP
 // route registry; build-plan §4 U4-SAFETY; SPMP WA-5).
 //
-// Mounting: this module exports { basePath: '/api', router } and declares its two FULL paths
-// itself, because the FR-07 surface deliberately spans two nouns (build-plan §4 acceptance,
-// requirements-inventory FR-07):
+// Mounting: this module exports { basePath: '/api', router } and declares its three FULL
+// paths itself, because the FR-07 surface deliberately spans two nouns (build-plan §4
+// acceptance, requirements-inventory FR-07):
 //     POST /api/bookings/:id/safety-alerts   — raising an alert is an action ON A BOOKING
 //     GET  /api/moderation/alerts            — the Moderator-role queue for those alerts
+//     POST /api/moderation/alerts            — the AB-04 moderator escalation (U4-SAFETY-COMPLETE)
 // The registry mounts `bookings` and `moderation` BEFORE `safety` (src/routes/index.js
-// KNOWN_MODULES order), and neither of those routers declares these paths, so both requests
-// fall through into this router — the same fall-through pattern U3-SEARCH uses to serve
-// /api/listings/search from its own module (build-plan §6.5). Nothing mounts at /api/safety.
+// KNOWN_MODULES order), and neither of those routers declares these paths (4A's router
+// declares only /queue and /queue/:id/decision), so all three requests fall through into
+// this router — the same fall-through pattern U3-SEARCH uses to serve /api/listings/search
+// from its own module (build-plan §6.5). Nothing mounts at /api/safety.
 //
 // Requirement / decision traceability (SRS Appendix B):
 //   FR-07 (TC-07, IT-04) — POST persists the alert and its outbox row in one transaction and
@@ -62,6 +64,23 @@ router.get(
     try {
       const result = await service.listAlertsForModerator(req.auth, req.query);
       res.status(200).json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// POST /api/moderation/alerts — AB-04: a moderator escalates flagged content by raising a
+// real safety alert on the booking behind it. Same persist-and-defer contract as the
+// participant route: 201 with NOTHING sent inline; the worker delivers (ADR-001/003).
+router.post(
+  '/moderation/alerts',
+  requireSession,
+  validate({ body: safetySchemas.escalateAlertBody }),
+  async (req, res, next) => {
+    try {
+      const alert = await service.escalateAlert(req.auth, req.body, { log: req.log });
+      res.status(201).json({ alert });
     } catch (err) {
       next(err);
     }

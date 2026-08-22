@@ -10,6 +10,198 @@ Companion artifact: `requirements-inventory.json` — all 14 FR + 13 NFR + 8 AB 
 acceptance criteria, now carrying per-requirement `statusAt_f7f954c`, `statusAt_bc27199` and
 `reverification` fields.
 
+**Revision 2026-08-21 rev E — WAVE 4 BUILD (trust, safety, data lifecycle). Implement-only run.**
+Supersedes §5's one-table sketch; rev D's wave-3R material below is history (all of it landed:
+waves 0–3 are verified and pushed — see `docs/verification-report.md`). What binds this run:
+
+1. **Baseline (measured 2026-08-21 at `eebd638`, clean tree, pushed, CI green):** 52 suites /
+   1179 tests, exit 0 under `TEST_STRICT_HANDLES=1`, ~88 s; `npm run lint` and `npm run build`
+   clean; coverage stmts 94.01 / branches 84.08 / funcs 97.69 / lines 94.80. **No unit may regress
+   any of these.** 23 of 35 requirements are Met; wave 4 targets the seven `not_implemented`
+   minus NFR-07 (waves 5–6), plus the NFR-08/NFR-13/AB-01/AB-03 partial clauses it can close.
+2. **This is an implement-only run.** A separate `mode:'verify'` run re-derives everything
+   tomorrow. Each unit writes and RUNS its own tests, runs `npm run lint` on what it touched,
+   and reports honestly what it did not finish — an overstated report wastes the verifier's time.
+3. **Sub-wave order is binding: 4A → 4B → 4C → 4D.** U4-MODERATION goes first because reviews and
+   messaging consume its queue and decision record — and because the tree carries executable
+   absence probes (scope guards) that fail LOUDLY the moment a wave-4 module lands. **The unit
+   that lands a module owns converting every absence probe that names it** into the real
+   acceptance test in the same change; sub-wave sequencing is what makes those shared guard
+   files (`tests/coverage/coverage-lane.test.js`, `tests/st-security/st-security.test.js`,
+   `tests/tc-core/tc05-07-wave4-status.test.js`) safe to touch serially. Converting a probe
+   means replacing "X is absent" with "X does the required thing" — never deleting an invariant.
+4. **ADR-007/ADR-008 state (ratified):** the data-use review is signed (2026-08-18, option
+   (a)+(b)) and peer-countersigned (2026-08-21); the ADR-008 label sign-off is recorded
+   (Gaetan Rieben, 2026-08-21, set v1, 224 items). Build the FULL confidence-routing path.
+   But the automated suite NEVER makes a live provider call (`NODE_ENV=test` force-pins the
+   mock in config — do not weaken), the IT-03 live measurement run is wave 7 and is NOT run
+   tonight, and **NFR-10 remains UNCLAIMABLE**: `claimability()` answering true means
+   preconditions only. No FP/FN number may be quoted from the mock, ever.
+5. **NFR-12's 30-day window is verified by CLOCK INJECTION, never by waiting:** a deletion
+   request schedules erasure at `now() + config.privacy.erasureDays`; the job run at that
+   simulated instant empties every SRS §3.4 column. The ADR-004 delete-by-key media primitive
+   exists and works (`mediaService.deleteForUser`, proven against MinIO) — use it, do not
+   reimplement.
+6. **House rules already enforced by this tree** (a violation reddens the suite): canonical
+   lane files only (no `*-reverify`, `verify-*`, `*-gaps`, `*-probes` files — a genuinely new
+   module gets `unit/<module>.test.js` and its `tc0X-*`/`it0X-*`/`st-security/*` lane file);
+   outbox drains through `tests/helpers/outboxScope.js` (`withOnlyTheseDue` — never a fixed-pass
+   budget or an unscoped global drain, finding F-01); every suite closes what it opened
+   (`closeDb()` paired with `closeTestRedis()`, verified by `TEST_STRICT_HANDLES=1`; no
+   `--forceExit`); migrations append-only (0004 is highest — wave 4 adds 0005+); every mutation
+   writes a structured audit record with the request correlation ID and logs stay PII-free;
+   no MEHKO cap literal outside `src/config` (note: 90 is also the maximum latitude —
+   `tests/helpers/capScan.js`); outbox payloads carry IDs only; no adapter loads on any request
+   path (sole exception: the Maps READ adapter in location search). **Do not `git commit` or
+   `git push` — the human team commits.**
+
+### Wave 4A — U4-MODERATION (alone; everything downstream consumes it)
+
+**Goal.** The FR-08 pipeline per ADR-002: deterministic pre-filter (blocklist / regex /
+per-user submission rate limit) → LLM stage through the provider-agnostic ADR-007 adapter
+(`src/adapters/llmModeration.js`, already built, mock-pinned in test) → `MODERATION_DECISION`
+row (category, confidence, outcome, decided_by ∈ {pre_filter, llm, human}, model_id) → human
+Moderator queue (`moderation_queue`, substrate table already in 0001) for low-confidence
+(`config.moderation.confidenceThreshold`, default 0.8) or flagged content. Publication policy:
+public content (listings, reviews) stays `pending` until approved and NEVER publishes
+unreviewed — a provider outage keeps it pending while the job retries; messages are scanned
+asynchronously and never blocked. The handler consumes the existing wave-3 payload contract
+`{contentType, contentId}` under job type `moderation.scan`.
+
+**CRITICAL first act: requeue the wave-3 dead letters.** Wave 3 has been enqueuing
+`moderation.scan` jobs with NO handler since `3136b91`; they retry and dead-letter (failing
+safe — content stays pending). On landing, requeue them via `outbox.requeueDeadLetter` (exists
+in `src/outbox/outbox.js`) — deliver `scripts/requeue-dead-letters.js --type moderation.scan`
+and a test that creates dead `moderation.scan` rows, requeues, drains with the real handler,
+and asserts the listings reach a decision. **Verify the requeue actually drains them.**
+
+**Moderator surface** (Moderator role, 401/403-gated like `GET /api/moderation/alerts`):
+`GET /api/moderation/queue` (status/content-type filters, paged) and
+`POST /api/moderation/queue/:id/decision` (approve/reject + category + optional note) which
+writes the human `MODERATION_DECISION`, flips the content's `moderation_status`, resolves the
+queue item, and emits the NFR-08 audit record — closing MT-01's missing moderation-decision
+action (the last NFR-08 clause).
+
+**Exclusive files.** `src/modules/moderation/{prefilter,repo,service,routes}.js`,
+`src/schemas/moderation.js`, `src/outbox/handlers/moderationScan.js`, `src/config/` **only if**
+a blocklist/rate-limit knob is genuinely config (no cap literals inline),
+`db/migrations/0005_moderation_indexes.sql` (only if measurably needed; substrate tables exist),
+`scripts/requeue-dead-letters.js`, `scripts/it03-eval.js` (scoring harness: loads
+`tests/fixtures/moderation-eval/v1/`, runs the REAL pre-filter+classifier path, prints both
+rates and the model id + prompt version, and refuses to present a mock-scored run as anything
+but `NOT-A-MEASUREMENT`; the live invocation itself is wave 7). Tests:
+`tests/unit/moderation.test.js` (new), `tests/tc-booking/tc08-moderation-substrate.test.js`
+(becomes the real TC-08), `tests/it-adapters/it03-moderation-eval.test.js` (harness mechanics
+against the mock, clearly labelled non-measurement). Probe conversions it owns in this
+sub-wave: `tests/coverage/coverage-lane.test.js` (module guard, `moderation.scan` handler
+guard, `/api/moderation` route guard), `tests/it-adapters/it01c-adapter-depth.test.js`
+(`has('moderation.scan') === false` flips), `tests/st-security/st-security.test.js` (lines
+asserting no moderation module), `tests/mt-ut-quality/mt01-wave3-booking-audit.test.js`
+(no-handler retry-line blocks) and `mt01-log-completeness.test.js` (add the
+moderation-decision MT-01 action), `tests/adr-conformance/adr-wave3-invariants.test.js`
+(dead-letter-deferral wording), `tests/rt-lt-resilience/rt01-degradation.test.js` (the LLM
+outage drill now injects adapter failure through the handler and still proves pending-forever).
+
+**Acceptance.** Blocklist hit → `rejected`, `decided_by='pre_filter'`, zero LLM calls;
+pass-through → worker scan via adapter; low-confidence/flagged → queue item + content stays
+pending; approve via queue → content visible on the public read paths; injected provider
+failure for all attempts → listing/review never leaves pending and never appears in
+search/detail; every outcome writes a decision row; wave-3 dead letters drained; no adapter
+import on any request path; audit records with correlation IDs; the ADR-010 public serializer
+governs any listing data a moderator view returns unless the FR-07 alert case applies.
+
+### Wave 4B — U4-REVIEWS ∥ U4-SAFETY-COMPLETE (no shared files)
+
+**U4-REVIEWS — FR-05.** `POST /api/bookings/:id/reviews` {rating 1..5 int, comment,
+imageKeys[]} by guest (about host) and host (about guest), only on `status='completed'`
+bookings (409 otherwise; 403 non-participant; 422 bad rating; 409 second review same
+author+booking — `reviews_one_per_booking_author` already enforces). Born
+`moderation_status='pending'` with a `moderation.scan` outbox row in the SAME transaction;
+absent from `GET /api/hosts/:id`, `/api/hosts/:id/reviews` and listing detail until approved.
+Photos attach through the existing media module (`entity_type='review'`). **Takes over the
+review-authorship lookup**: move `findReviewAuthorId` from `src/modules/media/repo.js` (its
+header says exactly this) into `src/modules/reviews/repo.js`; media imports the published
+interface. ST-04 payloads at the new review boundary.
+Files: `src/modules/reviews/{repo,service,routes}.js`, `src/schemas/reviews.js`,
+`src/modules/media/{repo,routes,service}.js` (takeover only), `tests/unit/reviews.test.js`,
+`tests/tc-core/tc05-reviews.test.js` (new canonical TC-05), `tests/unit/hosts-media.test.js`
+(follows the moved function), and this sub-wave's probe conversions in
+`tests/tc-core/tc05-07-wave4-status.test.js` (FR-05 probe → pointer to tc05; messaging probe
+stays), `tests/coverage/coverage-lane.test.js` ('reviews' guard),
+`tests/st-security/st-security.test.js` (AB-04 absence list shrinks to ['messaging']).
+
+**U4-SAFETY-COMPLETE — FR-07 finish.** FR-07 is already Met (see verification report) — do not
+regress it. This unit unifies the moderator surface with the real 4A queue: the safety-alert
+worker also files a `moderation_queue` entry for the alert (append-only
+`db/migrations/0006_safety_moderation_queue.sql` extends `moderation_content_type` with
+`'safety_alert'`), so moderators work one queue while `GET /api/moderation/alerts` stays
+intact, including for dead-lettered alerts; and it adds the AB-04 escalation clause — a
+moderator can raise a safety alert on the booking behind flagged content
+(`POST /api/moderation/alerts` in the safety module, moderator-gated, audited).
+Files: `src/modules/safety/{repo,service,routes}.js`, `src/schemas/safety.js`,
+`src/outbox/handlers/safetyAlert.js`, `db/migrations/0006_safety_moderation_queue.sql`,
+`tests/unit/safety.test.js`, `tests/tc-core/tc07-safety.test.js`,
+`tests/it-adapters/it04-safety-delivery.test.js`.
+
+### Wave 4C — U4-MESSAGING (alone; owns the guard files 4B also touched)
+
+**FR-06.** `POST` + `GET /api/bookings/:id/messages`, participants only (booking guest or
+listing host — use the published `repo.findParticipantBooking`), booking status pending /
+in_progress / completed (409 cancelled, 403 third party, 401 unauthenticated). A posted
+message is persisted and returned immediately — DELIVERY NEVER WAITS ON THE SCAN — and the
+SAME transaction writes the `moderation.scan` outbox row ({contentType:'message', contentId});
+zero LLM adapter calls on the request path. A message later flagged (rejected) is hidden from
+subsequent GETs and sits in the moderator queue. ST-04 payloads at the chat boundary. Final
+AB-04 abuse test lands here (abusive review never public + abusive message
+delivered-then-hidden + decisions logged), now that all three modules exist.
+Files: `src/modules/messaging/{repo,service,routes}.js`, `src/schemas/messaging.js`,
+`tests/unit/messaging.test.js`, `tests/tc-core/tc06-messaging.test.js` (new canonical TC-06),
+probe conversions in `tests/tc-core/tc05-07-wave4-status.test.js` (final),
+`tests/coverage/coverage-lane.test.js` ('messaging' guard),
+`tests/st-security/st-security.test.js` (AB-04 becomes executable).
+
+### Wave 4D — U4-PRIVACY (capstone: erasure covers the full wave-4 surface)
+
+**NFR-12 + NFR-13 export; closes findings F-03 and F-07.**
+`DELETE /api/users/me` → marks `deleted_at`, kills the session, writes a `data_requests` row
+(kind erasure) and enqueues `account.erasure` with `available_at = now() +
+config.privacy.erasureDays` (30). The handler — run at the simulated due instant via clock
+injection — erases/irreversibly anonymizes name, email, phone, emergency contact, password
+hash; deletes every owned media object BY KEY through `mediaService.deleteForUser` (ADR-004 —
+do not reimplement) and asserts subsequent fetch 404s; rewrites reviews/bookings/safety
+alerts/messages to anonymized author references while retaining them; sets `anonymized_at`.
+ST-05 full-database PII-string scan finds nothing afterwards. `POST /api/users/me/export` →
+`data_requests` row (kind export, `due_at` = 30 days, asserted) and a worker-produced
+machine-readable copy of every §3.4 PII-register class for the requesting user only,
+retrievable by that authenticated user. 24-month inactivity sweep
+(`config.privacy.inactivityMonths`): flag, record the notice (through the ADR-011 mock
+transport → NOTIFICATION_ATTEMPT row), erase after the notice period — all clock-injectable.
+Backup expiry: `BACKUP_RETENTION_DAYS=30` in `.env.example` + config schema, and
+`scripts/backup.js` that prunes dumps older than the setting, so ST-05's configuration-review
+clause has an executable object. Outbox payloads stay IDs-only; the export content itself
+never rides an outbox payload.
+Files: `src/modules/privacy/{repo,service,routes}.js`, `src/schemas/privacy.js`,
+`src/outbox/handlers/{accountErasure,dataExport}.js`,
+`db/migrations/0007_privacy_lifecycle.sql` (only if needed — `data_requests` and the users
+columns exist), `scripts/backup.js`, `.env.example`, `src/config/{schema,index}.js`
+(BACKUP_RETENTION_DAYS), `tests/unit/privacy.test.js`,
+`tests/st-security/st05-st06-privacy.test.js` (new canonical ST-05/ST-06 lane file),
+`tests/coverage/coverage-lane.test.js` ('privacy' guard + `/api/privacy` route guard).
+
+### Wave-4 acceptance (the run is done when all of these hold)
+
+1. Full suite green, exit 0, under `TEST_STRICT_HANDLES=1`, with no determinism regression;
+   lint and build clean; coverage not below the `eebd638` baseline.
+2. Pending-until-approved holds on EVERY public read path; a moderation-provider outage leaves
+   public content pending forever; messages deliver immediately and are scanned asynchronously.
+3. The wave-3 `moderation.scan` dead letters are requeued and drained — proven by execution.
+4. Account deletion erases PostgreSQL PII AND media by key at the clock-injected due instant,
+   leaving reviews anonymized; the CCPA export exists and is user-scoped.
+5. NFR-10 is NOT claimed anywhere; the harness exists, the live IT-03 run is wave 7.
+6. Every unit's report separates done / not-done / deviations. Nothing is committed.
+
+---
+
 **Revision 2026-08-17 rev D — wave-3 CLOSE-OUT, determinism first.** Supersedes rev C
 (2026-08-15), which is otherwise intact below. What changed:
 

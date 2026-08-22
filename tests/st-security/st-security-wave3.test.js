@@ -446,14 +446,39 @@ describe('AB-01 fake host / unapproved listing (FR-08/FR-09)', () => {
     expect(visible.body.results.map((r) => r.id)).toContain(listingId);
   });
 
-  test('AB-01 second half: the moderation pipeline that would flag a fake listing is absent', () => {
-    // Merged from the wave-3 re-verification pass. Listings are created 'pending' (asserted
-    // above) but NOTHING approves or rejects them in wave 3 — the approval transition is
-    // wave-4 work. Every wave-3 reference to moderation_status in src/ is a READ filter
-    // (search/detail/reviews); no statement SETs it, so a pending listing can never leave the
-    // queue in this tree.
-    expect(grepSrc('SET[^;]*moderation_status[[:space:]]*=')).toBe('');
-    expect(grepSrc('moderation_decisions')).toBe('');
+  test('AB-01 second half: the FR-08 pipeline exists and moderation_status has exactly ONE writer module', () => {
+    // Converted absence probe (U4-MODERATION): until wave 4 nothing in src/ could SET
+    // moderation_status at all. Now something legitimately can — and the invariant this
+    // probe protected survives in its sharper form: every statement that SETs
+    // moderation_status, and every reference to moderation_decisions, lives in
+    // src/modules/moderation/ — the ONE decision path (build-plan §4A: "content
+    // moderation_status is flipped ONLY by this module's decision path"). A second writer
+    // would let content leave 'pending' without a MODERATION_DECISION row (same
+    // single-chokepoint discipline as the access_log writer above).
+    const ONE_WRITER_DIR = 'src/modules/moderation/';
+    const setters = grepSrc('SET[^;]*moderation_status[[:space:]]*=').split('\n').filter(Boolean);
+    expect(setters.length).toBeGreaterThan(0); // the pipeline exists — approve/reject are real
+    for (const line of setters) {
+      expect(line).toContain(ONE_WRITER_DIR);
+    }
+    // Decision rows: WRITES stay in the moderation module; the only other file that may
+    // even reference the table is the U4-PRIVACY repo, READ-ONLY, because the NFR-13 CCPA
+    // export copies the user's own "Moderation decisions" §3.4 register class (same
+    // single-writer + sanctioned-reader split as the access_log probe above).
+    const decisionWriters = grepSrc('(INSERT INTO|UPDATE)[[:space:]]+moderation_decisions')
+      .split('\n')
+      .filter(Boolean);
+    expect(decisionWriters.length).toBeGreaterThan(0); // decisions are really recorded
+    for (const line of decisionWriters) {
+      expect(line).toContain(ONE_WRITER_DIR);
+    }
+    const decisionRefs = grepSrc('moderation_decisions').split('\n').filter(Boolean);
+    expect(decisionRefs.length).toBeGreaterThan(0);
+    for (const line of decisionRefs) {
+      const inModeration = line.includes(ONE_WRITER_DIR);
+      const inPrivacyRepo = line.includes('src/modules/privacy/repo.js');
+      expect(inModeration || inPrivacyRepo).toBe(true);
+    }
   });
 });
 

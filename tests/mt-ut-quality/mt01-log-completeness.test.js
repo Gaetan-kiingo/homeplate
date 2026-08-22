@@ -7,11 +7,12 @@
 // correlation ID and HTTP status; captured log output contains user IDs only — never an
 // email address, phone number, name, or password (SRS §3.4 PII register).
 //
-// Wave-1/2 scope note: of MT-01's four named actions only REGISTRATION exists in this
-// build run (waves 0-2). Booking creation, booking cancellation and moderation decisions
-// are waves 3-4 and are reported as not_implemented by the lane's structured result —
-// this file additionally exercises login/logout (also "important actions" per NFR-08's
-// non-exhaustive list) so the audit substrate is proven end to end on what exists.
+// Scope note: of MT-01's four named actions, REGISTRATION (plus login/logout — also
+// "important actions" per NFR-08's non-exhaustive list) is exercised here; booking
+// creation/cancellation live in the sibling mt01-wave3-booking-audit.test.js; and the
+// MODERATION DECISION action (U4-MODERATION) is exercised in BOTH files — below as the
+// minimal decision-record completeness check, and in the sibling through the full
+// scan→queue→decide pipeline.
 //
 // The whole file drives the REAL app factory (Supertest) with a recording logger sink and
 // the REAL outbox worker against the seeded *_test database — no mocks beyond the
@@ -21,7 +22,7 @@
 const request = require('supertest');
 const { createApp } = require('../../src/app');
 const { loadHandlers } = require('../../src/outbox/dispatch');
-const { query, closeDb } = require('../helpers/db');
+const { query, makeListing, insertRow, closeDb } = require('../helpers/db');
 const { makeRecordingLogger, drainOutboxUntil } = require('./support');
 const { closeRedis } = require('../../src/db/redis');
 
@@ -35,6 +36,10 @@ const PASSWORD = 'CorrectHorse!42mt01';
 const FULL_NAME = 'Marisol Quetzal-Verifier';
 const PHONE = '+14155550142';
 const REG_CID = `mt01-reg-${RUN}`;
+// U4-MODERATION: the moderator who performs the MT-01 moderation-decision action below.
+const MOD_EMAIL = `mt01.modlc.${RUN}@mt01-lane.homeplate.invalid`;
+const MOD_PASSWORD = 'CorrectHorse!42mt01m';
+const MOD_FULL_NAME = 'Evangeline Axolotl-Moderator';
 
 let app;
 let userId;
@@ -212,6 +217,87 @@ describe('MT-01 / NFR-08 — login and logout audit records', () => {
   });
 });
 
+describe('MT-01 / NFR-08 — moderation decision audit record (U4-MODERATION, action 4)', () => {
+  // This action was reported not_implemented by this lane through wave 3. U4-MODERATION
+  // landed the surface; the full scan→queue→decide pipeline audit lives in the sibling
+  // mt01-wave3-booking-audit.test.js — here the DECISION RECORD's completeness is pinned on
+  // a directly-staged queue item (SQL fixtures are state preparation, per this lane's rule).
+  const DECIDE_CID = `mt01-moddecide-${RUN}`;
+  let moderatorId;
+  let moderatorCookie;
+  let listing;
+  let queueItem;
+
+  beforeAll(async () => {
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ email: MOD_EMAIL, password: MOD_PASSWORD, fullName: MOD_FULL_NAME });
+    expect(reg.status).toBe(201);
+    moderatorId = reg.body.user.id;
+    // Role BEFORE login: sessions snapshot roles into Redis at login (ADR-006).
+    await query(
+      `UPDATE users SET email_verified = true, roles = ARRAY['user','moderator'] WHERE id = $1`,
+      [moderatorId]
+    );
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: MOD_EMAIL, password: MOD_PASSWORD });
+    expect(login.status).toBe(200);
+    moderatorCookie = login.headers['set-cookie'].join(';');
+
+    listing = await makeListing({}); // born pending (FR-08 schema default)
+    queueItem = await insertRow('moderation_queue', {
+      content_type: 'listing',
+      content_id: listing.id,
+      reason: 'flagged',
+    });
+  });
+
+  test('POST /api/moderation/queue/:id/decision (200) emits one complete structured audit record', async () => {
+    const res = await request(app)
+      .post(`/api/moderation/queue/${queueItem.id}/decision`)
+      .set('Cookie', moderatorCookie)
+      .set('X-Correlation-Id', DECIDE_CID)
+      .send({ decision: 'reject', category: 'fraudulent' });
+    expect(res.status).toBe(200);
+    expect(res.headers['x-correlation-id']).toBe(DECIDE_CID);
+
+    const audits = auditRecords().filter(
+      (r) => r.event === 'moderation.decision' && r.correlationId === DECIDE_CID
+    );
+    expect(audits).toHaveLength(1);
+    const rec = audits[0];
+    // MT-01 acceptance: event name, correlation ID, actor user ID, subject entity ID,
+    // outcome, timestamp — all in ONE structured JSON record.
+    expect(rec.outcome).toBe('success');
+    expect(rec.actorUserId).toBe(moderatorId);
+    expect(rec.entityType).toBe('listing');
+    expect(rec.entityId).toBe(listing.id);
+    expect(rec.decision).toBe('rejected');
+    expect(rec.category).toBe('fraudulent');
+    expect(typeof rec.time).toBe('string');
+    expect(Number.isNaN(Date.parse(rec.time))).toBe(false);
+
+    // The record refers to persisted reality: the human MODERATION_DECISION row exists, the
+    // queue item resolved, and the publication gate flipped to rejected (FR-08).
+    const { rows: decisions } = await query(
+      `SELECT decided_by, decided_by_user_id, outcome FROM moderation_decisions WHERE id = $1`,
+      [rec.decisionId]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0].decided_by).toBe('human');
+    expect(decisions[0].decided_by_user_id).toBe(moderatorId);
+    const { rows: resolved } = await query(`SELECT status FROM moderation_queue WHERE id = $1`, [
+      queueItem.id,
+    ]);
+    expect(resolved[0].status).toBe('resolved');
+    const { rows: content } = await query(`SELECT moderation_status FROM listings WHERE id = $1`, [
+      listing.id,
+    ]);
+    expect(content[0].moderation_status).toBe('rejected');
+  });
+});
+
 describe('MT-01 / NFR-08 — every request is traceable', () => {
   test('a request WITHOUT an incoming header gets a generated UUID, echoed and logged', async () => {
     const res = await request(app).get('/api/users/me'); // 401 — still traceable
@@ -302,6 +388,11 @@ describe('MT-01 — SRS §3.4 PII register: captured log output holds user IDs o
     expect(blob).not.toContain(FULL_NAME);
     expect(blob).not.toContain('Quetzal');
     expect(blob).not.toContain(PHONE);
+    // The U4-MODERATION moderator's identity stays out of the corpus too (MOD_EMAIL is on
+    // the domain swept above; the rest are checked by value).
+    expect(blob).not.toContain(MOD_PASSWORD);
+    expect(blob).not.toContain(MOD_FULL_NAME);
+    expect(blob).not.toContain('Axolotl');
     // Generic sweep: nothing email-shaped anywhere in the corpus.
     const emailShaped = blob.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) || [];
     expect(emailShaped).toEqual([]);
