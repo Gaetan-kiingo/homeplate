@@ -23,21 +23,130 @@ subagent's word for anything.
 
 ### 1. Phase structure
 
-Run these phases in order. Each is a barrier: do not begin the next until the current one reports.
+Six phases, in order. Each is a **barrier**: do not start the next until every agent in the current
+one has reported. Every agent returns **structured output** against a schema — not prose you have to
+parse — so the orchestrator can branch on it deterministically.
 
-1. **Plan.** One coordinator reads every input document *in full*, then produces (a) a requirement
-   inventory — every requirement turned into *executable acceptance criteria*, i.e. a statement a
-   test can pass or fail, carrying the specification's own numbers; and (b) a decomposition into
-   dependency-ordered waves of work units. Write both to disk as durable artifacts.
-2. **Implement.** One subagent per work unit, in parallel, with **exclusive file ownership**. Two
-   agents must never be able to edit the same file. Assign concrete paths per unit and check for
-   overlaps before spawning.
-3. **Verify.** Independent verification lanes, in parallel, each owning one test directory. Lanes
-   may not edit application source — they diagnose; a separate fixer applies.
-4. **Repair.** One fixer per *owning file group*, so fixers never collide.
-5. **Re-verify.** Lanes re-execute the original failure scenario behind every claimed fix.
-6. **Report.** One agent writes the traceability matrix: requirement → design element → implementing
-   file → test id → test file → status → evidence.
+---
+
+**PHASE 1 — PLAN.** One agent (the coordinator). Serial.
+
+Give it: every input document, and the repository as it stands. Tell it explicitly to survey the
+existing repo rather than assume a green field — most runs are increments.
+
+It must produce:
+- A **requirement inventory**: every requirement from the specification, each turned into
+  *executable acceptance criteria* — statements a test can pass or fail, carrying the
+  specification's own numbers (latency targets, concurrency counts, retention windows, thresholds).
+  Do not let it paraphrase requirements into something easier to build, and do not let it drop any.
+- A **wave decomposition**: ordered dependency layers. Everything in wave N may assume waves 1..N-1
+  exist. Units *inside* one wave must be independently buildable and must not share a file.
+- **File ownership per unit**: concrete repo-relative paths. It must check for overlaps before
+  answering — this is what makes parallel implementation safe.
+- **Open questions**: conflicts and ambiguities it refuses to resolve (see 2.6).
+
+Write the inventory and the plan to disk as durable artifacts. Later phases read them; so do humans.
+
+Returns: `{requirements[], waves[{name, units[{id, description, requirements[], files[]}]}],
+commands{install,migrate,build,test,lint}, openQuestions[], risks[], blocked?}`
+
+---
+
+**PHASE 2 — SCAFFOLD.** One agent. Serial. Skip on an increment where the skeleton already exists.
+
+Purpose: lay down everything the parallel implementers will otherwise race to create — repository
+skeleton, dependency manifest with a lockfile from **one** install, database migration framework and
+the base schema, test harness with reproducible setup/teardown, linter and formatter config, CI
+workflow, environment template with **no real secrets**.
+
+Why it is its own serial phase: if implementers each add dependencies or migrations concurrently,
+they corrupt the lockfile and collide on migration numbers. One agent does this once, first.
+
+Its test harness must establish, from the start: a guarded test database whose name cannot be the
+development one; reproducible reset-migrate-seed before every run; and a teardown that reports
+leaked handles (see 3.4).
+
+Returns: `{filesWritten[], commands{}, notes[]}`
+
+---
+
+**PHASE 3 — IMPLEMENT.** One agent per work unit, parallel *within* a wave, waves in sequence.
+
+Give each: the plan brief, its unit's requirements with acceptance criteria, and **its exclusive file
+list**. Tell it plainly: other agents are editing other files right now; touching a file outside your
+list is lost work, so report the need as a deviation instead.
+
+Each implementer must: write the code, write its own tests, **run them**, run the linter, and report
+honestly what it did not finish. Instruct it that an honest partial unit is worth more than a
+claimed-complete one — a verifier reads this tree next and an overstated report only wastes its time.
+
+Returns: `{unitId, status: 'complete'|'partial', filesWritten[], testsAdded, summary,
+deviations[]}` — where `deviations` captures anything it did differently from the plan, and why.
+
+---
+
+**PHASE 4 — VERIFY.** One agent per verification lane, all parallel. This is a barrier.
+
+Split lanes by **test category**, not by module, so each lane owns one test directory exclusively and
+brings a different lens to the whole system. A workable split: functional-core, functional-secondary,
+integration/adapters, security, resilience/load, observability/quality, architecture-conformance,
+coverage.
+
+Each lane must: read the requirement inventory for the authoritative criteria; **execute** against
+the running system; write its tests under its own directory only; and report **one check per
+requirement, module or function in scope — including the ones that pass**, because a silent omission
+reads as coverage that does not exist.
+
+Lanes may **not** edit application source. They diagnose; fixers apply. Their one exception is their
+own lane's test files.
+
+Findings must be reproducible: the concrete input or state, and the wrong output observed. Severity:
+*blocker* = a requirement is unmet or an architectural invariant is violated; *major* = works but
+violates the specified behaviour or numbers; *minor* = quality.
+
+Returns: `{lane, checks[{requirement, status, evidence, testFile}], findings[{id, severity, title,
+files[], line?, requirements[], failureScenario, proposedFix}]}`
+
+---
+
+**PHASE 5 — REPAIR.** Fixers in parallel, then re-verify. Loop, bounded.
+
+Group findings by **owning file**, then batch the groups so that no two fixers in a batch share a
+file. Run batches sequentially; run as many fixers per batch as your concurrency allows — batch size
+multiplies wall-clock (4.1).
+
+Give each fixer only its own findings, each with the failure scenario and proposed fix. Rules it must
+follow: fix the **cause**, not the symptom; never satisfy a test by weakening or deleting it; if a
+finding is *wrong*, put it in `rejected` with the evidence that disproves it rather than implementing
+a change it believes is incorrect; preserve every architectural invariant — a fix that satisfies a
+test by violating one is not a fix.
+
+Then **re-verify**: re-run the lanes that had findings, plus the coverage lane (a fix in one place
+breaks something elsewhere). Re-verification must re-execute the *original failure scenario* (2.3).
+
+Bound the loop with a repair-round limit. In round 1 action every finding including minor ones; in
+later rounds action only blockers and majors. When the budget is exhausted, remaining findings are
+**reported, not hidden**.
+
+Returns per fixer: `{owner, resolved[], rejected[{id, why}], filesChanged[], testsRun, summary}`
+
+---
+
+**PHASE 6 — REPORT.** One agent. Serial. The deliverable.
+
+Give it the final check and finding sets from every lane — and tell it **not to transcribe them**.
+It must verify the claims against what is actually on disk, spot-check that cited test files exist,
+and run the full suite and linter itself, recording the real output.
+
+It writes the traceability matrix and the sections in §5 below.
+
+Returns: `{reportPath, summary, requirementCounts{met,partial,notImplemented,notVerifiable}}`
+
+---
+
+**Modes.** Support running subsets: *plan-only* (a cheap dry run that produces the work breakdown
+without writing code), *implement-only* (phases 1–3, stopping before verification), and *verify-only*
+(phases 1, 4–6 against whatever is on disk). See 4.4 — this is what makes long runs survivable.
 
 ### 2. The rules that make this work
 
