@@ -121,17 +121,30 @@ function pruneBackups({ dir, retentionDays, now = new Date(), dryRun = false, lo
   return { pruned, kept, cutoff };
 }
 
-/* istanbul ignore next -- CLI entry; the exported functions above are what the suite runs */
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+/**
+ * CLI entry. `argv`/`io` are injectable like scripts/it03-eval.js main(argv, io) so the
+ * suite covers the sweep-vs-prune dispatch and the resource-close logic in-process
+ * (tests/unit/privacy.test.js) instead of spawning a child against the lane database
+ * (tests/helpers/env.js concurrency rule). `deps` additionally lets those tests substitute
+ * the sweep service and the pool/redis closers — a test must never close the suite's own
+ * shared pool — while the CLI path defaults to the real modules.
+ *
+ * @param {string[]} [argv]  CLI arguments (default: process.argv)
+ * @param {{log: Function}} [io]  sink for the structured JSON lines (default: console)
+ * @param {{privacyService?: {runInactivitySweep: Function}, closePool?: Function,
+ *          closeRedis?: Function}} [deps]
+ * @returns {Promise<object>} sweep: {flagged}; prune: {pruned, kept, cutoff}
+ */
+async function main(argv = process.argv.slice(2), io = console, deps = {}) {
+  const args = parseArgs(argv);
   // Lazy: config validation (and the DB pool for the sweep) load only when actually running.
   const config = require('../src/config');
-  const jsonLine = (fields) => console.log(JSON.stringify(fields));
+  const jsonLine = (fields) => io.log(JSON.stringify(fields));
 
   if (args.sweepInactivity) {
-    const privacyService = require('../src/modules/privacy/service');
-    const { closePool } = require('../src/db/pool');
-    const { closeRedis } = require('../src/db/redis');
+    const privacyService = deps.privacyService ?? require('../src/modules/privacy/service');
+    const closePool = deps.closePool ?? require('../src/db/pool').closePool;
+    const closeRedis = deps.closeRedis ?? require('../src/db/redis').closeRedis;
     try {
       const { flagged } = await privacyService.runInactivitySweep({ limit: args.limit });
       jsonLine({
@@ -139,11 +152,14 @@ async function main() {
         flagged: flagged.length,
         userIds: flagged.map((f) => f.userId),
       });
+      return { flagged };
     } finally {
+      // NFR-12 operator hygiene: the sweep opened the pool (and requiring the service pulls
+      // in the redis client), so BOTH must close even when the sweep throws — otherwise the
+      // lifecycle cron process hangs on live handles instead of exiting.
       await closePool();
       await closeRedis();
     }
-    return;
   }
 
   const { pruned, kept, cutoff } = pruneBackups({
@@ -161,9 +177,11 @@ async function main() {
     kept: kept.length,
     dryRun: args.dryRun,
   });
+  return { pruned, kept, cutoff };
 }
 
-/* istanbul ignore next */
+/* istanbul ignore next -- process wiring (exit code), exercised only when run as a CLI; the
+   suite covers main() in-process (tests/unit/privacy.test.js) */
 if (require.main === module) {
   main().catch((err) => {
     console.error(`backup: ${err.message}`);
@@ -171,4 +189,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { parseArgs, pruneBackups };
+module.exports = { parseArgs, pruneBackups, main };

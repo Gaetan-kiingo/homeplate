@@ -846,6 +846,101 @@ describe('ST-04 injection defenses (NFR-11, AB-06)', () => {
       expect(await db.countRows('messages')).toBeGreaterThanOrEqual(0); // table intact
     });
   });
+
+  // moderation-note boundary (POST /api/moderation/queue/:id/decision — FR-08 / AB-06)
+  // AB-06 names "moderation notes" as an ST-04 input boundary; this fires the payload corpus
+  // at the moderator decision note and asserts it is parameterized (never SQL) and escaped
+  // (never markup). The queue item is produced by the REAL FR-08 pipeline (mock classifier,
+  // ADR-007) — a flagged review escalated to the human queue.
+  describe('moderation-note boundary (POST /api/moderation/queue/:id/decision — FR-08 / AB-06)', () => {
+    // eslint-disable-next-line global-require
+    const { loadHandlers } = require('../../src/outbox/dispatch');
+    // eslint-disable-next-line global-require
+    const { pollOnlyThese } = require('../helpers/outboxScope');
+    const quiet = { info: () => {}, warn: () => {}, error: () => {}, child: () => quiet };
+
+    async function escalatedReviewQueueItem() {
+      const host = await db.makeUser({ can_publish_listing: true });
+      await db.makeHostProfile({ user_id: host.id });
+      const guest = await db.makeUser();
+      const listing = await db.makeListing({ host_id: host.id, moderation_status: 'approved' });
+      const booking = await db.makeBooking({
+        listing_id: listing.id,
+        guest_id: guest.id,
+        status: 'completed',
+        host_confirmed_completion: true,
+        guest_confirmed_completion: true,
+      });
+      const guestCookie = await cookieFor(guest);
+      const review = await api()
+        .post(`/api/bookings/${booking.id}/reviews`)
+        .set('Cookie', guestCookie)
+        .send({ rating: 1, comment: 'offensive-fixture harassment aimed at the host' });
+      expect(review.status).toBe(201);
+      const reviewId = review.body.review.id;
+      const { rows: scan } = await db.query(
+        `SELECT id FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+        [reviewId]
+      );
+      await pollOnlyThese([scan[0].id], loadHandlers({ log: quiet }));
+      const { rows: item } = await db.query(
+        `SELECT id FROM moderation_queue
+          WHERE content_type = 'review' AND content_id = $1 AND status <> 'resolved'`,
+        [reviewId]
+      );
+      expect(item[0]).toBeTruthy();
+      return item[0].id;
+    }
+
+    const SQLI = "'; DROP TABLE moderation_decisions; -- ";
+    const XSS = '<script>alert(1)</script><img src=x onerror=alert(2)>';
+
+    test('SQLi in the decision note never 500s and the decisions table survives intact', async () => {
+      const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
+      const moderatorCookie = await cookieFor(moderator);
+      const queueItemId = await escalatedReviewQueueItem();
+      const before = await db.countRows('moderation_decisions');
+      const res = await api()
+        .post(`/api/moderation/queue/${queueItemId}/decision`)
+        .set('Cookie', moderatorCookie)
+        .send({ decision: 'reject', category: 'offensive', note: SQLI });
+      expect(res.status).toBe(200);
+      // Table intact (the DROP was inert data, not SQL): a human decision row was ADDED.
+      expect(await db.countRows('moderation_decisions')).toBeGreaterThan(before);
+    });
+
+    test('XSS in the decision note is stored ESCAPED — no raw markup survives (AB-06)', async () => {
+      const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
+      const moderatorCookie = await cookieFor(moderator);
+      const queueItemId = await escalatedReviewQueueItem();
+      const res = await api()
+        .post(`/api/moderation/queue/${queueItemId}/decision`)
+        .set('Cookie', moderatorCookie)
+        .send({ decision: 'reject', category: 'offensive', note: XSS });
+      expect(res.status).toBe(200);
+      const { rows } = await db.query(
+        `SELECT note FROM moderation_decisions
+          WHERE decided_by = 'human' AND note IS NOT NULL
+          ORDER BY created_at DESC, id DESC LIMIT 1`
+      );
+      expect(rows[0].note).toBeTruthy();
+      expect(rows[0].note).not.toMatch(/<script/i);
+      expect(rows[0].note).not.toMatch(/[<>]/); // escaped to entities; no raw markup persists
+    });
+
+    test('a hostile note SHAPE (too long / wrong type) is a 422, never SQL (NFR-11)', async () => {
+      const moderator = await db.makeUser({ roles: ['user', 'moderator'] });
+      const moderatorCookie = await cookieFor(moderator);
+      const queueItemId = await escalatedReviewQueueItem();
+      for (const note of ['x'.repeat(1001), 42, { $gt: 0 }, ['x']]) {
+        const res = await api()
+          .post(`/api/moderation/queue/${queueItemId}/decision`)
+          .set('Cookie', moderatorCookie)
+          .send({ decision: 'reject', category: 'offensive', note });
+        expect(res.status).toBe(422);
+      }
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

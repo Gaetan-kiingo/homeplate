@@ -43,6 +43,7 @@ const { createApp } = require('../../src/app');
 
 const dbh = require('../helpers/db');
 const rh = require('../helpers/redis');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
 const { quietLogger } = require('./helpers');
 const w3 = require('./wave3');
 
@@ -927,5 +928,135 @@ describe('RT-01 drill 9 — combined Google-side outage: Maps AND moderation LLM
       restoreSearch();
       restoreGeocode();
     }
+  }, 30000);
+});
+
+describe('RT-01 drill 10 — moderation LLM outage against the wave-4 surfaces: POST reviews and POST messages (FR-05/FR-06/FR-08, ADR-002/007, NFR-09)', () => {
+  afterEach(() => llmMock.reset());
+
+  test('review stays PENDING and invisible, the message DELIVERS immediately; both scans defer, and recovery completes the SAME jobs', async () => {
+    await w3.neutralizePendingJobs();
+    const registry = loadHandlers({ log: quiet });
+    llmMock.setOutage(true); // provider down for the whole first half of the drill
+
+    // A completed booking between an eligible guest and a host (FR-05 precondition).
+    const host = await w3.makeHost();
+    const listing = await w3.makeApprovedListing({ host_id: host.id });
+    const guest = await w3.makeGuest();
+    const booking = await dbh.makeBooking({
+      listing_id: listing.id,
+      guest_id: guest.id,
+      status: 'completed',
+      guest_confirmed_completion: true,
+      host_confirmed_completion: true,
+      completed_at: new Date(),
+    });
+    const guestCookie = await w3.cookieFor(guest);
+    const hostCookie = await w3.cookieFor(host);
+
+    // (a) Review creation succeeds during the outage and is born pending (ADR-002).
+    const reviewRes = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .send({ rating: 5, comment: 'A lovely dinner posted during the rt01 drill ten outage.' })
+      .set('Cookie', guestCookie);
+    expect(reviewRes.status).toBe(201);
+    const reviewId = reviewRes.body.review.id;
+    const { rows: bornPending } = await dbh.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(bornPending[0].moderation_status).toBe('pending');
+
+    // (b) Message posting succeeds during the outage AND the other participant reads it
+    // immediately — private messages deliver first, scanned asynchronously (ADR-002).
+    const msgRes = await request(app)
+      .post(`/api/bookings/${booking.id}/messages`)
+      .send({ body: 'Hello host, sent while the moderation provider is down.' })
+      .set('Cookie', guestCookie);
+    expect(msgRes.status).toBe(201);
+    const messageId = msgRes.body.message.id;
+    const threadDuringOutage = await request(app)
+      .get(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', hostCookie);
+    expect(threadDuringOutage.status).toBe(200);
+    expect(threadDuringOutage.body.items.map((m) => m.id)).toContain(messageId);
+
+    // Both scan jobs exist, committed with their content rows (ADR-001/003).
+    const jobFor = async (id) => {
+      const { rows } = await dbh.query(
+        `SELECT * FROM outbox_jobs WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+        [id]
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0];
+    };
+    const reviewJob = await jobFor(reviewId);
+    const messageJob = await jobFor(messageId);
+    expect(reviewJob.status).toBe('pending');
+    expect(messageJob.status).toBe('pending');
+
+    // (c) A worker pass during the outage DEFERS both scans (retryable typed error), and
+    // decides nothing: the review is still pending and invisible on the host's review page,
+    // the message is still readable.
+    await withOnlyTheseDue([reviewJob.id, messageJob.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    for (const job of [reviewJob, messageJob]) {
+      const { rows } = await dbh.query(
+        `SELECT status, attempt_count, last_error FROM outbox_jobs WHERE id = $1`,
+        [job.id]
+      );
+      expect(rows[0].status).toBe('pending'); // deferred, not dropped
+      expect(rows[0].attempt_count).toBe(1);
+      expect(rows[0].last_error).toMatch(/Moderation provider unavailable/i);
+    }
+    const { rows: stillPending } = await dbh.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(stillPending[0].moderation_status).toBe('pending');
+    const hostReviewsDuringOutage = await request(app)
+      .get(`/api/hosts/${host.id}/reviews`)
+      .set('Cookie', guestCookie);
+    expect(hostReviewsDuringOutage.status).toBe(200);
+    expect(hostReviewsDuringOutage.body.reviews.map((r) => r.id)).not.toContain(reviewId);
+    const threadStillVisible = await request(app)
+      .get(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', hostCookie);
+    expect(threadStillVisible.body.items.map((m) => m.id)).toContain(messageId);
+
+    // (d) RECOVERY: the provider returns; the SAME deferred jobs complete and the benign
+    // content is approved — the review becomes publicly visible, the message stays visible.
+    llmMock.reset();
+    await dbh.query(
+      `UPDATE outbox_jobs SET available_at = now() - interval '1 second' WHERE id = ANY($1::bigint[])`,
+      [[reviewJob.id, messageJob.id]]
+    );
+    await withOnlyTheseDue([reviewJob.id, messageJob.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    for (const job of [reviewJob, messageJob]) {
+      const { rows } = await dbh.query(`SELECT status FROM outbox_jobs WHERE id = $1`, [job.id]);
+      expect(rows[0].status).toBe('delivered'); // the same job, not a new one
+    }
+    const { rows: decided } = await dbh.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(decided[0].moderation_status).toBe('approved');
+    const { rows: msgDecided } = await dbh.query(
+      `SELECT moderation_status FROM messages WHERE id = $1`,
+      [messageId]
+    );
+    expect(msgDecided[0].moderation_status).toBe('approved');
+    const hostReviewsAfter = await request(app)
+      .get(`/api/hosts/${host.id}/reviews`)
+      .set('Cookie', guestCookie);
+    expect(hostReviewsAfter.status).toBe(200);
+    expect(hostReviewsAfter.body.reviews.map((r) => r.id)).toContain(reviewId);
+    const threadAfter = await request(app)
+      .get(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', hostCookie);
+    expect(threadAfter.body.items.map((m) => m.id)).toContain(messageId);
   }, 30000);
 });

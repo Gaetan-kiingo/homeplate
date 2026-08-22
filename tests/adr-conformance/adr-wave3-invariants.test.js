@@ -1466,15 +1466,28 @@ describe('ADR-011 — wave-3 booking notifications: worker → mock transport �
     const worker = require('../../src/outbox/worker');
     const registry = dispatch.loadHandlers();
     const quiet = { info: () => {}, warn: () => {}, error: () => {}, child: () => quiet };
-    // DETERMINISM (verification-report F-01): drain until the queue is empty, not for a fixed
-    // number of passes. pollOnce claims oldest-first across the WHOLE outbox table, so a fixed
-    // pass count silently makes this assertion depend on how many rows sibling suites left
-    // behind. The 5000 is a runaway guard; the `claimed === 0` break is what ends the loop.
-    for (let i = 0; i < 5000; i += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      const stats = await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
-      if (!stats || stats.claimed === 0) break;
-    }
+    // DETERMINISM (verification-report F-01 + house rule (b)): drain SCOPED to this
+    // booking's own notify jobs via tests/helpers/outboxScope.js — never the whole shared
+    // table. The unscoped drain-until-empty this replaces delivered every sibling row too,
+    // including any pending safety.alert jobs — whose deliveries now file 'safety_alert'
+    // moderation_queue rows (U-V4R-SAFETY-QUEUE) — so this file's outcome depended on
+    // whatever other suites happened to leave behind.
+    const { rows: notifyJobs } = await dbh.query(
+      `SELECT id FROM outbox_jobs
+        WHERE type = 'notify.booking' AND payload->>'bookingId' = $1 AND status = 'pending'`,
+      [bookingId]
+    );
+    expect(notifyJobs).toHaveLength(2); // FR-13: one notify job per participant
+    await withOnlyTheseDue(
+      notifyJobs.map((r) => r.id),
+      async () => {
+        for (let i = 0; i < 10; i += 1) {
+          // eslint-disable-next-line no-await-in-loop
+          const stats = await worker.pollOnce({ registry, log: quiet, batchSize: 50 });
+          if (!stats || stats.claimed === 0) break;
+        }
+      }
+    );
 
     const { rows } = await dbh.query(
       `SELECT recipient_user_id, channel, status, params FROM notification_attempts

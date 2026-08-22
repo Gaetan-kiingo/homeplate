@@ -18,8 +18,10 @@ const common = require('./common');
 /** §3.4 moderation_queue_status domain, mirrored for the queue filter. */
 const QUEUE_STATUSES = Object.freeze(['open', 'in_review', 'resolved']);
 
-/** §3.4 moderation_content_type domain (the FR-08 v1.0 surfaces). */
-const CONTENT_TYPES = Object.freeze(['listing', 'review', 'message']);
+/** §3.4 moderation_content_type domain: the scanned FR-08 surfaces plus 'safety_alert'
+ *  (migration 0006) — the FR-07 unified-queue entries — so a moderator can filter the
+ *  queue to safety alerts (U-V4R-SAFETY-QUEUE). */
+const CONTENT_TYPES = Object.freeze(['listing', 'review', 'message', 'safety_alert']);
 
 /** FR-08 taxonomy a human decision records (ADR-008). */
 const CATEGORIES = Object.freeze(['offensive', 'spam', 'fraudulent', 'benign']);

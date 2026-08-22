@@ -106,6 +106,15 @@ const DECIDER = {
   fullName: 'Wilhelmina Ocelot-Decider',
   phone: '+14155550955',
 };
+// Wave-4 privacy actions (NFR-12/NFR-13): a throwaway account that requests an export and
+// then its own deletion — its identity must never surface in the corpus either, and the
+// EXPORT (which legitimately contains the register copy) must stay off the log sink.
+const PRIVACY = {
+  email: `mt01w4.privacy.${RUN}@mt01-lane.homeplate.invalid`,
+  password: 'CorrectHorse!42w4p',
+  fullName: 'Anastasia Numbat-Privacyperson',
+  phone: '+14155550966',
+};
 // FR-07: a THIRD PARTY's personal data, decrypted inside the worker to deliver an alert.
 // Every value is distinctive enough that a substring sweep over the captured corpus cannot
 // produce a false negative or a coincidental hit.
@@ -383,11 +392,15 @@ describe('MT-01 action 4 — a human moderation decision is performed and audite
 
   test('the moderator decides via POST /api/moderation/queue/:id/decision; ONE complete audit record', async () => {
     // The queue lists the item for the Moderator role (surface behaviour is tc08's; here the
-    // audit trail is the subject).
+    // audit trail is the subject). contentType is pinned to 'listing' ON PURPOSE: this file's
+    // global drains (and sibling suites') may deliver safety.alert filings once
+    // U4-SAFETY-COMPLETE's unified-queue filing switches on, and this lane's assertion needs
+    // only its own listing item — an UNFILTERED page over a mixed queue is the moderation
+    // lane's (tc08) surface to pin, not this one's.
     const page = await request(app)
       .get('/api/moderation/queue')
       .set('Cookie', deciderCookie)
-      .query({ status: 'open', pageSize: 100 });
+      .query({ status: 'open', contentType: 'listing', pageSize: 100 });
     expect(page.status).toBe(200);
     expect(page.body.items.map((i) => i.id)).toContain(queueItemId);
 
@@ -891,6 +904,225 @@ describe('MT-01 — worker-initiated transitions stay traceable', () => {
 });
 
 // =============================================================================================
+// Wave-4 important actions (first verification, checkpoint cca6787) — FR-05 review creation,
+// FR-06 message send, NFR-12 deletion request, NFR-13 export request are all NFR-08
+// "important actions": ONE structured audit record each, correlation ID on the outbox row the
+// same transaction wrote, and (for the export) the SAME ID back out on the worker's lines.
+// User-authored CONTENT (message body, review comment) is not log material (SRS §3.4).
+// =============================================================================================
+describe('MT-01 / NFR-08 — wave-4 important actions are audited (FR-05/FR-06/NFR-12/NFR-13)', () => {
+  const MSG_CID = `mt01w4-msg-${RUN}`;
+  const REVIEW_CID = `mt01w4-review-${RUN}`;
+  const EXPORT_CID = `mt01w4-export-${RUN}`;
+  const DELETE_CID = `mt01w4-delete-${RUN}`;
+  // Distinctive content markers: if either ever appears in the captured corpus, user content
+  // leaked into logs. The embedded address also feeds the email-shaped sweep at the bottom.
+  const MSG_MARKER = `xylotheque quokka rendezvous msgprobe.${RUN}@mt01-lane.homeplate.invalid`;
+  const REVIEW_MARKER = 'periwinkle capybara sonata — the tamales were transcendent';
+  let w4ListingId;
+  let w4BookingId;
+  let messageId;
+  let reviewId;
+  let privacyUserId;
+  let privacyCookie;
+  let exportRequestId;
+
+  beforeAll(async () => {
+    // Own listing on its own LA day (TC-11 cap); approved via SQL fixture like every other
+    // block (the moderation pipeline's own audit trail is pinned in the decision describe).
+    const created = await request(app)
+      .post('/api/listings')
+      .set('Cookie', hostCookie)
+      .send(listingBody(daysOut(35), { title: 'MT01 Wave4 Actions Probe' }));
+    expect(created.status).toBe(201);
+    w4ListingId = created.body.listing.id;
+    await query(`UPDATE listings SET moderation_status = 'approved' WHERE id = $1`, [w4ListingId]);
+    const booked = await request(app)
+      .post('/api/bookings')
+      .set('Cookie', guestCookie)
+      .send({ listingId: w4ListingId });
+    expect(booked.status).toBe(201);
+    w4BookingId = booked.body.booking.id;
+    ({ userId: privacyUserId, cookie: privacyCookie } = await registerAndLogin(PRIVACY));
+  });
+
+  test('FR-06: message send emits ONE audit record; scan row carries the SAME correlation ID, IDs only', async () => {
+    const res = await request(app)
+      .post(`/api/bookings/${w4BookingId}/messages`)
+      .set('Cookie', guestCookie)
+      .set('X-Correlation-Id', MSG_CID)
+      .send({ body: MSG_MARKER });
+    expect(res.status).toBe(201);
+    messageId = res.body.message.id;
+
+    const recs = auditsFor('message.sent', MSG_CID).filter((r) => r.outcome === 'success');
+    expect(recs).toHaveLength(1);
+    expect(recs[0].actorUserId).toBe(guestId);
+    expect(recs[0].entityType).toBe('message');
+    expect(recs[0].entityId).toBe(messageId);
+    expect(recs[0].bookingId).toBe(w4BookingId);
+    expect(Number.isNaN(Date.parse(recs[0].time))).toBe(false);
+
+    // Delivered immediately, born pending (ADR-002); the async scan row is stamped with the
+    // sending request's correlation ID and carries IDs only — never the message text.
+    const { rows } = await query(
+      `SELECT correlation_id, payload FROM outbox_jobs
+        WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [messageId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].correlation_id).toBe(MSG_CID);
+    expect(rows[0].payload.contentType).toBe('message');
+    expect(JSON.stringify(rows[0].payload)).not.toContain('xylotheque');
+    const { rows: msgRows } = await query('SELECT moderation_status FROM messages WHERE id = $1', [
+      messageId,
+    ]);
+    expect(msgRows[0].moderation_status).toBe('pending');
+    // The message CONTENT never reached the log sink (§3.4: content is not log material).
+    expect(lines.join('\n')).not.toContain('xylotheque');
+  });
+
+  test('FR-05: review creation emits ONE audit record; born pending; scan row shares the correlation ID', async () => {
+    // Fixture: FR-04's dual confirmation has its own describe above — flip this block's own
+    // booking to completed directly, the state FR-05 requires.
+    // (0001's bookings_completed_requires_both_confirmations CHECK forces the flags too —
+    // the schema itself refuses a 'completed' row without the FR-04 dual confirmation.)
+    await query(
+      `UPDATE bookings
+          SET status = 'completed', completed_at = now(),
+              host_confirmed_completion = true, guest_confirmed_completion = true
+        WHERE id = $1`,
+      [w4BookingId]
+    );
+    const res = await request(app)
+      .post(`/api/bookings/${w4BookingId}/reviews`)
+      .set('Cookie', guestCookie)
+      .set('X-Correlation-Id', REVIEW_CID)
+      .send({ rating: 5, comment: REVIEW_MARKER });
+    expect(res.status).toBe(201);
+    reviewId = res.body.review.id;
+
+    const recs = auditsFor('review.created', REVIEW_CID).filter((r) => r.outcome === 'success');
+    expect(recs).toHaveLength(1);
+    expect(recs[0].actorUserId).toBe(guestId);
+    expect(recs[0].entityType).toBe('review');
+    expect(recs[0].entityId).toBe(reviewId);
+    expect(recs[0].bookingId).toBe(w4BookingId);
+    expect(recs[0].targetUserId).toBe(hostId);
+    expect(Number.isNaN(Date.parse(recs[0].time))).toBe(false);
+
+    const { rows: revRows } = await query('SELECT moderation_status FROM reviews WHERE id = $1', [
+      reviewId,
+    ]);
+    expect(revRows[0].moderation_status).toBe('pending'); // FR-08: born pending
+    const { rows } = await query(
+      `SELECT correlation_id, payload FROM outbox_jobs
+        WHERE type = 'moderation.scan' AND payload->>'contentId' = $1`,
+      [reviewId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].correlation_id).toBe(REVIEW_CID);
+    expect(rows[0].payload.contentType).toBe('review');
+    expect(lines.join('\n')).not.toContain('periwinkle'); // comment text is not log material
+  });
+
+  test('NFR-13: export request audits both sides — request record, stamped job, worker record with the SAME ID', async () => {
+    const res = await request(app)
+      .post('/api/users/me/export')
+      .set('Cookie', privacyCookie)
+      .set('X-Correlation-Id', EXPORT_CID)
+      .send();
+    expect(res.status).toBe(202);
+    exportRequestId = res.body.request.id;
+
+    const requested = auditsFor('privacy.export_requested', EXPORT_CID);
+    expect(requested).toHaveLength(1);
+    expect(requested[0].actorUserId).toBe(privacyUserId);
+    expect(requested[0].entityType).toBe('data_request');
+    expect(requested[0].entityId).toBe(exportRequestId);
+
+    const { rows } = await query(
+      `SELECT id, correlation_id, payload FROM outbox_jobs
+        WHERE type = 'data.export' AND payload->>'dataRequestId' = $1`,
+      [exportRequestId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].correlation_id).toBe(EXPORT_CID);
+    expect(Object.keys(rows[0].payload).sort()).toEqual(['dataRequestId', 'userId']);
+
+    // Worker side: drain until THIS export completes (F-01 pattern — see ./support.js).
+    const registry = loadHandlers();
+    await drainOutboxUntil({
+      registry,
+      log: recLogger,
+      isDone: async () => {
+        const { rows: reqRows } = await query('SELECT status FROM data_requests WHERE id = $1', [
+          exportRequestId,
+        ]);
+        return reqRows[0].status === 'completed' || reqRows[0].status === 'failed';
+      },
+    });
+    const { rows: done } = await query(
+      'SELECT status, completed_at FROM data_requests WHERE id = $1',
+      [exportRequestId]
+    );
+    expect(done[0].status).toBe('completed');
+    expect(done[0].completed_at).not.toBeNull();
+
+    const completed = auditsFor('privacy.export_completed', EXPORT_CID);
+    expect(completed).toHaveLength(1);
+    expect(completed[0].entityId).toBe(exportRequestId);
+    // No worker line for this job may carry a different correlation ID.
+    const jobLines = records().filter((r) => r.jobId === rows[0].id);
+    expect(jobLines.length).toBeGreaterThanOrEqual(1);
+    for (const line of jobLines) {
+      expect(line.correlationId).toBe(EXPORT_CID);
+    }
+    // The export CONTENT (the register copy holds the user's email/name) stays off the log
+    // sink and off the outbox payload — it lives on the data_requests row only.
+    expect(lines.join('\n')).not.toContain(PRIVACY.email);
+  });
+
+  test('NFR-12: deletion request audits ONE record; erasure job stamped, scheduled, IDs only; sessions die (AB-05)', async () => {
+    const res = await request(app)
+      .delete('/api/users/me')
+      .set('Cookie', privacyCookie)
+      .set('X-Correlation-Id', DELETE_CID)
+      .send();
+    expect(res.status).toBe(202);
+    const deletionRequestId = res.body.request.id;
+
+    const recs = auditsFor('privacy.deletion_requested', DELETE_CID);
+    expect(recs).toHaveLength(1);
+    expect(recs[0].outcome).toBe('success');
+    expect(recs[0].actorUserId).toBe(privacyUserId);
+    expect(recs[0].entityType).toBe('data_request');
+    expect(recs[0].entityId).toBe(deletionRequestId);
+    expect(Number.isNaN(Date.parse(recs[0].time))).toBe(false);
+
+    // The erasure job commits in the SAME transaction (ADR-003), stamped with this request's
+    // ID, payload IDs only, and is SCHEDULED (available at the 30-day due date, not now).
+    const { rows } = await query(
+      `SELECT correlation_id, payload, status, available_at, created_at FROM outbox_jobs
+        WHERE type = 'account.erasure' AND payload->>'userId' = $1
+          AND payload->>'reason' = 'deletion'`,
+      [privacyUserId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].correlation_id).toBe(DELETE_CID);
+    expect(rows[0].status).toBe('pending');
+    expect(Object.keys(rows[0].payload).sort()).toEqual(['dataRequestId', 'reason', 'userId']);
+    const daysUntilDue =
+      (new Date(rows[0].available_at) - new Date(rows[0].created_at)) / (24 * 3600 * 1000);
+    expect(daysUntilDue).toBeGreaterThan(1); // deferred to the grace window, not due now
+
+    // AB-05: no session of the account survives the request.
+    const after = await request(app).get('/api/users/me').set('Cookie', privacyCookie);
+    expect(after.status).toBe(401);
+  });
+});
+
+// =============================================================================================
 // FR-07 safety alerts (re-verification unit W3-RV-OBS-SAFETY) — the only flow that decrypts a
 // THIRD PARTY's personal data (the emergency contact) on the worker path
 // =============================================================================================
@@ -1156,7 +1388,7 @@ describe('MT-01 — cause reconstruction and the SRS §3.4 PII register', () => 
   test('captured log output holds user IDs only — no email, password, name, phone, address or postal code', () => {
     const blob = lines.join('\n');
     expect(lines.length).toBeGreaterThan(30); // the scan runs over a real corpus
-    for (const identity of [HOST, GUEST, INTRUDER, OUTSIDER, MODERATOR, DECIDER]) {
+    for (const identity of [HOST, GUEST, INTRUDER, OUTSIDER, MODERATOR, DECIDER, PRIVACY]) {
       expect(blob).not.toContain(identity.email);
       expect(blob).not.toContain(identity.password);
       expect(blob).not.toContain(identity.fullName);
@@ -1171,6 +1403,11 @@ describe('MT-01 — cause reconstruction and the SRS §3.4 PII register', () => 
     expect(blob).not.toContain('Pangolin');
     expect(blob).not.toContain('Quillfeather');
     expect(blob).not.toContain('Ocelot'); // the U4-MODERATION decider
+    expect(blob).not.toContain('Numbat'); // the NFR-12/13 privacy requester
+    // Wave-4 user CONTENT is not log material (§3.4): neither the FR-06 message body nor
+    // the FR-05 review comment may reach the sink, even in scrubbed form.
+    expect(blob).not.toContain('xylotheque');
+    expect(blob).not.toContain('periwinkle');
 
     expect(blob).not.toContain(STREET);
     expect(blob).not.toContain('Sagebrush');

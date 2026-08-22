@@ -20,7 +20,9 @@
 //     user is active again, and erases when not (NFR-12, FR-13/ADR-011 seam);
 //   - the outbox handlers validate their payloads and the dispatch registry serves both
 //     job types; scripts/backup.js prunes dumps older than config.backup.retentionDays and
-//     keeps newer ones (ST-05 backup expiry, clock-injected).
+//     keeps newer ones (ST-05 backup expiry, clock-injected); its main() CLI dispatch is
+//     run in-process for BOTH modes (ITA4-F2) — the sweep branch forwards --limit and
+//     closes pool AND redis in a finally even when the sweep throws.
 //
 // Requirement traceability: NFR-12 (ST-05), NFR-13 (ST-06), NFR-04, NFR-08, NFR-11, AB-05,
 // AB-08, FR-13, ADR-001/003/004/011.
@@ -970,6 +972,10 @@ describe('scripts/backup.js — NFR-12 backup expiry is executable', () => {
       sweepInactivity: true,
       limit: 5,
     });
+    expect(backupScript.parseArgs(['--sweep-inactivity', '--limit=9'])).toMatchObject({
+      sweepInactivity: true,
+      limit: 9,
+    });
     expect(() => backupScript.parseArgs([])).toThrow(/--dir/);
     expect(() => backupScript.parseArgs(['--wat'])).toThrow(/unknown argument/);
     expect(() => backupScript.parseArgs(['--sweep-inactivity', '--limit', '0'])).toThrow(/--limit/);
@@ -979,5 +985,109 @@ describe('scripts/backup.js — NFR-12 backup expiry is executable', () => {
     expect(config.backup.retentionDays).toBe(config.privacy.erasureDays); // one 30-day window
     const envExample = fs.readFileSync(path.join(__dirname, '..', '..', '.env.example'), 'utf8');
     expect(envExample).toMatch(/^BACKUP_RETENTION_DAYS=30$/m);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // main() — the CLI dispatch itself, in-process (ITA4-F2). Only the pool/redis closers are
+  // injected (the suite must not close its own shared handles); everything else is the real
+  // code path: real parseArgs, real config.backup wiring, real privacyService on success.
+  // -------------------------------------------------------------------------------------------
+  test('main --sweep-inactivity flags via the REAL service, reports ids, closes pool AND redis', async () => {
+    const stale = await dbh.makeUser();
+    await dbh.query(
+      `UPDATE users SET last_active_at = now() - make_interval(months => $2) WHERE id = $1`,
+      [stale.id, config.privacy.inactivityMonths + 1]
+    );
+
+    const lines = [];
+    const closes = { pool: 0, redis: 0 };
+    const result = await backupScript.main(
+      ['--sweep-inactivity'],
+      { log: (line) => lines.push(line) },
+      {
+        closePool: async () => {
+          closes.pool += 1;
+        },
+        closeRedis: async () => {
+          closes.redis += 1;
+        },
+      }
+    );
+
+    // The real sweep flagged the backdated account (scoped assertion — shared database).
+    expect(result.flagged.some((f) => f.userId === stale.id)).toBe(true);
+    const jobs = await jobsFor(stale.id, 'account.erasure');
+    expect(jobs).toHaveLength(1);
+
+    // NFR-08: the structured summary line names the run and the flagged ids, nothing more.
+    const done = lines.map((l) => JSON.parse(l)).find((e) => e.event === 'inactivity_sweep_done');
+    expect(done).toBeDefined();
+    expect(done.userIds).toContain(stale.id);
+    expect(done.flagged).toBe(done.userIds.length);
+
+    // Resource-close logic: both closers ran exactly once on the success path.
+    expect(closes).toEqual({ pool: 1, redis: 1 });
+  });
+
+  test('main --sweep-inactivity forwards --limit and closes pool AND redis even when the sweep throws', async () => {
+    const sweepCalls = [];
+    const closes = [];
+    await expect(
+      backupScript.main(
+        ['--sweep-inactivity', '--limit', '7'],
+        { log: () => {} },
+        {
+          privacyService: {
+            runInactivitySweep: async (opts) => {
+              sweepCalls.push(opts);
+              throw new Error('sweep exploded');
+            },
+          },
+          closePool: async () => closes.push('pool'),
+          closeRedis: async () => closes.push('redis'),
+        }
+      )
+    ).rejects.toThrow('sweep exploded');
+
+    // The parsed --limit reached the service call unmangled…
+    expect(sweepCalls).toHaveLength(1);
+    expect(sweepCalls[0]).toMatchObject({ limit: 7 });
+    // …and the finally still closed BOTH handles, in order (a dropped closeRedis() or a
+    // close skipped on failure would hang the lifecycle cron — the ITA4-F2 regression).
+    expect(closes).toEqual(['pool', 'redis']);
+  });
+
+  test('main --dir prunes through config.backup.retentionDays and reports the summary line', async () => {
+    const now = new Date(); // main() uses the real clock; fixtures are backdated against it
+    const dir = makeBackupDir();
+    try {
+      const retention = config.backup.retentionDays;
+      writeDump(dir, 'ancient.dump', retention + 5, now);
+      writeDump(dir, 'recent.dump', 1, now);
+
+      const lines = [];
+      const result = await backupScript.main(['--dir', dir], { log: (line) => lines.push(line) });
+
+      expect(result.pruned).toEqual(['ancient.dump']);
+      expect(result.kept).toEqual(['recent.dump']);
+      expect(fs.existsSync(path.join(dir, 'ancient.dump'))).toBe(false);
+      expect(fs.existsSync(path.join(dir, 'recent.dump'))).toBe(true);
+
+      const events = lines.map((l) => JSON.parse(l));
+      expect(events.find((e) => e.event === 'backup_pruned')).toMatchObject({
+        file: 'ancient.dump',
+        dryRun: false,
+      });
+      // The policy number in the report is the config value — never an inline constant.
+      expect(events.find((e) => e.event === 'backup_prune_done')).toMatchObject({
+        dir,
+        retentionDays: retention,
+        pruned: 1,
+        kept: 1,
+        dryRun: false,
+      });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

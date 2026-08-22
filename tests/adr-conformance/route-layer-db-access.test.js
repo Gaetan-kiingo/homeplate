@@ -20,11 +20,14 @@
 //            not write. The behavioural half of this file proves the refactor kept 404/403/201
 //            exactly as before, because no other suite exercised the review branch.
 //
-// TRANSITIONAL NOTE: the authorship lookup now lives in src/modules/media/repo.js
-// (findReviewAuthorId) rather than a reviews repo, because src/modules/reviews/ must not exist
-// before wave 4 — tests/coverage/coverage-lane.test.js asserts its absence as the wave-4 scope
-// guard. U4-REVIEWS moves the function to src/modules/reviews/repo.js; this file keeps passing
-// either way, since it asserts "no SQL in routes", not where the repo lives.
+// RESOLVED (wave-4 verification, 2026-08-21): the authorship SQL now lives in its owning
+// module, src/modules/reviews/repo.js (U4-REVIEWS), and src/modules/media/repo.js re-exports
+// the SAME function object unchanged. The lane's decision is to KEEP that delegation rather
+// than repoint src/modules/media/routes.js at the reviews repo: the SQL exists exactly once
+// (NFR-11 stays auditable per module), the media routes keep depending only on their own
+// module's repo facade (ADR-001 layering — a module consumes another's published contract
+// through its own boundary), and the identity assertion below turns the delegation into a
+// verified invariant — a quiet re-implementation inside the media module would fail here.
 'use strict';
 
 const fs = require('fs');
@@ -113,6 +116,10 @@ describe('ADR-001 layering — no data access in the route layer (W3-ADR-04 / CO
     const source = fs.readFileSync(path.join(ROOT, 'src', 'modules', 'media', 'routes.js'), 'utf8');
     expect(source).toContain('mediaRepo.findReviewAuthorId(');
     expect(typeof mediaRepo.findReviewAuthorId).toBe('function');
+    // The delegation decision (header note): the media repo export IS the reviews module's
+    // published function — one SQL home, no silent re-implementation.
+    const reviewsRepo = require('../../src/modules/reviews/repo');
+    expect(mediaRepo.findReviewAuthorId).toBe(reviewsRepo.findReviewAuthorId);
     // The removed import, spelled as it was, must not come back.
     expect(stripComments(source)).not.toContain("require('../../db/pool')");
   });

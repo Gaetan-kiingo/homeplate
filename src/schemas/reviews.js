@@ -5,11 +5,28 @@
 //   FR-05 (TC-05) — createReviewParams validates the :id path segment of
 //                   POST /api/bookings/:id/reviews; createReviewBody is the review itself:
 //                   rating MUST be an INTEGER 1..5 (a float, a string or an out-of-range
-//                   value is the acceptance 422), comment is bounded sanitized free text
-//                   (SRS §3.1 "reviews ... including photos and a numerical rating" — the
-//                   text IS the moderated content, so it is required and non-empty), and
-//                   imageKeys are previously minted object-storage keys (the "including
+//                   value is the acceptance 422), comment is bounded sanitized free text,
+//                   and imageKeys are previously minted object-storage keys (the "including
 //                   photos" clause; WHOSE namespace they are is the service's 403).
+//
+//   OPEN SPEC QUESTION (FR-05, escalated to the SRS owner — verification findings
+//   TCC-W4-02 / TCB-W4-03 / RTLT-W4-02 / F-ADR4-02 / COV-W4-02; NOT yet decided):
+//                   comment is REQUIRED with min 1 char, so a photo-only review
+//                   ({rating, imageKeys} with no text) is a 422 even though SRS §3.1
+//                   FR-05 ("reviews ... including photos and a numerical rating") does
+//                   not mandate text. The min-1 rule is NOT arbitrary: both moderation
+//                   adapters' classify() throw TypeError on empty/whitespace text
+//                   (src/adapters/llmModeration.js / .mock.js), which is not the typed
+//                   retryable ModerationProviderError, so an empty-bodied review's
+//                   moderation.scan job (moderation/repo projects coalesce(body,''))
+//                   would retry then PERMANENTLY dead-letter, stranding the review
+//                   pending forever (ADR-002/ADR-003). Options on the table:
+//                   (a) ratify comment-required as the FR-05 interpretation, or
+//                   (b) relax this schema AND, in the SAME change, make the scan
+//                   pipeline empty-text-safe (e.g. skip the LLM stage and route the
+//                   image-bearing item to the human queue per ADR-002). Do not relax
+//                   this min:1 without the pipeline change — that reintroduces the
+//                   permanent dead-letter above.
 //   FR-08 / AB-01 / AB-04 — nothing here publishes anything: a valid body only ever becomes
 //                   a moderation_status='pending' row (service), so hostile-but-well-formed
 //                   content still meets the ADR-002 pipeline before any reader.

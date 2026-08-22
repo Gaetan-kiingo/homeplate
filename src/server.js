@@ -67,8 +67,25 @@ function start({ config = require('./config'), logger: injectedLogger } = {}) {
   return server;
 }
 
-/** Graceful drain: stop accepting, let in-flight requests finish, then exit (NFR-08). */
-function wireShutdown(server, logger) {
+// Hard-stop delay for shutdown drains that hang (e.g. a socket held open past close()).
+// Default 10 s — well under orchestrator kill windows. SERVER_SHUTDOWN_HARD_STOP_MS (a
+// positive integer of milliseconds) tunes it per deployment; it is an operational knob of
+// this entrypoint — not an ADR-009 product cap, and not a secret — so like LOG_LEVEL
+// (src/lib/logger.js) it is read here rather than through src/config/schema.js. The
+// coverage lane's spawn test shortens it to keep the real-process hard-stop drill fast.
+const DEFAULT_HARD_STOP_MS = 10000;
+const envHardStop = Number.parseInt(process.env.SERVER_SHUTDOWN_HARD_STOP_MS ?? '', 10);
+const HARD_STOP_MS =
+  Number.isInteger(envHardStop) && envHardStop > 0 ? envHardStop : DEFAULT_HARD_STOP_MS;
+
+/**
+ * Graceful drain: stop accepting, let in-flight requests finish, then exit (NFR-08).
+ * Repeated signals are idempotent (first one wins). `hardStopMs`/`exit` are injectable so
+ * tests/coverage/server-shutdown.test.js can exercise the drain, close-failure (exit 1)
+ * and hard-stop paths in-process without terminating the test runner; production callers
+ * pass neither. Returns the shutdown function for the same reason.
+ */
+function wireShutdown(server, logger, { hardStopMs = HARD_STOP_MS, exit = process.exit } = {}) {
   let closing = false;
   const shutdown = (signal) => {
     if (closing) return;
@@ -77,15 +94,17 @@ function wireShutdown(server, logger) {
     server.close((err) => {
       if (err) {
         logger.error(`server: close failed: ${err.message}`);
-        process.exit(1);
+        exit(1);
+        return;
       }
-      process.exit(0);
+      exit(0);
     });
     // Hard stop if drains hang (keep-alive sockets), well under orchestrator kill windows.
-    setTimeout(() => process.exit(0), 10000).unref();
+    setTimeout(() => exit(0), hardStopMs).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  return shutdown;
 }
 
 if (require.main === module) {
@@ -101,4 +120,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { start, buildTlsOptions };
+module.exports = { start, buildTlsOptions, wireShutdown };

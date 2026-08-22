@@ -411,29 +411,28 @@ describe('service.escalateAlert — AB-04: a moderator raises an alert on the bo
 
 // ---- unified 4A queue (U4-SAFETY-COMPLETE) ---------------------------------------------------
 //
-// DEVIATION NOTE (read by tomorrow's verify run): the build-plan acceptance wants every
-// drained alert to appear as a moderation_queue row of content_type 'safety_alert' visible
-// via GET /api/moderation/queue. Migration 0006 ships the enum value and the write model
-// below is complete and exercised here — but 4A's read model (src/modules/moderation/repo.js
-// loadContentForQueuePage, and insertDecision/setModerationStatus behind the decision route)
-// hard-asserts its CONTENT_TYPES list, which does not yet include 'safety_alert': a filed row
-// would 500 every unfiltered queue page. U4-SAFETY-COMPLETE owns no moderation/* file, so the
-// worker gates filing on the PUBLISHED contract (repo.unifiedQueueSupported): the moment 4A
-// declares the type, filing turns on with no safety-module change. These tests prove both
-// sides of that gate; the widened-contract tests simulate the post-repair state via
-// jest.replaceProperty and clean their rows up so no sibling suite can trip on them.
+// Repaired by U-V4R-SAFETY-QUEUE: 4A's read model (src/modules/moderation/repo.js) now
+// DECLARES 'safety_alert' in its published CONTENT_TYPES contract — loadContentForQueuePage
+// serves an IDs-only excerpt for the type and setModerationStatus is a recorded no-op — so
+// repo.unifiedQueueSupported() is TRUE on the real tree and the worker files one
+// moderation_queue row per drained alert. These tests prove both sides of the gate: filing
+// is active on the published contract, and NARROWING the contract (simulated via
+// jest.replaceProperty) switches filing back off with no safety-module change. The
+// route-level acceptance (queue page + decision) lives in tc08 and IT-04.
 
-describe('unified 4A queue — migration 0006 and the gated moderation_queue write model', () => {
+describe('unified 4A queue — migration 0006 and the contract-gated moderation_queue write model', () => {
   const moderationRepo = require('../../src/modules/moderation/repo');
   const handler = require('../../src/outbox/handlers/safetyAlert');
   const transport = require('../../src/modules/notifications/transport');
 
-  /** Simulate the post-repair 4A contract: CONTENT_TYPES declares 'safety_alert'. */
-  const widen = () =>
+  /** Simulate a WITHDRAWN 4A contract: CONTENT_TYPES without 'safety_alert'. */
+  const narrow = () =>
     jest.replaceProperty(
       moderationRepo,
       'CONTENT_TYPES',
-      Object.freeze([...moderationRepo.CONTENT_TYPES, repo.UNIFIED_QUEUE_CONTENT_TYPE])
+      Object.freeze(
+        moderationRepo.CONTENT_TYPES.filter((t) => t !== repo.UNIFIED_QUEUE_CONTENT_TYPE)
+      )
     );
 
   async function queueRowsFor(alertId) {
@@ -448,8 +447,9 @@ describe('unified 4A queue — migration 0006 and the gated moderation_queue wri
 
   afterEach(async () => {
     jest.restoreAllMocks();
-    // While 4A cannot serve the type, a leftover row would 500 sibling suites' unfiltered
-    // GET /api/moderation/queue pages — every test in here cleans the shared table.
+    // The read model serves the type now, so a leftover row can no longer 500 anything —
+    // but every test still cleans what it filed into the SHARED moderation_queue table, so
+    // sibling suites' queue pages stay predictable (helpers/env.js CONCURRENCY RULE).
     await query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
   });
 
@@ -464,13 +464,13 @@ describe('unified 4A queue — migration 0006 and the gated moderation_queue wri
   });
 
   test('unifiedQueueSupported follows the PUBLISHED 4A contract in both directions', () => {
-    // Today: 4A has not declared 'safety_alert', so the worker must not file rows the
-    // unified queue route would 500 on.
-    expect(moderationRepo.CONTENT_TYPES.includes(repo.UNIFIED_QUEUE_CONTENT_TYPE)).toBe(false);
-    expect(repo.unifiedQueueSupported()).toBe(false);
-    // The moment 4A widens CONTENT_TYPES, filing turns on — no safety-module change needed.
-    widen();
+    // Since U-V4R-SAFETY-QUEUE, 4A declares 'safety_alert' — filing is ACTIVE on this tree.
+    expect(moderationRepo.CONTENT_TYPES.includes(repo.UNIFIED_QUEUE_CONTENT_TYPE)).toBe(true);
     expect(repo.unifiedQueueSupported()).toBe(true);
+    // If the read model ever withdrew the type, filing would switch back off — with no
+    // safety-module change (the gate re-reads the contract per delivery).
+    narrow();
+    expect(repo.unifiedQueueSupported()).toBe(false);
   });
 
   test('fileUnifiedQueueEntry: one open row per alert, idempotent, refileable after resolve (RT-02)', async () => {
@@ -501,8 +501,7 @@ describe('unified 4A queue — migration 0006 and the gated moderation_queue wri
     expect(refiled.item.id).not.toBe(first.item.id);
   });
 
-  test('handler + declared support: the entry is filed BEFORE the delivery legs, so a failing delivery keeps it', async () => {
-    widen();
+  test('handler + declared support (the REAL contract): the entry is filed BEFORE the delivery legs, so a failing delivery keeps it', async () => {
     const raiser = await makeUser(); // no emergency contact on file
     const booking = await makeBooking({ listing_id: listing.id, guest_id: raiser.id });
     const alert = await service.raiseAlert(raiser.id, booking.id);
@@ -519,7 +518,8 @@ describe('unified 4A queue — migration 0006 and the gated moderation_queue wri
     expect((await repo.findById(alert.id)).delivery_status).toBe('retrying'); // FR-07 honest marking
   });
 
-  test('handler + absent support: NO moderation_queue row is filed, and the FR-07 alerts queue still lists the alert', async () => {
+  test('handler + WITHDRAWN support (simulated): NO moderation_queue row is filed, and the FR-07 alerts queue still lists the alert', async () => {
+    narrow();
     const raiser = await makeUser();
     const booking = await makeBooking({ listing_id: listing.id, guest_id: raiser.id });
     const alert = await service.raiseAlert(raiser.id, booking.id);

@@ -11,6 +11,11 @@
 //                   low-confidence/flagged content for the human Moderator; setModerationStatus()
 //                   is the publication gate's only writer (approved content becomes publicly
 //                   readable; rejected content never does).
+//   FR-07 (TC-07, IT-04) — CONTENT_TYPES declares 'safety_alert' (migration 0006), so the
+//                   unified queue serves the FR-07 entries the safety-alert worker files:
+//                   loadContentForQueuePage() synthesizes an IDs-only excerpt from the
+//                   safety_alerts row, and setModerationStatus() is a recorded no-op for the
+//                   type (an alert has no publication state to flip).
 //   NFR-11 (ST-04) — parameterized SQL only; the two dynamic WHERE builders interpolate
 //                   nothing but `$n` placeholder INDEXES.
 //   NFR-13 / ADR-010 — loadContent() selects ONLY what the pipeline needs: the moderated
@@ -26,8 +31,16 @@
 
 const pool = require('../../db/pool');
 
-/** §3.4 moderation_content_type domain — the surfaces FR-08 moderates in v1.0. */
-const CONTENT_TYPES = Object.freeze(['listing', 'review', 'message']);
+/** The FR-08 SCANNED surfaces — content with user-authored text the pipeline judges. */
+const SCANNED_CONTENT_TYPES = Object.freeze(['listing', 'review', 'message']);
+
+/** §3.4 moderation_content_type domain — the queue read model's PUBLISHED contract: the
+ *  scanned FR-08 surfaces plus 'safety_alert' (db/migrations/0006), whose moderation_queue
+ *  rows are the FR-07 unified-queue entries the safety-alert worker files (one queue for
+ *  moderators to work — U4-SAFETY-COMPLETE). src/modules/safety/repo.js
+ *  unifiedQueueSupported() gates that filing on membership HERE, so declaring the type in
+ *  this list is what switched the filing on (repair U-V4R-SAFETY-QUEUE). */
+const CONTENT_TYPES = Object.freeze([...SCANNED_CONTENT_TYPES, 'safety_alert']);
 
 /** Decision columns that leave this module (never a raw row spread). */
 const DECISION_COLS =
@@ -57,7 +70,7 @@ function assertContentType(contentType) {
  * the author id (rate limit / audit — IDs only) and the current moderation state. Static
  * per-type SQL — the type never reaches the string as an identifier (NFR-11).
  *
- * @param {'listing'|'review'|'message'} contentType
+ * @param {'listing'|'review'|'message'|'safety_alert'} contentType
  * @param {string} contentId
  * @param {import('pg').PoolClient} [client]
  * @returns {Promise<{contentType: string, contentId: string, authorId: string|null,
@@ -65,6 +78,13 @@ function assertContentType(contentType) {
  */
 async function loadContent(contentType, contentId, client = null) {
   assertContentType(contentType);
+  if (contentType === 'safety_alert') {
+    // Explicit scan-path skip (U-V4R-SAFETY-QUEUE): an FR-07 unified-queue entry references
+    // a safety_alerts row, which carries NO user-authored text for the FR-08 pipeline to
+    // judge — and no producer enqueues a 'moderation.scan' job for the type. A stray scan
+    // job would resolve as content-missing here instead of crashing the worker.
+    return null;
+  }
   let row;
   if (contentType === 'listing') {
     const { rows } = await runner(client).query(
@@ -107,6 +127,15 @@ async function loadContent(contentType, contentId, client = null) {
  */
 async function countRecentByAuthor(contentType, authorId, windowMinutes, client = null) {
   assertContentType(contentType);
+  if (!SCANNED_CONTENT_TYPES.includes(contentType)) {
+    // Only scanned surfaces have a per-author submission rate (AB-03). A safety alert is
+    // not a moderated submission — the scan pipeline never reaches stage 1b for the type
+    // (loadContent() above returns null first), so this is a loud caller-bug guard, never
+    // silent fake data.
+    throw new TypeError(
+      `moderation repo: countRecentByAuthor serves scanned surfaces only (got "${contentType}")`
+    );
+  }
   const sqlByType = {
     listing: `SELECT count(*)::int AS n FROM listings
                WHERE host_id = $1 AND created_at > now() - ($2::int * interval '1 minute')`,
@@ -127,7 +156,7 @@ async function countRecentByAuthor(contentType, authorId, windowMinutes, client 
  * and a material listing edit resets to 'pending' in the listings module, but every
  * transition OUT of 'pending' happens here, on the pipeline's or a human's decision.
  *
- * @param {'listing'|'review'|'message'} contentType
+ * @param {'listing'|'review'|'message'|'safety_alert'} contentType
  * @param {string} contentId
  * @param {'approved'|'rejected'} status
  * @param {import('pg').PoolClient} [client]  transaction client (decision + flip commit together)
@@ -137,6 +166,18 @@ async function setModerationStatus(contentType, contentId, status, client = null
   assertContentType(contentType);
   if (status !== 'approved' && status !== 'rejected') {
     throw new TypeError(`moderation repo: cannot set moderation_status "${status}"`);
+  }
+  if (contentType === 'safety_alert') {
+    // Recorded no-op (U-V4R-SAFETY-QUEUE): a safety alert has no publication state to flip —
+    // the human decision on its FR-07 unified-queue entry is recorded by insertDecision()
+    // and resolves the queue item (service.decide), while the alert row keeps its own
+    // delivery lifecycle (§3.4 alert_delivery_status) untouched. The return value still
+    // reports whether the alert row exists, so decide()'s NFR-08 audit record
+    // (contentExists) stays truthful.
+    const { rows } = await runner(client).query(`SELECT 1 FROM safety_alerts WHERE id = $1`, [
+      contentId,
+    ]);
+    return rows.length === 1;
   }
   const sqlByType = {
     listing: `UPDATE listings SET moderation_status = $2::moderation_status, updated_at = now()
@@ -307,8 +348,13 @@ async function countQueue({ status, contentType } = {}) {
 }
 
 /**
- * Batched scan-text excerpts for one queue page (NFR-13: the same minimal projection
- * loadContent uses — never an address or coordinate). Returns Map keyed "type:id".
+ * Batched excerpts for one queue page (NFR-13: the same minimal projection loadContent
+ * uses — never an address, coordinate or contact value). Returns Map keyed "type:id".
+ * 'safety_alert' entries (FR-07 unified queue) synthesize an IDs-only excerpt from the
+ * safety_alerts row — booking id + raised time; an alert has no moderation_status, so its
+ * contentStatus serializes null and the queue row's own status is what a moderator works.
+ * An UNKNOWN content_type is skipped, never thrown on: one row of a future enum label must
+ * not 500 the whole moderator queue page (the row still lists, with a null excerpt).
  */
 async function loadContentForQueuePage(rows) {
   const byType = new Map();
@@ -316,19 +362,25 @@ async function loadContentForQueuePage(rows) {
     if (!byType.has(row.content_type)) byType.set(row.content_type, []);
     byType.get(row.content_type).push(row.content_id);
   }
+  const sqlByType = {
+    listing: `SELECT id, moderation_status,
+                     concat_ws(E'\\n', title, description) AS text
+                FROM listings WHERE id = ANY($1::uuid[])`,
+    review: `SELECT id, moderation_status, coalesce(body, '') AS text
+               FROM reviews WHERE id = ANY($1::uuid[])`,
+    message: `SELECT id, moderation_status, body AS text
+                FROM messages WHERE id = ANY($1::uuid[])`,
+    safety_alert: `SELECT id, NULL AS moderation_status,
+                          'Safety alert on booking ' || booking_id || ' raised ' ||
+                          to_char(created_at AT TIME ZONE 'UTC',
+                                  'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS text
+                     FROM safety_alerts WHERE id = ANY($1::uuid[])`,
+  };
   const out = new Map();
   for (const [contentType, ids] of byType) {
-    assertContentType(contentType);
-    const sqlByType = {
-      listing: `SELECT id, moderation_status,
-                       concat_ws(E'\\n', title, description) AS text
-                  FROM listings WHERE id = ANY($1::uuid[])`,
-      review: `SELECT id, moderation_status, coalesce(body, '') AS text
-                 FROM reviews WHERE id = ANY($1::uuid[])`,
-      message: `SELECT id, moderation_status, body AS text
-                  FROM messages WHERE id = ANY($1::uuid[])`,
-    };
-    const { rows: contentRows } = await pool.query(sqlByType[contentType], [ids]);
+    const sql = sqlByType[contentType];
+    if (!sql) continue; // defensive skip — see the docblock
+    const { rows: contentRows } = await pool.query(sql, [ids]);
     for (const contentRow of contentRows) {
       out.set(`${contentType}:${contentRow.id}`, {
         moderationStatus: contentRow.moderation_status,

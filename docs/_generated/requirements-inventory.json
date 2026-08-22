@@ -1,6 +1,6 @@
 {
  "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4; acceptance criteria additionally bound by ADR-001..011",
- "generated": "2026-08-21 (rev E — wave-4 build plan; statusAt_eebd638 added from docs/verification-report.md §3.4: 23 met / 5 partial / 7 not_implemented at the verified, pushed baseline eebd638)",
+ "generated": "2026-08-21 (rev G — wave-4 VERIFIED. statusAtWave4Verified reflects the repaired working tree on top of cca6787: 32 met / 2 partial (NFR-10 not measured, AB-06 ZAP-client clause) / 1 not_implemented (NFR-07). Evidence: docs/verification-report.md (waves 0-4). Tree verified locally by 8 lanes + report runs A/B (62 suites / 1386 tests, exit 0, TEST_STRICT_HANDLES=1); NOT yet committed or CI-run.)",
  "requirements": [
   {
    "id": "FR-01",
@@ -39,7 +39,8 @@
     "unit": "W3-RV-CORE",
     "mustProve": "Re-execute TCC-02 (a soft-deleted host's approved listings must not stay discoverable) and TCC-05 (the page-cache existence assertion must survive >512 keys in the Redis index — full SCAN cursor loop or EXISTS, never a single-pass SCAN). Re-read the Redis result/geocode cache directly and assert public precision only (ADR-010)."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-02",
@@ -58,7 +59,8 @@
     "unit": "W3-RV-CORE + W3-FIX-REVIEWPAGE",
     "mustProve": "Re-execute TCC-01 (host summary fallback when the host row is soft-deleted or has no host_profiles row must not be host:null). TCC-04 is OPEN: the reviews array is truncated to 5 with no total and no cursor, so the FR-02 acceptance clause \"the approved reviews for that host\" is only partly served."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-03",
@@ -77,7 +79,8 @@
     "unit": "W3-RV-CORE",
     "mustProve": "Re-execute the ADR-010 public-serializer assertions on GET /api/hosts/:id and the key-allowlist assertion (no email/phone/emergency contact/password hash), plus 401 for an unauthenticated caller (AB-08)."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-04",
@@ -96,7 +99,8 @@
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute TCB-W3-02: move a listing's scheduled_start EARLIER and prove the booking.promote job is rescheduled so the booking reaches in_progress and both parties can confirm completion. Plus concurrent dual confirmation and the 403/409 branches."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-05",
@@ -119,7 +123,9 @@
    "wave4": {
     "unit": "U4-REVIEWS",
     "mustDeliver": "Build FR-05 end to end: reviews on completed bookings only, born pending, published only after moderation approval; take over findReviewAuthorId from the media repo."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification, TC-05). Open spec question W4-F2: photo-only review refused (comment min 1 char); team decision pending."
   },
   {
    "id": "FR-06",
@@ -141,8 +147,10 @@
    "statusAt_eebd638": "not_implemented",
    "wave4": {
     "unit": "U4-MESSAGING",
-    "mustDeliver": "Build FR-06: participant-only thread on pending/in_progress/completed bookings; deliver immediately; same-transaction moderation.scan row; flagged message hidden and queued."
-   }
+    "mustDeliver": "Build FR-06: participant-only thread on pending/in_progress/completed bookings; deliver immediately; same-transaction moderation.scan row; flagged message queued for human review, hidden only on rejection (wording corrected per TCB-W4-02)."
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification, TC-06). Deliver-first proven under provider outage; flag-vs-hide policy ratified (W4-F4)."
   },
   {
    "id": "FR-07",
@@ -166,7 +174,9 @@
    "wave4": {
     "unit": "U4-SAFETY-COMPLETE",
     "mustDeliver": "Already MET — do not regress. Unify the moderator surface with the 4A queue (moderation_queue entry per alert, enum extended append-only) and add the moderator-escalation clause."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met incl. the U4-SAFETY-COMPLETE unified-queue clause AFTER repair U-V4R-SAFETY-QUEUE (finding W4-F1, closed by re-execution)."
   },
   {
    "id": "FR-08",
@@ -178,7 +188,7 @@
     "TC-08",
     "IT-03"
    ],
-   "acceptance": "Every listing, review, and message submission runs the deterministic pre-filter (blocklist, regex, per-user submission rate limit) before any LLM call; a blocklist hit yields moderation_status='rejected' with decided_by='pre-filter' and zero LLM adapter calls. Content passing the pre-filter is scanned by the worker via the LLM adapter, which returns {category, confidence}; confidence below MODERATION_CONFIDENCE_THRESHOLD or any flagged category creates a moderator-queue item and leaves public content pending. Approved public content becomes visible only after moderation_status='approved'. Messages are readable immediately regardless of scan state; a message later flagged is hidden and queued. With the LLM adapter forced to fail for all attempts, listings and reviews stay 'pending' indefinitely (assert they never appear in search/detail) while the job is retried. Every outcome writes a MODERATION_DECISION row with category, outcome, decided_by in {pre-filter, llm, human}. ADR-007: the LLM stage is reached only through the provider-agnostic adapter configured by LLM_MODERATION_BASE_URL / LLM_MODERATION_API_KEY / MODERATION_MODEL (Google Gemini free tier is the configured v1.0 provider); no provider name, model id or key is hardcoded, CI and the automated suite run the deterministic mock adapter, and only the IT-03 measurement run may call the live API.",
+   "acceptance": "Every listing, review, and message submission runs the deterministic pre-filter (blocklist, regex, per-user submission rate limit) before any LLM call; a blocklist hit yields moderation_status='rejected' with decided_by='pre-filter' and zero LLM adapter calls. Content passing the pre-filter is scanned by the worker via the LLM adapter, which returns {category, confidence}; confidence below MODERATION_CONFIDENCE_THRESHOLD or any flagged category creates a moderator-queue item and leaves public content pending. Approved public content becomes visible only after moderation_status='approved'. Messages are readable immediately regardless of scan state; a message the LLM flags files a moderator-queue item but REMAINS visible to the booking's participants (moderation_status stays 'pending') until a human decides — only a rejection (pre-filter blocklist at submission, or the human moderator's decision) hides it from subsequent GETs. (Ratified per finding TCB-W4-02: the frozen SRS never mandates pre-decision hiding, and ADR-002 both delivers private messages immediately and routes flagged content to a HUMAN reviewer — hide-on-flag would let an unreviewed LLM false positive censor mid-transaction communication and make the LLM the effective decider. Pinned executable: tests/tc-booking/tc08-moderation-substrate.test.js.) With the LLM adapter forced to fail for all attempts, listings and reviews stay 'pending' indefinitely (assert they never appear in search/detail) while the job is retried. Every outcome writes a MODERATION_DECISION row with category, outcome, decided_by in {pre-filter, llm, human}. ADR-007: the LLM stage is reached only through the provider-agnostic adapter configured by LLM_MODERATION_BASE_URL / LLM_MODERATION_API_KEY / MODERATION_MODEL (Google Gemini free tier is the configured v1.0 provider); no provider name, model id or key is hardcoded, CI and the automated suite run the deterministic mock adapter, and only the IT-03 measurement run may call the live API.",
    "statusAt_f7f954c": "not_implemented",
    "statusNote": "No pre-filter, no LLM stage, no moderation.scan handler, no decision table writer. Wave 4 (U4-MODERATION). Wave-3 enqueues moderation.scan jobs that dead-letter, so public content stays pending — FR-08's required failure direction.",
    "statusAt_bc27199": "not_implemented",
@@ -190,7 +200,9 @@
    "wave4": {
     "unit": "U4-MODERATION",
     "mustDeliver": "Build the full ADR-002 pipeline (pre-filter → LLM adapter → decision record → human queue) and the moderation.scan handler; REQUEUE the wave-3 dead letters via outbox.requeueDeadLetter and prove they drain."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification, TC-08). Acceptance wording ratified per TCB-W4-02/W4-F4 (queue-on-flag, hide-on-rejection)."
   },
   {
    "id": "FR-09",
@@ -209,7 +221,8 @@
     "unit": "W3-RV-FR10",
     "mustProve": "Re-execute the both-states truth table and the repository-wide grep proving one policy module. Additionally prove the FR-10 consequence chain: after verifying through the DELIVERED link, canReserveSeat flips to true."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-10",
@@ -234,7 +247,8 @@
     "unit": "W3-RV-FR10",
     "mustProve": "HIGHEST PRIORITY. Prove end to end that the value the ADR-011 mock transport actually DELIVERED (render context / message body) verifies the account: register -> drain the outbox -> read the recorded delivery -> extract the link/token -> submit exactly that value -> users.email_verified = true. A token taken from an in-process return value proves nothing (this is exactly how waves 1-2 mis-reported FR-10 as PASS). Also re-assert ADR-003: no persisted artefact carries the usable raw token."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-11",
@@ -262,7 +276,8 @@
     "acceptedResidualRisk": "A calendar week is by construction spreadable across its boundary: filling Sat+Sun of one week and Mon+Tue of the next places twice the weekly cap inside a single 7-day span. This follows from the statute’s own calendar-week basis and is accepted, not a defect.",
     "cdrConsequence": "A TC-11 pass is now evidence against a RATIFIED requirement, so the FR-11 weekly clause may be cited as AB 626 / AB 1325 weekly-compliance evidence. Before 2026-08-18 it could not."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-12",
@@ -282,7 +297,8 @@
     "unit": "W3-DET-CONCURRENCY",
     "mustProve": "The 40-concurrent-guest race assertion (3x201 / 37x409 / seats 0) must produce the same result on 5 consecutive full-suite runs. Fix the cause of any variance (connection-pool saturation, shared-state assertion), never by retries, sleeps or a weakened assertion."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-13",
@@ -302,7 +318,8 @@
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute TCB-W3-03 (pending -> in_progress must enqueue a notification), TCB-W3-04 (every template id emitted by an outbox handler exists in the SendGrid subject registry — assert the registry lookup, not just a send), IT-F4 (neither SendGrid nor FCM can reach a live provider under NODE_ENV=test) and COV-03 (lifecycle.isLivePendingJob's decisive branch is actually executed)."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "FR-14",
@@ -321,7 +338,8 @@
     "unit": "W3-RV-BOOKING",
     "mustProve": "Re-execute cancel -> atomic seat restore -> notification outbox rows, idempotent double-cancel, and seats_remaining never exceeding seat_capacity under concurrent cancels."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-01",
@@ -340,7 +358,8 @@
     "unit": "(report only — RTLT-02)",
     "mustProve": "k6 is not installed on this host, so the instrument the criterion names cannot be run. Report the existing Node-loopback measurement (p95 253.7 ms at 200 VUs over 791,709 requests, 0 errors) as EVIDENCE, explicitly not as a pass, and record RTLT-02 as untestable here. Do not vendor k6."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-02",
@@ -359,7 +378,8 @@
     "unit": "(report only — RTLT-02)",
     "mustProve": "Same k6 caveat. The volume dataset (10,000 users / 1,000 listings / 1,000 bookings) loads and the latency budget still holds under the substitute harness; index usage must be re-asserted by EXPLAIN if claimed."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-03",
@@ -378,7 +398,8 @@
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-01 against a real https.Server started through src/server.js: cleartext refused, TLS 1.0/1.1 refused, 1.2/1.3 accepted, HSTS present."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-04",
@@ -397,7 +418,8 @@
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-02: Argon2id parameters, no plaintext in any column, redaction proven by executing the logger and the validator rather than by grep alone."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-05",
@@ -416,7 +438,8 @@
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-03: the exact 5-in-10-minutes boundary (attempt 5 invalid, attempt 6 locked out with Retry-After), per-account AND per-source-IP counters, reset on success."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-06",
@@ -436,7 +459,8 @@
     "unit": "W3-RV-FR10",
     "mustProve": "Re-execute the IT-02 truth table and the persisted-flag equality after every mutation, and prove the flags recompute after email verification through the delivered link."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-07",
@@ -455,7 +479,9 @@
     "unit": "(none — waves 5-6)",
     "mustProve": "Not implemented: client/ does not exist and no .jsx/.tsx file exists in the repository. npm run test:a11y fails on purpose so its presence is never read as coverage. The 5-participant study is a human activity."
    },
-   "statusAt_eebd638": "not_implemented"
+   "statusAt_eebd638": "not_implemented",
+   "statusAtWave4Verified": "not_implemented",
+   "statusNoteWave4": "Not implemented — no client (waves 5-6); npm run test:a11y fails by design."
   },
   {
    "id": "NFR-08",
@@ -478,7 +504,9 @@
    "wave4": {
     "unit": "U4-MODERATION",
     "mustDeliver": "Close the last MT-01 clause: a human moderation decision emits a structured audit record with correlation ID; PII-free."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met — all four named actions audit-verified incl. the human moderation decision; zero PII in two captured log corpora."
   },
   {
    "id": "NFR-09",
@@ -497,7 +525,8 @@
     "unit": "W3-RV-CORE + W3-RV-BOOKING",
     "mustProve": "Re-execute the RT-01 per-adapter outage drills including the ADR-002 property that a moderation outage leaves public content PENDING, and the three distinct FR-01 degraded cases the corrected TCC-03 criterion distinguishes."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "NFR-10",
@@ -520,7 +549,9 @@
    "wave4": {
     "unit": "U4-MODERATION",
     "mustDeliver": "Pipeline + scripts/it03-eval.js harness only. NFR-10 stays UNCLAIMABLE: the live IT-03 run, model id + prompt version, RESULTS.md and both rates < 0.05 are wave 7. claimability()===true means preconditions only. No number may be quoted from the mock."
-   }
+   },
+   "statusAtWave4Verified": "partial",
+   "statusNoteWave4": "Partial — pipeline + harness + signed-off 224-item label set v1 exist; accuracy NOT MEASURED. Live IT-03 run is wave 7; no RESULTS.md exists; no number may be quoted."
   },
   {
    "id": "NFR-11",
@@ -543,7 +574,9 @@
    "wave4": {
     "unit": "U4-REVIEWS + U4-MESSAGING + U4-MODERATION + U4-PRIVACY",
     "mustDeliver": "Each new boundary (review, chat, moderation note/decision, privacy endpoints) declares schemas and joins the ST-04 payload suite."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met — every mounted route schema-validated incl. wave-4 surfaces; typed 422s, no 500s, parameterized SQL proven."
   },
   {
    "id": "NFR-12",
@@ -566,7 +599,9 @@
    "wave4": {
     "unit": "U4-PRIVACY",
     "mustDeliver": "DELETE /api/users/me + account.erasure handler verified by CLOCK INJECTION at now()+config.privacy.erasureDays; media deleted BY KEY via the existing ADR-004 primitive; reviews retained anonymized; 24-month inactivity sweep with notice; BACKUP_RETENTION_DAYS + scripts/backup.js (closes F-03, F-07)."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification) — 30-day window by clock injection: due_at arithmetic exact, section-3.4 columns emptied, media deleted by key, idempotent redelivery."
   },
   {
    "id": "NFR-13",
@@ -589,7 +624,9 @@
    "wave4": {
     "unit": "U4-PRIVACY",
     "mustDeliver": "POST /api/users/me/export: data_requests row with 30-day due date asserted; machine-readable copy of every §3.4 register class, requesting user only."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification of export) — owner-only 202/worker-assembled copy over 9 tables; encryption + access-log clauses re-verified."
   },
   {
    "id": "AB-01",
@@ -616,7 +653,9 @@
    "wave4": {
     "unit": "U4-MODERATION + U4-REVIEWS",
     "mustDeliver": "The moderation half (flagged listing routed to queue, never published) and mutual reviews complete AB-01."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met — moderation half now executed (born pending, single status writer, fraud escalation)."
   },
   {
    "id": "AB-02",
@@ -637,7 +676,8 @@
     "unit": "W3-DET-CONCURRENCY + W3-RV-BOOKING",
     "mustProve": "Re-execute the per-guest concurrent-pending cap sequentially AND under concurrency, and the never-overbook race assertion."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "AB-03",
@@ -663,7 +703,9 @@
    "wave4": {
     "unit": "U4-MODERATION",
     "mustDeliver": "Spam samples from the eval set rejected by pre-filter or queued and never published (asserted via the mock's deterministic fixtures, not as an NFR-10 number)."
-   }
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met — rate-limit escalation (15/60min) + blocklist spam rules + MEHKO unique index executed."
   },
   {
    "id": "AB-04",
@@ -678,7 +720,7 @@
     "TC-05",
     "TC-07"
    ],
-   "acceptance": "Abusive review text never becomes publicly visible: it is either rejected by the pre-filter or held pending and routed to the moderator queue. Abusive message text is delivered (per FR-08 policy) but asynchronously scanned; a flagged message is hidden from subsequent GETs and appears in the moderator queue. A moderator can escalate to a safety alert, and every moderation decision writes a MODERATION_DECISION row with category, outcome and decided_by (NFR-08). Offensive items from the >=200-item labelled set are detected within the <5% false-negative bound (IT-03).",
+   "acceptance": "Abusive review text never becomes publicly visible: it is either rejected by the pre-filter or held pending and routed to the moderator queue. Abusive message text is delivered (per FR-08 policy) but asynchronously scanned; a flagged message appears in the moderator queue and stays visible to the participants until the moderator decides; a rejection (pre-filter blocklist or human decision) hides it from subsequent GETs (TCB-W4-02 ratified reading — see FR-08 acceptance). A moderator can escalate to a safety alert, and every moderation decision writes a MODERATION_DECISION row with category, outcome and decided_by (NFR-08). Offensive items from the >=200-item labelled set are detected within the <5% false-negative bound (IT-03).",
    "statusAt_f7f954c": "not_implemented",
    "statusNote": "Depends on FR-05, FR-06 and FR-08, none of which exist.",
    "statusAt_bc27199": "not_implemented",
@@ -689,8 +731,10 @@
    "statusAt_eebd638": "not_implemented",
    "wave4": {
     "unit": "U4-MESSAGING (final) with U4-MODERATION + U4-REVIEWS",
-    "mustDeliver": "Abusive review never publicly visible; abusive message delivered then hidden once flagged and queued; decisions logged; escalation via U4-SAFETY-COMPLETE."
-   }
+    "mustDeliver": "Abusive review never publicly visible; abusive message delivered, queued on LLM flag, hidden once rejected (wording corrected per TCB-W4-02); decisions logged; escalation via U4-SAFETY-COMPLETE."
+   },
+   "statusAtWave4Verified": "met",
+   "statusNoteWave4": "Met (first verification) — abusive review never visible; abusive message delivered then rejected and hidden from both; decisions logged; escalation via unified queue post-W4-F1."
   },
   {
    "id": "AB-05",
@@ -711,7 +755,8 @@
     "unit": "W3-RV-SEC-CONFIG",
     "mustProve": "Re-execute ST-01/ST-02/ST-03 plus session-token entropy, HttpOnly/Secure/SameSite cookie attributes and logout invalidation."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "AB-06",
@@ -734,7 +779,9 @@
    "wave4": {
     "unit": "U4-REVIEWS + U4-MESSAGING (partial close)",
     "mustDeliver": "ST-04 payloads at the new chat/review/moderation boundaries. Stays PARTIAL: the ZAP crawl over a rendered client is waves 5-6."
-   }
+   },
+   "statusAtWave4Verified": "partial",
+   "statusNoteWave4": "Partial — every API-boundary clause met; ZAP crawl over a rendered client deferred to waves 5-6."
   },
   {
    "id": "AB-07",
@@ -755,7 +802,8 @@
     "unit": "W3-RV-OBS-SAFETY",
     "mustProve": "Re-execute the unique-verified-email proof (duplicate registration -> 409, no row) and the single server-side daily enforcement point grep. Multi-account evasion remains an accepted v1.0 residual per ADR-009."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   },
   {
    "id": "AB-08",
@@ -775,7 +823,8 @@
     "unit": "W3-DET-GLOBALSTATE + W3-RV-CORE",
     "mustProve": "Re-execute the ADR-010 public-serializer sweep over every read path. COV-01 (the canary that matched random UUIDs) appears already rewritten to leaf-scoped assertions on disk — confirm by execution and close it, or reopen it."
    },
-   "statusAt_eebd638": "met"
+   "statusAt_eebd638": "met",
+   "statusAtWave4Verified": "met"
   }
  ],
  "adrs": [
@@ -893,5 +942,51 @@
    "Migrations append-only from 0005; no git commit/push — the human team commits."
   ],
   "detail": "docs/_generated/build-plan.md rev E (2026-08-21)"
+ },
+ "wave4VerifyRun": {
+  "baselineCommit": "cca6787 (Build wave 4 — UNVERIFIED CHECKPOINT)",
+  "previousVerifiedBaseline": "eebd638 (waves 0-3: 23 met / 5 partial / 7 not_implemented)",
+  "coordinatorGatesMeasured": "3x full suite under TEST_STRICT_HANDLES=1: 60 suites / 1345 tests, exit 0, ~94.7 s; npm run lint and npm run build clean",
+  "inScopeNewlyClaimed": [
+   "FR-05",
+   "FR-06",
+   "FR-08",
+   "NFR-12",
+   "NFR-13",
+   "AB-01",
+   "AB-03",
+   "AB-04"
+  ],
+  "partialClausesToClose": [
+   "NFR-08 booking/moderation audit events",
+   "NFR-11 listing/chat/review/search validation boundaries",
+   "AB-06 wave-4 input boundaries"
+  ],
+  "knownDeficiencyAtBaseline": "U4-SAFETY-COMPLETE partial: safety-alert filing into the unified moderation queue is contract-gated INACTIVE (moderation repo CONTENT_TYPES lacks 'safety_alert'); repair specified, owned by the moderation surface — see build-plan.md rev F, unit U-V4R-SAFETY-QUEUE",
+  "nfr10": "NOT MEASURED and not claimable. ADR-008 label sign-off recorded (Gaetan Rieben 2026-08-21, set v1, 224 items) closes the LABEL gate only. A pass still needs a live IT-03 run (model id + prompt version recorded, RESULTS.md, both rates < 0.05). The suite must never call a live provider (ADR-007/011); claimability()===true means preconditions only.",
+  "specQuestionsOpen": [
+   "Photo-only reviews: comment is required min 1 char because empty text makes classify() throw and dead-letter the scan; the SRS does not forbid a photo-only review — team decision needed",
+   "Pre-filter blocklist/rate-limit knobs live as frozen constants in src/modules/moderation/prefilter.js, not src/config — acceptable? (they are not ADR-009 caps)",
+   "FR-01 acceptanceCorrection TCC-03 still awaits team ratification at CDR"
+  ],
+  "outcome": {
+   "date": "2026-08-21",
+   "verified": "32 met / 2 partial / 1 not_implemented (see statusAtWave4Verified per requirement)",
+   "reportRuns": "2x TEST_STRICT_HANDLES=1 npx jest on lane homeplate_finalrpt4_test: 62 suites / 1386 tests, exit 0, ~93.7 s each; npm run lint exit 0; npm run build exit 0",
+   "repairsLanded": [
+    "U-V4R-SAFETY-QUEUE (W4-F1: safety_alert in unified moderation queue, drains re-scoped)",
+    "U-V4R-REVIEW-AUTHORSHIP (W4-F3: delegation kept, identity pinned)",
+    "backup.js main() exported+covered (W4-F5)",
+    "server.js wireShutdown covered (tests/coverage/server-shutdown.test.js)",
+    "FR-08/AB-04 acceptance wording ratified (W4-F4/TCB-W4-02)"
+   ],
+   "openFindings": [
+    "W4-F2 photo-only review spec question (team decision)",
+    "W4-F6 intermittent-variance watch (keep complete-output captures; close on committed-tree streak)",
+    "NFR-10 unmeasured (wave 7 live IT-03)",
+    "NFR-07/UT-01/AB-06-ZAP await waves 5-6",
+    "TCC-03 ratification due at CDR"
+   ]
+  }
  }
 }

@@ -7,8 +7,13 @@
 //                   which for a MESSAGE means "delivered, scan outstanding" — delivery
 //                   never waits on moderation (ADR-002). listVisibleForBooking() /
 //                   countVisibleForBooking() are the thread read: every message EXCEPT
-//                   rejected ones, oldest first, so a later-flagged (rejected) message
-//                   disappears from subsequent GETs while pending/approved ones stay.
+//                   rejected ones, oldest first, so a later-REJECTED message disappears
+//                   from subsequent GETs while pending/approved ones stay. An LLM flag
+//                   alone (open queue item, status still 'pending') does NOT hide a
+//                   message — only a rejection does, by the pre-filter blocklist at
+//                   submission or by the human moderator (TCB-W4-02 ratified reading
+//                   of the FR-08/AB-04 acceptance; hide-on-flag would let an
+//                   unreviewed LLM false positive censor a live booking thread).
 //   FR-08 / AB-04 — this repo never flips moderation_status: the ONE writer of
 //                   approved/rejected is the U4-MODERATION repo, on the pipeline's or a
 //                   human moderator's decision. Hiding is a READ-side rule here.

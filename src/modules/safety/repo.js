@@ -215,6 +215,11 @@ const UNIFIED_QUEUE_REASON = 'safety_alert';
  * the complete FR-07 queue, exactly as shipped by wave 3 (build-plan §5: "do not regress").
  * Evaluated per call, never cached: the moment 4A widens CONTENT_TYPES, filing turns on.
  *
+ * Since repair U-V4R-SAFETY-QUEUE, 4A's published contract DOES declare 'safety_alert'
+ * (excerpt branch in loadContentForQueuePage; recorded no-op setModerationStatus), so this
+ * returns true and filing is ACTIVE; the gate remains as the interlock that would switch
+ * filing back off if the read model ever withdrew the type.
+ *
  * @returns {boolean}
  */
 function unifiedQueueSupported() {

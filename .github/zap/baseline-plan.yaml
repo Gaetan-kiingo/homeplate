@@ -8,7 +8,7 @@
 # touched none of the API, which is exactly the misreading a recorded AB-06 result must not
 # invite (verification finding STS-R2-03).
 #
-# This plan replaces the crawl with an explicit `requestor` job that walks the wave-0..3 route
+# This plan replaces the crawl with an explicit `requestor` job that walks the wave-0..4 route
 # registry (src/routes/index.js + each src/modules/<name>/routes.js), so the passive rules see
 # real API responses: real security headers, the real 401/404/405 error envelopes, the real
 # `Set-Cookie` on the login path, the real `Retry-After` on a throttled path. The spider job is
@@ -52,7 +52,7 @@ jobs:
       scanOnlyInScope: true
 
   # ---------------------------------------------------------------------------------------
-  # The API surface. One entry per wave-0..3 route in the registry, using the method that
+  # The API surface. One entry per wave-0..4 route in the registry, using the method that
   # route registers. Unauthenticated on purpose: an anonymous caller is the threat model a
   # baseline scan represents, and the 401 envelope is itself a response worth passive-scanning.
   # `responseCode` is an assertion — a mismatch is logged as a plan error and shows up in the
@@ -227,6 +227,61 @@ jobs:
         method: GET
         responseCode: 401
 
+      # -- reviews (src/modules/reviews/routes.js, mounted at /api) — FR-05, AB-06 --
+      # The wave-4 additions below close the coverage gap the recorded wave-3 run noted:
+      # "the acceptance names chat, review and moderation-note boundaries that do not exist
+      # in wave 3" (docs/verification-report.md, AB-06). They exist now; scan them.
+      - name: reviews-create
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/reviews
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+
+      # -- messaging (src/modules/messaging/routes.js, mounted at /api) — FR-06, AB-04/AB-06 --
+      - name: messages-send
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/messages
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: messages-list
+        url: ${ZAP_TARGET_URL}/api/bookings/00000000-0000-4000-8000-000000000000/messages
+        method: GET
+        responseCode: 401
+
+      # -- moderation (src/modules/moderation/routes.js) — FR-08, AB-08 --
+      - name: moderation-queue
+        url: ${ZAP_TARGET_URL}/api/moderation/queue
+        method: GET
+        responseCode: 401
+      - name: moderation-decision
+        url: ${ZAP_TARGET_URL}/api/moderation/queue/00000000-0000-4000-8000-000000000000/decision
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+
+      # -- privacy (src/modules/privacy/routes.js, mounted at /api) — NFR-12/NFR-13, AB-05 --
+      - name: privacy-delete-account
+        url: ${ZAP_TARGET_URL}/api/users/me
+        method: DELETE
+        responseCode: 401
+      - name: privacy-export-request
+        url: ${ZAP_TARGET_URL}/api/users/me/export
+        method: POST
+        headers:
+          - 'Content-Type: application/json'
+        data: '{}'
+        responseCode: 401
+      - name: privacy-export-get
+        url: ${ZAP_TARGET_URL}/api/users/me/export/00000000-0000-4000-8000-000000000000
+        method: GET
+        responseCode: 401
+
   # Kept deliberately: today it adds nothing (no HTML to follow), but it costs a minute and
   # it is what starts producing coverage on top of the requestor floor once the React client
   # ships in waves 5–6. Do not delete it when reading a wave-3 run's "0 URLs added".
@@ -259,7 +314,7 @@ jobs:
       reportDir: /zap/wrk
       reportFile: zap-baseline
       reportTitle: Homeplate AB-06 ZAP baseline
-      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+      reportDescription: Passive baseline over the wave-0..4 REST surface (see .github/zap/baseline-plan.yaml).
 
   - type: report
     parameters:
@@ -267,7 +322,7 @@ jobs:
       reportDir: /zap/wrk
       reportFile: zap-baseline
       reportTitle: Homeplate AB-06 ZAP baseline
-      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+      reportDescription: Passive baseline over the wave-0..4 REST surface (see .github/zap/baseline-plan.yaml).
 
   - type: report
     parameters:
@@ -275,7 +330,7 @@ jobs:
       reportDir: /zap/wrk
       reportFile: zap-baseline
       reportTitle: Homeplate AB-06 ZAP baseline
-      reportDescription: Passive baseline over the wave-0..3 REST surface (see .github/zap/baseline-plan.yaml).
+      reportDescription: Passive baseline over the wave-0..4 REST surface (see .github/zap/baseline-plan.yaml).
 
   # Reproduces the FAIL-NEW / WARN-NEW / PASS line the packaged zap-baseline.py printed, so the
   # recorded run notes stay comparable across the switch to this plan.

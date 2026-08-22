@@ -10,6 +10,100 @@ Companion artifact: `requirements-inventory.json` — all 14 FR + 13 NFR + 8 AB 
 acceptance criteria, now carrying per-requirement `statusAt_f7f954c`, `statusAt_bc27199` and
 `reverification` fields.
 
+**Revision 2026-08-21 rev F — WAVE 4 VERIFICATION run (this run). Verify-only, then repair, then report.**
+Rev E below is the build plan the implementers executed; it is history now. Wave 4 landed at
+**`cca6787` ("Build wave 4 — UNVERIFIED CHECKPOINT")** — four new modules (`moderation`, `reviews`,
+`messaging`, `privacy`), the FR-07 safety finish, outbox handlers `moderationScan` /
+`accountErasure` / `dataExport`, schemas for all four, migrations 0005+0006, and
+`scripts/requeue-dead-letters.js`. **No lane has seen any of it; every claim is the implementers'
+own word.** This revision plans the first verification.
+
+### F.0 Gates at the baseline (coordinator-measured on this exact tree — re-run, do not trust)
+
+Three consecutive `TEST_STRICT_HANDLES=1 npx jest` runs: **60 suites / 1345 tests, exit 0**, ~94.7 s
+each; `npm run lint` and `npm run build` clean. One caveat that stays open until chased: **one
+implementer full-suite run in seven failed one test whose identity was lost to output truncation.**
+Unreproduced is not dismissed — this project lost days to assertions over global state and
+fixed-budget drains starving behind sibling rows (finding F-01).
+
+### F.1 What this run must decide
+
+Newly claimed and previously `not_implemented` — verify each properly, and report any still absent
+or partial rather than assuming module existence means requirement met: **FR-05, FR-06, FR-08,
+NFR-12, NFR-13, AB-01, AB-03, AB-04.** Previously `partial` because these surfaces did not exist —
+close or say why not: **NFR-08** (booking/moderation audit events), **NFR-11** (listing/chat/review/
+search validation boundaries). **NFR-10 stays NOT MEASURED**: the label gate is closed (ADR-008
+sign-off 2026-08-21, set v1, 224 items) but a pass needs a live IT-03 run with model id + prompt
+version and a RESULTS.md, and the suite must never call a live provider (ADR-007/011). The change
+since last report is that the pipeline and scoring harness now exist.
+
+### F.2 The seven implementer-flagged leads (highest-value work in this run)
+
+1. **U4-SAFETY-COMPLETE is PARTIAL** — safety-alert filing into the unified moderation queue is
+   contract-gated INACTIVE: `src/modules/moderation/repo.js` `CONTENT_TYPES = ['listing','review',
+   'message']` (asserted by `loadContentForQueuePage` / `insertDecision` / `setModerationStatus`),
+   so a `safety_alert` row 500s the unfiltered queue page; `src/schemas/moderation.js` excludes it
+   from the filter enum. Specified repair (owned by the moderation surface): add the type, give
+   `loadContentForQueuePage` a safety_alert excerpt branch (or skip unknown types), make
+   `setModerationStatus` a recorded no-op for it, optionally widen the filter enum.
+   `safetyRepo.unifiedQueueSupported()` re-reads the contract per delivery, so filing switches on
+   with no safety-module change. Turning it on may redden two suites that drain the WHOLE outbox
+   then GET the unfiltered queue: `tests/adr-conformance/adr-wave3-invariants.test.js` (~1467) and
+   `tests/mt-ut-quality/mt01-wave3-booking-audit.test.js` (~388). **Fix those drains with
+   `tests/helpers/outboxScope.js`** — a disabled feature is not a passing acceptance clause.
+   → unit **U-V4R-SAFETY-QUEUE**.
+2. **The 1-in-7 lost failure** — run the full suite several times capturing COMPLETE output (never
+   pipe to tail before reading). → unit **U-V4-GATES**.
+3. **`findReviewAuthorId` move-plus-delegate** — SQL lives in `src/modules/reviews/repo.js`;
+   `src/modules/media/repo.js` re-exports the same function object because
+   `tests/adr-conformance/route-layer-db-access.test.js` pins the old call site. Decide properly:
+   update that test to point at reviewsRepo and delete the re-export, **or** keep delegation and
+   document why. Report which was chosen. → unit **U-V4R-REVIEW-AUTHORSHIP**.
+4. **SPEC QUESTION — photo-only reviews.** Review comment is required (min 1 char) because empty
+   text makes `classify()` throw and permanently dead-letters the scan; the SRS does not forbid a
+   photo-only review. Report with the trade-off; **do not decide it**. → open question for the team.
+5. **Pre-filter knobs** (blocklist / rate limit) are frozen module constants in
+   `src/modules/moderation/prefilter.js`, not `src/config/` — judge whether acceptable (they are
+   not ADR-009 caps) or whether they belong in config like every other tunable. → moderation lane.
+6. **Two `/* istanbul ignore next */`** annotations on CLI-only wiring in
+   `scripts/requeue-dead-letters.js` — verify genuinely unreachable, not hiding untested logic.
+   (Coordinator note: the same pattern also appears in `scripts/it03-eval.js` and
+   `scripts/backup.js`; audit all of them.) → privacy lane.
+7. **Migration 0005 adds no indexes' worth of duplication risk** — planned indexes shipped in 0002
+   (`moderation_decisions_content_idx`, `moderation_queue_open_content_key`,
+   `moderation_queue_status_idx`…). Confirm no duplicate and no missing index. → ADR lane.
+
+### F.3 Run shape — 5 verification waves
+
+| Wave | Units | Nature |
+|---|---|---|
+| **V0 gates** | U-V4-GATES | Re-measure gates; 5 full-suite runs, complete logs kept; fresh-DB migrate; diff inventory `eebd638..cca6787` |
+| **V1 lanes** | U-V4-LANE-REVIEWS ∥ -MESSAGING ∥ -MODERATION ∥ -PRIVACY ∥ -ADR ∥ -SUITE-QUALITY | Verify-only; **no source edits**; each lane owns exactly one findings JSON under `docs/_generated/wave4-verify/` |
+| **V2 repairs** | U-V4R-SAFETY-QUEUE ∥ U-V4R-REVIEW-AUTHORSHIP ∥ U-V4R-FINDINGS | Exclusive files; canonical lane test files only; outboxScope for every drain |
+| **V3 re-verify** | U-V4-REVERIFY | Re-execute every original failure scenario; a green suite is not confirmation; 3 strict full-suite runs |
+| **V4 report** | U-V4-REPORT | Update `docs/verification-report.md` to waves 0–4; refresh inventory statuses; consolidate findings |
+
+Lane briefs, exclusive file ownership and acceptance criteria are in the structured plan returned
+to the workflow runner; the findings directory `docs/_generated/wave4-verify/` is this run's
+working area (one JSON per lane — never a `*-reverify`/`verify-*` **test** file; house rule (a)
+was violated 19 times before 2026-08-21 and consolidated away).
+
+### F.4 House rules restated (a violation reddens the suite)
+
+(a) tests go in the canonical lane file owning the requirement — no `*-reverify`, `*-w3rv-*`,
+`verify-*`, `*-gaps`, `*-probes` files; (b) outbox drains via `tests/helpers/outboxScope.js`
+(`pollOnlyThese` / `withOnlyTheseDue`) — never a fixed-pass budget or an unscoped global drain;
+(c) `maxWorkers: 1`; every suite closes what it opened in `afterAll` inside a `finally`, pairing
+`closeDb()` with `closeTestRedis()`; verify with `TEST_STRICT_HANDLES=1`; no `--forceExit`; do not
+touch globalTeardown's load-bearing 150 ms settle window; (d) the ADR invariants all have
+executable tests (adapters worker-only with the Maps READ exception; IDs-only payloads; born
+pending / never published unreviewed; media by key; no cap literal outside `src/config` — 90 is
+also max latitude, see capScan; push default-off with a NOTIFICATION_ATTEMPT row per send);
+(e) migrations append-only (0006 is highest); (f) **no `git commit` / `git push`** — the human
+team commits.
+
+---
+
 **Revision 2026-08-21 rev E — WAVE 4 BUILD (trust, safety, data lifecycle). Implement-only run.**
 Supersedes §5's one-table sketch; rev D's wave-3R material below is history (all of it landed:
 waves 0–3 are verified and pushed — see `docs/verification-report.md`). What binds this run:

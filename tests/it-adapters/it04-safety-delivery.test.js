@@ -93,9 +93,10 @@ afterAll(async () => {
   jest.restoreAllMocks();
   mockTransport.reset();
   try {
-    // Net for the unified-queue describe below: no 'safety_alert' moderation_queue row may
-    // outlive this suite while the 4A read model cannot serve the type (an unfiltered
-    // GET /api/moderation/queue page containing one would 500 in a sibling suite).
+    // Hygiene net for the unified-queue describe below: the read model serves the type now
+    // (U-V4R-SAFETY-QUEUE), so a leftover row can no longer 500 anything — but this suite
+    // still removes the rows it filed into the SHARED moderation_queue table so sibling
+    // suites' queue pages stay predictable.
     await dbh.query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
   } finally {
     await dbh.closeDb();
@@ -361,24 +362,21 @@ describe('IT-04 · provider outage — retried, visible throughout, completed on
 
 // =============================================================================================
 describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation delivery', () => {
-  // DEVIATION NOTE (read by tomorrow's verify run): the build-plan acceptance wants a drained
-  // alert visible as a moderation_queue row via GET /api/moderation/queue. The write model is
-  // complete (migration 0006 + safetyRepo.fileUnifiedQueueEntry, exercised below through the
-  // REAL worker), but 4A's read model (src/modules/moderation/repo.js) hard-asserts its
-  // CONTENT_TYPES list, which does not yet include 'safety_alert' — an unfiltered
-  // GET /api/moderation/queue page containing such a row throws today. U4-SAFETY-COMPLETE
-  // owns no moderation/* file, so the worker gates filing on that PUBLISHED contract
-  // (safetyRepo.unifiedQueueSupported); these tests simulate the post-repair contract with
-  // jest.replaceProperty, assert row existence in SQL (the route cannot serve the type yet),
-  // and clean their rows up so no sibling suite can trip on them.
+  // Repaired by U-V4R-SAFETY-QUEUE: 4A's read model (src/modules/moderation/repo.js) now
+  // DECLARES 'safety_alert' in CONTENT_TYPES and serves the type (IDs-only excerpt branch;
+  // recorded no-op setModerationStatus), so safetyRepo.unifiedQueueSupported() is TRUE on
+  // the real tree and the worker drains below file real moderation_queue rows. These tests
+  // run on the REAL published contract; the one gate-held test simulates a WITHDRAWN
+  // contract via jest.replaceProperty. Rows are cleaned up afterwards so sibling suites'
+  // queue pages stay predictable (the full route-level acceptance lives in tc08).
   const moderationRepo = require('../../src/modules/moderation/repo');
 
-  /** Simulate the post-repair 4A contract: CONTENT_TYPES declares 'safety_alert'. */
-  const widen = () =>
+  /** Simulate a WITHDRAWN 4A contract: CONTENT_TYPES without 'safety_alert'. */
+  const narrow = () =>
     jest.replaceProperty(
       moderationRepo,
       'CONTENT_TYPES',
-      Object.freeze([...moderationRepo.CONTENT_TYPES, 'safety_alert'])
+      Object.freeze(moderationRepo.CONTENT_TYPES.filter((t) => t !== 'safety_alert'))
     );
 
   async function unifiedRowsFor(alertId) {
@@ -395,8 +393,7 @@ describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation de
     await dbh.query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
   });
 
-  test('with 4A support declared, the worker drain files ONE open entry per alert — idempotent across redelivery', async () => {
-    widen();
+  test('on the REAL contract, the worker drain files ONE open entry per alert — idempotent, and SERVED by the queue route', async () => {
     const { booking, cookie } = await makeWorld({ contactEmail: 'it04-unified@kin.invalid' });
     const { alertId, job } = await raiseAlert(booking, cookie);
 
@@ -406,6 +403,24 @@ describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation de
     const rows = await unifiedRowsFor(alertId);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ status: 'open', reason: 'safety_alert' });
+
+    // U-V4R-SAFETY-QUEUE: the unified queue ROUTE serves the filed entry — both filtered
+    // (the widened schema enum) and unfiltered (the read model no longer 500s on the type).
+    const moderator = await dbh.makeUser({ roles: ['user', 'moderator'] });
+    const moderatorCookie = await cookieFor(moderator);
+    const filtered = await request(app)
+      .get('/api/moderation/queue?contentType=safety_alert&status=open&pageSize=100')
+      .set('Cookie', moderatorCookie);
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.items.find((i) => i.contentId === alertId)).toMatchObject({
+      contentType: 'safety_alert',
+      status: 'open',
+    });
+    const unfiltered = await request(app)
+      .get('/api/moderation/queue?status=open&pageSize=100')
+      .set('Cookie', moderatorCookie);
+    expect(unfiltered.status).toBe(200);
+    expect(unfiltered.body.items.some((i) => i.contentId === alertId)).toBe(true);
 
     // Crash-redelivery of the same job cannot file a second open entry (RT-02).
     await dbh.query(
@@ -418,7 +433,6 @@ describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation de
   });
 
   test('a dead-lettered alert KEEPS its unified-queue entry, and GET /api/moderation/alerts stays intact', async () => {
-    widen();
     const { booking, cookie } = await makeWorld({ contactEmail: 'it04-unified-dead@kin.invalid' });
     const { alertId, job } = await raiseAlert(booking, cookie);
     const moderator = await dbh.makeUser({ roles: ['user', 'moderator'] });
@@ -454,7 +468,8 @@ describe('IT-04 · unified 4A queue (U4-SAFETY-COMPLETE) and AB-04 escalation de
     });
   });
 
-  test('while 4A support is ABSENT (today), a drain files no queue row and delivery is untouched', async () => {
+  test('with 4A support WITHDRAWN (simulated), a drain files no queue row and delivery is untouched', async () => {
+    narrow();
     const { booking, cookie } = await makeWorld({ contactEmail: 'it04-ungated@kin.invalid' });
     const { alertId, job } = await raiseAlert(booking, cookie);
 

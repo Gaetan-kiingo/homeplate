@@ -17,6 +17,7 @@ const crypto = require('crypto');
 const request = require('supertest');
 
 const { createApp } = require('../../src/app');
+const config = require('../../src/config');
 const maps = require('../../src/adapters/maps');
 const mockTransport = require('../../src/adapters/mockTransport');
 const { renderEmail } = require('../../src/adapters/sendgrid');
@@ -27,8 +28,12 @@ const { pollOnce, claimBatch, CLAIM_SQL } = require('../../src/outbox/worker');
 const { loadHandlers, createRegistry } = require('../../src/outbox/dispatch');
 const { withTransaction } = require('../../src/db/tx');
 
+const llmMock = require('../../src/adapters/llmModeration.mock');
+const requeueScript = require('../../scripts/requeue-dead-letters');
+
 const dbh = require('../helpers/db');
 const rh = require('../helpers/redis');
+const { withOnlyTheseDue } = require('../helpers/outboxScope');
 const { quietLogger, sleep } = require('./helpers');
 const w3 = require('./wave3');
 
@@ -959,5 +964,271 @@ describe('RT-02 / FR-10 (TCB-W3-01 re-verification) — the DELIVERED email carr
       registered.body.user.id,
     ]);
     expect(rows[0].email_verified).toBe(true);
+  }, 30000);
+});
+
+// ---- wave 4 (first verification): the three handlers wave 4 added — moderation.scan,
+// account.erasure, data.export — plus the operator dead-letter recovery path (NFR-09).
+
+describe('RT-02 wave-4 — moderation.scan duplicate delivery is decide-once (FR-08, ADR-002)', () => {
+  afterEach(() => llmMock.reset());
+
+  async function completedBookingFixture() {
+    const host = await w3.makeHost();
+    const listing = await w3.makeApprovedListing({ host_id: host.id });
+    const guest = await w3.makeGuest();
+    const booking = await dbh.makeBooking({
+      listing_id: listing.id,
+      guest_id: guest.id,
+      status: 'completed',
+      guest_confirmed_completion: true,
+      host_confirmed_completion: true,
+      completed_at: new Date(),
+    });
+    return { host, listing, guest, booking, guestCookie: await w3.cookieFor(guest) };
+  }
+
+  async function decisionsFor(contentType, contentId) {
+    const { rows } = await dbh.query(
+      `SELECT * FROM moderation_decisions WHERE content_type = $1 AND content_id = $2 ORDER BY id`,
+      [contentType, contentId]
+    );
+    return rows;
+  }
+
+  test('a redelivered scan job completes again but decides NOTHING new: one decision row, status unchanged', async () => {
+    const { booking, guestCookie } = await completedBookingFixture();
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .send({ rating: 4, comment: 'A perfectly pleasant meal for the rt02 wave four drill.' })
+      .set('Cookie', guestCookie);
+    expect(res.status).toBe(201);
+    const reviewId = res.body.review.id;
+
+    const [job] = await jobsFor('moderation.scan', 'contentId', reviewId);
+    expect(job.status).toBe('pending');
+    // ADR-003: the payload carries IDs (and the type discriminator) only.
+    expect(Object.keys(job.payload).sort()).toEqual(['contentId', 'contentType']);
+
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    const { rows: afterFirst } = await dbh.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(afterFirst[0].moderation_status).toBe('approved'); // benign, above threshold
+    const firstDecisions = await decisionsFor('review', reviewId);
+    expect(firstDecisions).toHaveLength(1);
+    expect(firstDecisions[0].decided_by).toBe('llm');
+    expect(firstDecisions[0].outcome).toBe('approved');
+    expect(firstDecisions[0].model_id).toBeTruthy(); // ADR-007: model id recorded
+
+    // Redelivery (lost-commit shape): the SAME job runs again. It must complete (delivered)
+    // without writing a second decision or re-flipping the content's status.
+    await reopenJob(job.id);
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+    expect(await decisionsFor('review', reviewId)).toHaveLength(1); // still exactly one
+    const { rows: afterSecond } = await dbh.query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(afterSecond[0].moderation_status).toBe('approved');
+  }, 20000);
+
+  test('a stale scan never overrides a decision that landed first: rejected content stays rejected', async () => {
+    const { booking, guestCookie } = await completedBookingFixture();
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .send({ rating: 1, comment: 'Wave four stale-scan drill review, entirely benign text.' })
+      .set('Cookie', guestCookie);
+    expect(res.status).toBe(201);
+    const reviewId = res.body.review.id;
+    const [job] = await jobsFor('moderation.scan', 'contentId', reviewId);
+
+    // A decision lands BEFORE the scan job runs (e.g. a human moderator rejected it).
+    await dbh.query(`UPDATE reviews SET moderation_status = 'rejected' WHERE id = $1`, [reviewId]);
+
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered'); // skipped, not retried forever
+    const { rows } = await dbh.query(`SELECT moderation_status FROM reviews WHERE id = $1`, [
+      reviewId,
+    ]);
+    expect(rows[0].moderation_status).toBe('rejected'); // never re-opened by the scan
+    expect(await decisionsFor('review', reviewId)).toHaveLength(0); // the scan decided nothing
+  }, 20000);
+});
+
+describe('RT-02 wave-4 — account.erasure: scheduled instant, then idempotent redelivery (NFR-12)', () => {
+  test('DELETE /api/users/me schedules the job at the request due date; the job erases once, and a redelivery is a no-op', async () => {
+    const user = await w3.makeGuest();
+    const cookie = await w3.cookieFor(user);
+
+    const res = await request(app).delete('/api/users/me').set('Cookie', cookie);
+    expect(res.status).toBe(202);
+    const requestId = res.body.request.id;
+
+    const [job] = await jobsFor('account.erasure', 'userId', user.id);
+    expect(job.status).toBe('pending');
+    expect(Object.keys(job.payload).sort()).toEqual(['dataRequestId', 'reason', 'userId']);
+    // The job is gated to the erasure instant: available_at equals the request's due date.
+    const { rows: reqRows } = await dbh.query(`SELECT * FROM data_requests WHERE id = $1`, [
+      requestId,
+    ]);
+    expect(new Date(job.available_at).getTime()).toBe(new Date(reqRows[0].due_at).getTime());
+
+    // The scheduled instant arrives (outbox-gate fast-forward, not a wall-clock wait).
+    await makeDue(job.id);
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+
+    const snapshotUser = async () => {
+      const { rows } = await dbh.query(`SELECT * FROM users WHERE id = $1`, [user.id]);
+      return rows[0];
+    };
+    const snapshotRequest = async () => {
+      const { rows } = await dbh.query(`SELECT * FROM data_requests WHERE id = $1`, [requestId]);
+      return rows[0];
+    };
+    const erasedUser = await snapshotUser();
+    expect(erasedUser.anonymized_at).not.toBeNull();
+    expect(erasedUser.email).toBe(`erased:${user.id}`);
+    expect(erasedUser.full_name).toBeNull();
+    expect(erasedUser.phone_enc).toBeNull();
+    const doneRequest = await snapshotRequest();
+    expect(doneRequest.status).toBe('completed');
+    expect(doneRequest.completed_at).not.toBeNull();
+
+    // Redelivery after a lost commit: the handler must recognise the completed request and
+    // change NOTHING — same user row, same request row, byte for byte.
+    await reopenJob(job.id);
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+    expect(await snapshotUser()).toEqual(erasedUser);
+    expect(await snapshotRequest()).toEqual(doneRequest);
+  }, 20000);
+});
+
+describe('RT-02 wave-4 — data.export: idempotent redelivery serves the same stored copy (NFR-13)', () => {
+  test('the export completes once; a redelivered job leaves the stored copy untouched', async () => {
+    const user = await w3.makeGuest();
+    const cookie = await w3.cookieFor(user);
+
+    const res = await request(app).post('/api/users/me/export').set('Cookie', cookie);
+    expect(res.status).toBe(202);
+    const requestId = res.body.request.id;
+
+    const [job] = await jobsFor('data.export', 'userId', user.id);
+    expect(job.status).toBe('pending');
+    expect(Object.keys(job.payload).sort()).toEqual(['dataRequestId', 'userId']);
+
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+    const first = await request(app).get(`/api/users/me/export/${requestId}`).set('Cookie', cookie);
+    expect(first.status).toBe(200);
+    expect(first.body.export.status).toBe('completed');
+    expect(first.body.export.data).toBeTruthy();
+
+    await reopenJob(job.id);
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+    const second = await request(app)
+      .get(`/api/users/me/export/${requestId}`)
+      .set('Cookie', cookie);
+    expect(second.status).toBe(200);
+    expect(second.body.export).toEqual(first.body.export); // identical, not re-assembled anew
+  }, 20000);
+});
+
+describe('RT-02 wave-4 — a dead-lettered moderation.scan is recovered by the operator requeue path (NFR-09)', () => {
+  afterEach(() => llmMock.reset());
+
+  test('outage -> dead letter (content stays pending); requeue-dead-letters re-opens it; the drain decides it', async () => {
+    const host = await w3.makeHost();
+    const listing = await w3.makeApprovedListing({ host_id: host.id });
+    const guest = await w3.makeGuest();
+    const booking = await dbh.makeBooking({
+      listing_id: listing.id,
+      guest_id: guest.id,
+      status: 'pending',
+    });
+    const guestCookie = await w3.cookieFor(guest);
+
+    llmMock.setOutage(true);
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/messages`)
+      .send({ body: 'Benign wave four dead-letter drill message, see you at dinner.' })
+      .set('Cookie', guestCookie);
+    expect(res.status).toBe(201);
+    const messageId = res.body.message.id;
+    const [job] = await jobsFor('moderation.scan', 'contentId', messageId);
+
+    // Exhaust the whole retry budget under the outage: the job dead-letters with the typed
+    // provider error and the message's moderation_status is still 'pending' (ADR-002).
+    for (let i = 0; i < config.outbox.maxAttempts + 1; i += 1) {
+      await makeDue(job.id);
+      await withOnlyTheseDue([job.id], async () => {
+        await pollOnce({ registry, log: quiet });
+      });
+    }
+    const deadJob = await getJob(job.id);
+    expect(deadJob.status).toBe('dead');
+    expect(deadJob.attempt_count).toBe(config.outbox.maxAttempts);
+    expect(deadJob.last_error).toMatch(/Moderation provider unavailable/i);
+    const { rows: whileDead } = await dbh.query(
+      `SELECT moderation_status FROM messages WHERE id = $1`,
+      [messageId]
+    );
+    expect(whileDead[0].moderation_status).toBe('pending');
+
+    // The provider recovers. First a dry run: it must change NOTHING.
+    llmMock.reset();
+    const silent = { log: () => {} };
+    const dry = await requeueScript.requeueDeadLetters({
+      type: 'moderation.scan',
+      dryRun: true,
+      log: silent,
+    });
+    expect(dry.matched).toBeGreaterThanOrEqual(1);
+    expect(dry.requeued).toHaveLength(0);
+    expect((await getJob(job.id)).status).toBe('dead');
+
+    // The real requeue re-opens the job with a fresh budget, and the worker decides it.
+    const result = await requeueScript.requeueDeadLetters({ type: 'moderation.scan', log: silent });
+    expect(result.requeued.map((r) => String(r.id))).toContain(String(job.id));
+    const reopened = await getJob(job.id);
+    expect(reopened.status).toBe('pending');
+    expect(reopened.attempt_count).toBe(0);
+
+    await withOnlyTheseDue([job.id], async () => {
+      await pollOnce({ registry, log: quiet });
+    });
+    expect((await getJob(job.id)).status).toBe('delivered');
+    const { rows: decided } = await dbh.query(
+      `SELECT moderation_status FROM messages WHERE id = $1`,
+      [messageId]
+    );
+    expect(decided[0].moderation_status).toBe('approved');
+    const { rows: decision } = await dbh.query(
+      `SELECT decided_by, outcome FROM moderation_decisions
+        WHERE content_type = 'message' AND content_id = $1`,
+      [messageId]
+    );
+    expect(decision).toHaveLength(1);
+    expect(decision[0].decided_by).toBe('llm');
+    expect(decision[0].outcome).toBe('approved');
   }, 30000);
 });

@@ -27,7 +27,14 @@ const request = require('supertest');
 const { createApp } = require('../../src/app');
 const llm = require('../../src/adapters/llmModeration');
 const mockLlm = require('../../src/adapters/llmModeration.mock');
-const { query, makeUser, makeHostProfile, makeListing, closeDb } = require('../helpers/db');
+const {
+  query,
+  makeUser,
+  makeHostProfile,
+  makeListing,
+  makeBooking,
+  closeDb,
+} = require('../helpers/db');
 const { closeTestRedis } = require('../helpers/redis');
 const { pollOnlyThese } = require('../helpers/outboxScope');
 const config = require('../../src/config');
@@ -487,5 +494,430 @@ describe('FR-08 — wave-3 dead-lettered moderation.scan jobs requeue and drain 
     await requeueDeadLetters({ type: 'moderation.scan', log: { log: () => {} } });
     await pollOnlyThese([probe.scanJobId], registry, 2);
     expect(await moderationStatusOf(probe.listingId)).toBe('approved');
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// Wave-4 verification additions (lane tc-booking, TC-08): the FR-08 acceptance clauses the
+// file above did not yet execute — the publication policy on the two NEW scanned surfaces
+// (reviews FR-05, messages FR-06), the provider-outage clause ("stays pending indefinitely,
+// never appears in search/detail, while the job is retried"), and the AB-03 per-author
+// submission rate limit (stage 1b).
+// ----------------------------------------------------------------------------------------------
+const moderationService = require('../../src/modules/moderation/service');
+
+/** Completed booking between a fresh eligible guest and a host with a public profile. */
+async function makeReviewableBooking() {
+  const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-w4' });
+  await makeHostProfile({ user_id: host.id });
+  const listing = await makeListing({ host_id: host.id, moderation_status: 'approved' });
+  const guest = await makeUser({ phone_enc: 'enc:v1:tc08-w4' });
+  const booking = await makeBooking({
+    listing_id: listing.id,
+    guest_id: guest.id,
+    status: 'completed',
+    host_confirmed_completion: true,
+    guest_confirmed_completion: true,
+    completed_at: new Date(),
+  });
+  return { host, listing, guest, booking };
+}
+
+async function scanJobFor(contentType, contentId) {
+  const { rows } = await query(
+    `SELECT id, payload FROM outbox_jobs
+      WHERE type = 'moderation.scan' AND payload->>'contentType' = $1
+        AND payload->>'contentId' = $2`,
+    [contentType, contentId]
+  );
+  expect(rows).toHaveLength(1);
+  // ADR-003: the scan payload carries IDs only — exactly the two contract keys.
+  expect(Object.keys(rows[0].payload).sort()).toEqual(['contentId', 'contentType']);
+  return rows[0].id;
+}
+
+async function openQueueItemFor(contentType, contentId) {
+  const { rows } = await query(
+    `SELECT id, reason, status FROM moderation_queue
+      WHERE content_type = $1 AND content_id = $2 AND status <> 'resolved'`,
+    [contentType, contentId]
+  );
+  return rows[0] || null;
+}
+
+async function hostReviewIds(hostId, viewerCookie) {
+  const res = await request(app)
+    .get(`/api/hosts/${hostId}/reviews`)
+    .set('Cookie', viewerCookie)
+    .query({ pageSize: 100 });
+  expect(res.status).toBe(200);
+  return res.body.reviews.map((r) => r.id);
+}
+
+async function threadMessageIds(bookingId, cookie) {
+  const res = await request(app)
+    .get(`/api/bookings/${bookingId}/messages`)
+    .set('Cookie', cookie)
+    .query({ pageSize: 100 });
+  expect(res.status).toBe(200);
+  return res.body.items.map((m) => m.id);
+}
+
+describe('TC-08 wave 4 — FR-08 publication policy: reviews stay pending until approved', () => {
+  test('a review is born pending and INVISIBLE on GET /api/hosts/:id/reviews; the scan approves it into view', async () => {
+    const { host, guest, booking } = await makeReviewableBooking();
+    const guestCookie = await cookieFor(guest);
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .set('Cookie', guestCookie)
+      .send({ rating: 5, comment: 'Delicious tamales and a very kind host.' });
+    expect(res.status).toBe(201);
+    expect(res.body.review.moderationStatus).toBe('pending');
+    const reviewId = res.body.review.id;
+    const jobId = await scanJobFor('review', reviewId);
+
+    // Pending review is NOT publicly readable (FR-08 publication gate).
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+    expect(await hostReviewIds(host.id, browserCookie)).not.toContain(reviewId);
+
+    await pollOnlyThese([jobId], registry, 1);
+
+    const { rows: statusRows } = await query(
+      `SELECT moderation_status FROM reviews WHERE id = $1`,
+      [reviewId]
+    );
+    expect(statusRows[0].moderation_status).toBe('approved');
+    const { rows: decisions } = await query(
+      `SELECT outcome, decided_by, category, model_id FROM moderation_decisions
+        WHERE content_type = 'review' AND content_id = $1`,
+      [reviewId]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      outcome: 'approved',
+      decided_by: 'llm',
+      category: 'benign',
+      model_id: mockLlm.model,
+    });
+    expect(await hostReviewIds(host.id, browserCookie)).toContain(reviewId);
+  });
+
+  test('a flagged review files ONE queue item and stays pending; human REJECT keeps it unpublished forever', async () => {
+    const { host, guest, booking } = await makeReviewableBooking();
+    const guestCookie = await cookieFor(guest);
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .set('Cookie', guestCookie)
+      // "wire transfer" = deterministic mock fixture (fraudulent 0.93); NOT a blocklist rule.
+      .send({ rating: 1, comment: 'Host asked for a wire transfer before the meal.' });
+    expect(res.status).toBe(201);
+    const reviewId = res.body.review.id;
+    const jobId = await scanJobFor('review', reviewId);
+    await pollOnlyThese([jobId], registry, 1);
+
+    // Escalated, not decided: review pending + one open queue item, reason 'flagged'.
+    const { rows } = await query(`SELECT moderation_status FROM reviews WHERE id = $1`, [reviewId]);
+    expect(rows[0].moderation_status).toBe('pending');
+    const item = await openQueueItemFor('review', reviewId);
+    expect(item).not.toBeNull();
+    expect(item.reason).toBe('flagged');
+
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+    expect(await hostReviewIds(host.id, browserCookie)).not.toContain(reviewId);
+
+    // Human stage: reject → rejected, still never published.
+    const { cookie: modCookie } = await makeModeratorCookie();
+    const decide = await request(app)
+      .post(`/api/moderation/queue/${item.id}/decision`)
+      .set('Cookie', modCookie)
+      .send({ decision: 'reject', category: 'fraudulent' });
+    expect(decide.status).toBe(200);
+    const { rows: after } = await query(`SELECT moderation_status FROM reviews WHERE id = $1`, [
+      reviewId,
+    ]);
+    expect(after[0].moderation_status).toBe('rejected');
+    expect(await hostReviewIds(host.id, browserCookie)).not.toContain(reviewId);
+  });
+});
+
+describe('TC-08 wave 4 — FR-08 publication policy: messages deliver first, scan later', () => {
+  test('a message is readable by the other participant BEFORE any scan; an LLM-flag queues it; human REJECT hides it', async () => {
+    const { host, guest, booking } = await makeReviewableBooking();
+    const guestCookie = await cookieFor(guest);
+    const hostCookie = await cookieFor(host);
+
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', guestCookie)
+      // "click here" = deterministic mock spam fixture (0.95); NOT a blocklist rule.
+      .send({ body: 'Hi! click here for my other menus.' });
+    expect(res.status).toBe(201);
+    const messageId = res.body.message.id;
+    const jobId = await scanJobFor('message', messageId);
+
+    // Delivered immediately: the HOST reads it while the scan job is still pending.
+    expect(await threadMessageIds(booking.id, hostCookie)).toContain(messageId);
+
+    await pollOnlyThese([jobId], registry, 1);
+
+    // Flagged → escalated to the human queue; message row NOT auto-rejected by the LLM stage.
+    const item = await openQueueItemFor('message', messageId);
+    expect(item).not.toBeNull();
+    expect(item.reason).toBe('flagged');
+    const { rows } = await query(`SELECT moderation_status FROM messages WHERE id = $1`, [
+      messageId,
+    ]);
+    expect(rows[0].moderation_status).toBe('pending');
+
+    // Human REJECT → the message disappears from subsequent thread reads (AB-04).
+    const { cookie: modCookie } = await makeModeratorCookie();
+    const decide = await request(app)
+      .post(`/api/moderation/queue/${item.id}/decision`)
+      .set('Cookie', modCookie)
+      .send({ decision: 'reject', category: 'spam' });
+    expect(decide.status).toBe(200);
+    expect(await threadMessageIds(booking.id, hostCookie)).not.toContain(messageId);
+    // ... for BOTH participants (the sender does not keep a private copy of removed content).
+    expect(await threadMessageIds(booking.id, guestCookie)).not.toContain(messageId);
+  });
+
+  test('a blocklist-hit message is delivered, then auto-rejected by the pre-filter with ZERO LLM calls and hidden (AB-04)', async () => {
+    const { host, guest, booking } = await makeReviewableBooking();
+    const guestCookie = await cookieFor(guest);
+    const hostCookie = await cookieFor(host);
+
+    const res = await request(app)
+      .post(`/api/bookings/${booking.id}/messages`)
+      .set('Cookie', guestCookie)
+      .send({ body: 'If you rate me badly you should go die.' });
+    expect(res.status).toBe(201); // ADR-002: delivery never waits on moderation
+    const messageId = res.body.message.id;
+    const jobId = await scanJobFor('message', messageId);
+    expect(await threadMessageIds(booking.id, hostCookie)).toContain(messageId);
+
+    const spy = jest.spyOn(llm, 'classify');
+    try {
+      await pollOnlyThese([jobId], registry, 1);
+      expect(spy).not.toHaveBeenCalled(); // stage 1 decided
+    } finally {
+      spy.mockRestore();
+    }
+    const { rows } = await query(`SELECT moderation_status FROM messages WHERE id = $1`, [
+      messageId,
+    ]);
+    expect(rows[0].moderation_status).toBe('rejected');
+    const { rows: decisions } = await query(
+      `SELECT outcome, decided_by, category FROM moderation_decisions
+        WHERE content_type = 'message' AND content_id = $1`,
+      [messageId]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      outcome: 'rejected',
+      decided_by: 'pre_filter',
+      category: 'offensive',
+    });
+    expect(await threadMessageIds(booking.id, hostCookie)).not.toContain(messageId);
+  });
+});
+
+describe('TC-08 wave 4 — provider outage: public content stays pending, is retried, never publishes unreviewed', () => {
+  test('with the LLM adapter failing every attempt, a listing and a review stay pending + invisible; recovery publishes', async () => {
+    const { listingId, scanJobId, cuisine } = await createListingViaApi({
+      title: 'Outage drill supper',
+      description: 'A perfectly benign meal used for the NFR-09 outage drill.',
+    });
+    const { host: rHost, guest, booking } = await makeReviewableBooking();
+    const guestCookie = await cookieFor(guest);
+    const reviewRes = await request(app)
+      .post(`/api/bookings/${booking.id}/reviews`)
+      .set('Cookie', guestCookie)
+      .send({ rating: 4, comment: 'Really lovely evening, thank you.' });
+    expect(reviewRes.status).toBe(201);
+    const reviewId = reviewRes.body.review.id;
+    const reviewJobId = await scanJobFor('review', reviewId);
+
+    const browser = await makeUser({});
+    const browserCookie = await cookieFor(browser);
+
+    mockLlm.setOutage(true);
+    try {
+      // Two scoped cycles: each due job fails once and is backed off (not yet dead).
+      await pollOnlyThese([scanJobId, reviewJobId], registry, 2);
+
+      const { rows: jobs } = await query(
+        `SELECT id, status, attempt_count, available_at > now() AS backed_off
+           FROM outbox_jobs WHERE id = ANY($1::bigint[]) ORDER BY id`,
+        [[scanJobId, reviewJobId]]
+      );
+      for (const job of jobs) {
+        expect(job.status).toBe('pending'); // retried, NOT delivered, NOT auto-anything
+        expect(job.attempt_count).toBeGreaterThanOrEqual(1);
+        expect(job.backed_off).toBe(true); // exponential backoff pushed available_at out
+      }
+      // Both stay pending and OFF every public read path.
+      expect(await moderationStatusOf(listingId)).toBe('pending');
+      expect(
+        (await request(app).get(`/api/listings/${listingId}`).set('Cookie', browserCookie)).status
+      ).toBe(404);
+      const search = await request(app)
+        .get('/api/listings/search')
+        .set('Cookie', browserCookie)
+        .query({ cuisine, pageSize: 100 });
+      expect(search.status).toBe(200);
+      expect(JSON.stringify(search.body)).not.toContain(listingId);
+      expect(await hostReviewIds(rHost.id, browserCookie)).not.toContain(reviewId);
+    } finally {
+      mockLlm.reset();
+    }
+
+    // Provider recovers: pull the backed-off jobs due and drain — NOW they publish.
+    await query(`UPDATE outbox_jobs SET available_at = now() WHERE id = ANY($1::bigint[])`, [
+      [scanJobId, reviewJobId],
+    ]);
+    await pollOnlyThese([scanJobId, reviewJobId], registry, 1);
+    expect(await moderationStatusOf(listingId)).toBe('approved');
+    const { rows: after } = await query(`SELECT moderation_status FROM reviews WHERE id = $1`, [
+      reviewId,
+    ]);
+    expect(after[0].moderation_status).toBe('approved');
+  });
+});
+
+describe('TC-08 wave 4 — AB-03: the per-author submission rate limit escalates, never auto-rejects', () => {
+  test('the 16th listing inside the 60-minute window escalates to the human queue with reason rate_limited and ZERO LLM calls', async () => {
+    const { RATE_LIMIT } = require('../../src/modules/moderation/prefilter');
+    expect(RATE_LIMIT).toEqual({ windowMinutes: 60, maxSubmissionsPerWindow: 15 });
+
+    const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-w4' });
+    await makeHostProfile({ user_id: host.id });
+    let last;
+    for (let i = 0; i < RATE_LIMIT.maxSubmissionsPerWindow + 1; i += 1) {
+      last = await makeListing({ host_id: host.id }); // distinct LA days; created_at = now()
+    }
+
+    const spy = jest.spyOn(mockLlm, 'classify');
+    let outcome;
+    try {
+      outcome = await moderationService.processScan(
+        { contentType: 'listing', contentId: last.id },
+        { classify: mockLlm.classify, mode: 'mock' }
+      );
+      expect(spy).not.toHaveBeenCalled(); // stage 1b decided before any provider call
+    } finally {
+      spy.mockRestore();
+    }
+    expect(outcome.outcome).toBe('escalated');
+
+    // Escalated to a human as probable spam — content stays pending (volume is a signal, not proof).
+    expect(await moderationStatusOf(last.id)).toBe('pending');
+    const item = await openQueueItemFor('listing', last.id);
+    expect(item).not.toBeNull();
+    expect(item.reason).toBe('rate_limited');
+    const { rows: decisions } = await query(
+      `SELECT outcome, decided_by, category, model_id FROM moderation_decisions
+        WHERE content_type = 'listing' AND content_id = $1`,
+      [last.id]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      outcome: 'escalated',
+      decided_by: 'pre_filter',
+      category: 'spam',
+      model_id: null,
+    });
+  });
+});
+
+// ----------------------------------------------------------------------------------------------
+// U-V4R-SAFETY-QUEUE acceptance (U4-SAFETY-COMPLETE): a raised safety alert, drained through
+// the REAL worker, appears as a moderation_queue row of content_type 'safety_alert' that the
+// unified queue ROUTE serves — filterable, unfiltered-safe, and decidable — while the alert
+// row itself keeps its FR-07 delivery lifecycle (no publication state to flip).
+// ----------------------------------------------------------------------------------------------
+describe('TC-08 wave 4 — U4-SAFETY-COMPLETE: safety alerts in the ONE unified queue (FR-07/FR-08)', () => {
+  afterEach(async () => {
+    // Hygiene: remove the safety_alert rows this describe filed into the SHARED queue table
+    // so sibling suites' queue pages stay predictable (helpers CONCURRENCY RULE).
+    await query(`DELETE FROM moderation_queue WHERE content_type = 'safety_alert'`);
+  });
+
+  test('alert raise → worker drain → queue row served unfiltered AND filtered → human decision resolves it; the alert row is untouched', async () => {
+    // A booking whose guest raises the alert over HTTP (FR-07 request half).
+    const host = await makeUser({ can_publish_listing: true, phone_enc: 'enc:v1:tc08-w4' });
+    await makeHostProfile({ user_id: host.id });
+    const listing = await makeListing({ host_id: host.id, moderation_status: 'approved' });
+    const guest = await makeUser({ phone_enc: 'enc:v1:tc08-w4' });
+    const booking = await makeBooking({ listing_id: listing.id, guest_id: guest.id });
+    const raised = await request(app)
+      .post(`/api/bookings/${booking.id}/safety-alerts`)
+      .set('Cookie', await cookieFor(guest))
+      .send({});
+    expect(raised.status).toBe(201);
+    const alertId = raised.body.alert.id;
+
+    // Drain ONLY this alert's safety.alert job through the real worker (house rule (b)).
+    const { rows: jobs } = await query(
+      `SELECT id FROM outbox_jobs WHERE type = 'safety.alert' AND payload->>'alertId' = $1`,
+      [alertId]
+    );
+    expect(jobs).toHaveLength(1);
+    await pollOnlyThese([jobs[0].id], registry, 1);
+
+    // The unified-queue entry was filed (unifiedQueueSupported() is TRUE on the real tree).
+    const item = await openQueueItemFor('safety_alert', alertId);
+    expect(item).not.toBeNull();
+    expect(item.reason).toBe('safety_alert');
+
+    const moderator = await makeUser({ roles: ['user', 'moderator'] });
+    const moderatorCookie = await cookieFor(moderator);
+
+    // The route serves the type FILTERED (widened schema enum, no more 422)…
+    const filtered = await request(app)
+      .get('/api/moderation/queue')
+      .set('Cookie', moderatorCookie)
+      .query({ contentType: 'safety_alert', status: 'open', pageSize: 100 });
+    expect(filtered.status).toBe(200);
+    const entry = filtered.body.items.find((i) => i.contentId === alertId);
+    expect(entry).toMatchObject({ contentType: 'safety_alert', status: 'open' });
+    // …with an IDs-only excerpt (booking id + raised time — NFR-13/ADR-010: never a name,
+    // address or contact value) and no publication state (an alert has none).
+    expect(entry.excerpt).toContain(booking.id);
+    expect(entry.excerpt).not.toMatch(/[^\s@]+@[^\s@]+\.[^\s@]+/);
+    expect(entry.contentStatus).toBeNull();
+
+    // …and UNFILTERED: the mixed page serializes, one safety_alert row 500s nothing.
+    const unfiltered = await request(app)
+      .get('/api/moderation/queue')
+      .set('Cookie', moderatorCookie)
+      .query({ status: 'open', pageSize: 100 });
+    expect(unfiltered.status).toBe(200);
+    expect(unfiltered.body.items.some((i) => i.contentId === alertId)).toBe(true);
+
+    // The entry is DECIDABLE: the human decision records and resolves it (FR-08 human stage)…
+    const decided = await request(app)
+      .post(`/api/moderation/queue/${item.id}/decision`)
+      .set('Cookie', moderatorCookie)
+      .send({ decision: 'approve', category: 'benign', note: 'Safety alert reviewed.' });
+    expect(decided.status).toBe(200);
+    expect(decided.body.item).toMatchObject({ id: item.id, status: 'resolved' });
+    const { rows: decisions } = await query(
+      `SELECT decided_by, decided_by_user_id, outcome FROM moderation_decisions
+        WHERE content_type = 'safety_alert' AND content_id = $1`,
+      [alertId]
+    );
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ decided_by: 'human', decided_by_user_id: moderator.id });
+
+    // …while setModerationStatus stayed a recorded no-op: the alert row still exists with
+    // its own delivery lifecycle untouched ('no_channel' — the guest has no contact on file).
+    const { rows: alerts } = await query(
+      `SELECT delivery_status FROM safety_alerts WHERE id = $1`,
+      [alertId]
+    );
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].delivery_status).toBe('no_channel');
   });
 });
