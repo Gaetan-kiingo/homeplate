@@ -1,6 +1,6 @@
 {
  "source": "SRS v3.2 (frozen baseline), sections 3.1, 3.3, 3.5; design elements and test IDs from SRS Appendix B and section 4; acceptance criteria additionally bound by ADR-001..011",
- "generated": "2026-08-21 (rev G — wave-4 VERIFIED. statusAtWave4Verified reflects the repaired working tree on top of cca6787: 32 met / 2 partial (NFR-10 not measured, AB-06 ZAP-client clause) / 1 not_implemented (NFR-07). Evidence: docs/verification-report.md (waves 0-4). Tree verified locally by 8 lanes + report runs A/B (62 suites / 1386 tests, exit 0, TEST_STRICT_HANDLES=1); NOT yet committed or CI-run.) | 2026-08-26 (rev H — wave-5 coordinator planning pass on baseline 0270a01: no requirement status changes; wave-5 work breakdown recorded in build-plan.md §6.1 (U5-SHELL → U5-API-CLIENT ∥ U5-UI-KIT → U5-SHELL-WIRE). NFR-07 remains open by design: wave 5 builds the accessible client foundation, the seven-interface axe audit is wave 7 (A-NFR07-1 pins the harness in wave 5) and the 5-participant study is a human activity. ADR-009 as amended 2026-08-18 is the binding cap set: 30 meals/day, 90 meals/week (AB 1325), Monday–Sunday America/Los_Angeles calendar week — any stale 60/week citation elsewhere yields to the ADR.)",
+ "generated": "2026-08-26 (rev I — FR-05 comment-required ratified; W4-F2 closed)",
  "requirements": [
   {
    "id": "FR-01",
@@ -111,7 +111,7 @@
    "testIds": [
     "TC-05"
    ],
-   "acceptance": "POST /api/bookings/:id/reviews accepts {rating: integer 1..5, comment: string, imageKeys: string[]} from the guest (about the host) and from the host (about the guest). Rating outside 1..5 or non-integer returns 422. A review on a booking whose status is not 'completed' returns 409. A second review by the same author on the same booking returns 409 (at most two reviews per booking, one per direction). A created review is stored with moderation_status='pending' and is absent from GET /api/hosts/:id and GET /api/listings/:id until approved (FR-08).",
+   "acceptance": "POST /api/bookings/:id/reviews accepts {rating: integer 1..5, comment: string, imageKeys: string[]} from the guest (about the host) and from the host (about the guest). Rating outside 1..5 or non-integer returns 422. A review on a booking whose status is not 'completed' returns 409. A second review by the same author on the same booking returns 409 (at most two reviews per booking, one per direction). A created review is stored with moderation_status='pending' and is absent from GET /api/hosts/:id and GET /api/listings/:id until approved (FR-08). A review comment is REQUIRED (min 1 character): photo-only reviews are rejected with 422, which is the team's RATIFIED 2026-08-26 reading of FR-05 (see specDecision), not an unexamined implementation default.",
    "statusAt_f7f954c": "not_implemented",
    "statusNote": "src/modules/reviews absent; endpoints answer a structured 404. Wave 4 (U4-REVIEWS).",
    "statusAt_bc27199": "not_implemented",
@@ -125,7 +125,16 @@
     "mustDeliver": "Build FR-05 end to end: reviews on completed bookings only, born pending, published only after moderation approval; take over findReviewAuthorId from the media repo."
    },
    "statusAtWave4Verified": "met",
-   "statusNoteWave4": "Met (first verification, TC-05). Open spec question W4-F2: photo-only review refused (comment min 1 char); team decision pending."
+   "statusNoteWave4": "Met (first verification, TC-05). Open spec question W4-F2: photo-only review refused (comment min 1 char); team decision pending.",
+   "specDecision": {
+    "formerFindingId": "W4-F2 (TCC-W4-02 / TCB-W4-03 / RTLT-W4-02 / F-ADR4-02 / COV-W4-02)",
+    "status": "RESOLVED — ratified by the team 2026-08-26. Was an open spec question raised independently by five verification lanes, none of which decided it.",
+    "question": "FR-05 says reviews include \"photos and a numerical rating\" but neither mandates text nor forbids a photo-only review. Is a review with a rating and images but no comment valid?",
+    "decision": "Option (a): a comment is REQUIRED (min 1 character). A photo-only review is a 422 by design. This is the ratified v1.0 reading of FR-05.",
+    "rationale": "The constraint is also load-bearing for pipeline safety: both moderation adapters classify() throw TypeError on empty/whitespace text rather than the typed retryable provider error, so an empty-bodied review would retry and then permanently dead-letter, stranding the review pending forever (ADR-002/ADR-003). Option (b) — relaxing the schema — was rejected for v1.0 because it requires changing the moderation pipeline, the newest and least-exercised subsystem, in the same week its live IT-03 measurement is still outstanding.",
+    "howToRevisit": "Relaxing min:1 REQUIRES the pipeline change in the same unit: skip the LLM stage for empty text and route the image-bearing item to the human moderator queue (ADR-002-consistent, since the v1.0 pipeline is a text classifier that cannot inspect images anyway). Never relax the schema alone. The natural trigger is UT-01: a study participant reaching for a photo-only review and failing is evidence that turns this from speculative into justified.",
+    "consequence": "FR-05 acceptance is unchanged and remains met. No code change was required by this decision."
+   }
   },
   {
    "id": "FR-06",
