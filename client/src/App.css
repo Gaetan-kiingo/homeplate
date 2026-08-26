@@ -1,0 +1,40 @@
+/* client/src/App.css — document-level globals ONLY (U5-SHELL). Layout structure lives in
+ * src/layout/AppLayout.module.css (the layout's own CSS module until 5C adopts the UI-kit
+ * tokens from src/styles/ — U5-UI-KIT's tree, not touched here).
+ *
+ * Contrast (WCAG 2.1 AA, NFR-07): every colour below is a var(--hp-color-*) token from
+ * src/styles/tokens.css, whose measured-contrast table is machine-recomputed by
+ * src/ui/kit-contract.test.js — no colour literals and no hand-derived ratios here, so this
+ * file cannot drift from the checked values (text on surface >= 4.5:1, focus ring >= 3:1).
+ * Tokens are defined on :root in tokens.css (imported once in App.jsx) and custom properties
+ * resolve on :root regardless of stylesheet import order.
+ * Responsive (NFR-07): overflow-wrap keeps long tokens from forcing horizontal scroll at
+ * the 320 px floor.
+ */
+:root {
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+  color: var(--hp-color-text);
+  background: var(--hp-color-surface);
+  overflow-wrap: break-word;
+}
+
+/* Visible focus indicator, >= 3:1 against the surface (NFR-07; ratio checked in tokens.css). */
+:focus-visible {
+  outline: 3px solid var(--hp-color-focus-ring);
+  outline-offset: 2px;
+}
+
+a {
+  color: var(--hp-color-link);
+}

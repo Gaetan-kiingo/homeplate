@@ -1,0 +1,7 @@
+/* client/src/ui/Img.module.css — U5-UI-KIT (NFR-07). Responsive by construction: an image
+ * can never force horizontal scroll at the 320 px floor. No colours involved. */
+.img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

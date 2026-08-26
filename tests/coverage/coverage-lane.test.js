@@ -39,6 +39,17 @@ function walk(dir, out = []) {
   return out;
 }
 
+// The wave-5 client is .jsx/.css-heavy, which the backend walk() above deliberately skips —
+// collect EVERY file and let the caller filter by extension.
+function walkAllFiles(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkAllFiles(p, out);
+    else out.push(p);
+  }
+  return out;
+}
+
 describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', () => {
   const files = [
     ...walk(path.join(ROOT, 'src')),
@@ -63,9 +74,9 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
     expect(offenders).toEqual([]);
   });
 
-  test('wave 5-6 surfaces are NOT on disk yet (scope guard — SRS §1.2 / build-plan §4)', () => {
-    // `safety` left this list when U4-SAFETY landed (FR-07): its coverage is asserted by
-    // tests/unit/safety.test.js, tc07-safety.test.js and it04-safety-delivery.test.js.
+  test('wave-5 client foundation is ON disk; wave-6 feature screens are NOT yet (scope guard — SRS §1.2 / §2.1.2, build-plan §6.1)', () => {
+    // `safety` left the absent-list when U4-SAFETY landed (FR-07): its coverage is asserted
+    // by tests/unit/safety.test.js, tc07-safety.test.js and it04-safety-delivery.test.js.
     // `moderation` left it when U4-MODERATION landed (FR-08) — the positive assertion is in
     // the next test and its coverage in tests/unit/moderation.test.js + tc08.
     // `reviews` left it when U4-REVIEWS landed (FR-05, wave 4B) — positive assertion two
@@ -74,8 +85,123 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
     // three tests down; coverage in tests/unit/messaging.test.js + tc06-messaging.test.js.
     // `privacy` left it when U4-PRIVACY landed (NFR-12/NFR-13, wave 4D) — positive
     // assertion below; coverage in tests/unit/privacy.test.js + st05-st06-privacy.test.js.
-    // The responsive React client is waves 5-6 (SRS §2.1.2).
-    expect(fs.existsSync(path.join(ROOT, 'client'))).toBe(false);
+    // `client` left it when the wave-5 scaffold landed (SRS §2.1.2 — the responsive React
+    // WEB client as its own npm package; build-plan §6.1 5A): the foundation files below are
+    // the positive assertion, and the client's own vitest suite (`npm --prefix client test`)
+    // carries its behavioural coverage — this Jest suite stays backend-only by contract.
+    for (const f of [
+      'package.json',
+      'package-lock.json',
+      'vite.config.js',
+      'index.html',
+      path.join('src', 'main.jsx'),
+      path.join('src', 'App.jsx'),
+    ]) {
+      expect(fs.existsSync(path.join(ROOT, 'client', f))).toBe(true);
+    }
+    // Wave-6 scope guard, same pattern as before: no feature screens exist yet. A wave-6
+    // feature lands as client/src/features/<name>/routes.jsx (glob-discovered); when the
+    // first one lands, this assertion leaves the same way `client` just did.
+    const featuresDir = path.join(ROOT, 'client', 'src', 'features');
+    const featureRouteFiles = fs.existsSync(featuresDir)
+      ? fs
+          .readdirSync(featuresDir, { withFileTypes: true })
+          .filter(
+            (e) => e.isDirectory() && fs.existsSync(path.join(featuresDir, e.name, 'routes.jsx'))
+          )
+          .map((e) => e.name)
+      : [];
+    expect(featureRouteFiles).toEqual([]);
+  });
+
+  test('wave-5 client sources carry no stub markers and no banned TLS/cookie escapes (SRS §2.1.2, NFR-03; build-plan §6.1)', () => {
+    // The client is its own npm package with its own vitest suite; this Jest lane stays
+    // backend-only for BEHAVIOUR, but the no-stubs ground rule and the 5A.2 TLS grep gates
+    // are repo-wide, so the static scan covers client/src + the client toolchain too.
+    const clientFiles = [
+      ...walkAllFiles(path.join(ROOT, 'client', 'src')).filter((f) => /\.(js|jsx|css)$/.test(f)),
+      path.join(ROOT, 'client', 'vite.config.js'),
+      path.join(ROOT, 'client', 'vitest.setup.js'),
+      path.join(ROOT, 'scripts', 'a11y-audit.js'),
+    ];
+    expect(clientFiles.length).toBeGreaterThanOrEqual(40); // 44+ measured at wave-5 verification
+    const offenders = [];
+    const marker = /\bTODO\b|\bFIXME\b|\bXXX\b|not.?implemented|throw new Error\(["']stub/i;
+    // build-plan §6.1 5A.2: TLS verification may never be disabled anywhere in the client
+    // toolchain; NFR-03/AB-05: the opaque HttpOnly session cookie is never read.
+    const banned =
+      /secure:\s*false|rejectUnauthorized|NODE_TLS_REJECT_UNAUTHORIZED|document\s*\.\s*cookie/;
+    for (const f of clientFiles) {
+      const src = fs.readFileSync(f, 'utf8');
+      src.split('\n').forEach((line, i) => {
+        if (marker.test(line) || banned.test(line)) {
+          offenders.push(`${path.relative(ROOT, f)}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('every wave-5 client source file is reachable from at least one client vitest spec (no dead modules)', () => {
+    // Static inventory: vitest owns execution (218 tests on this tree, run via
+    // `npm --prefix client test`); this check pins that every client source module is on the
+    // IMPORT GRAPH of at least one spec — an unexercised module cannot land silently. Pages
+    // and hooks are exercised transitively (a spec renders the router, which renders them),
+    // so reachability, not by-name mention, is the right notion of "referenced".
+    const srcDir = path.join(ROOT, 'client', 'src');
+    const all = walkAllFiles(srcDir).filter((f) => /\.(js|jsx)$/.test(f));
+    const specs = all.filter((f) => /\.test\.(js|jsx)$/.test(f));
+    const sources = all.filter((f) => !/\.test\.(js|jsx)$/.test(f));
+    expect(specs.length).toBeGreaterThanOrEqual(17);
+
+    const fileSet = new Set(all);
+    const resolveImport = (fromFile, spec) => {
+      if (!spec.startsWith('.')) return null; // package import (react, vitest, ...)
+      const base = path.resolve(path.dirname(fromFile), spec);
+      for (const candidate of [
+        base,
+        `${base}.js`,
+        `${base}.jsx`,
+        path.join(base, 'index.js'),
+        path.join(base, 'index.jsx'),
+      ]) {
+        if (fileSet.has(candidate)) return candidate;
+      }
+      return null; // .css and asset imports resolve to nothing on this graph
+    };
+    const importsOf = (file) => {
+      const out = [];
+      const src = fs.readFileSync(file, 'utf8');
+      // `import x from`, side-effect `import './x'`, AND barrel re-exports `export ... from`.
+      const re = /(?:import|export)\s+(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/g;
+      let m;
+      while ((m = re.exec(src)) !== null) {
+        const resolved = resolveImport(file, m[1]);
+        if (resolved !== null) out.push(resolved);
+      }
+      return out;
+    };
+    const reachable = new Set();
+    const queue = [...specs];
+    while (queue.length > 0) {
+      const file = queue.pop();
+      for (const dep of importsOf(file)) {
+        if (!reachable.has(dep)) {
+          reachable.add(dep);
+          queue.push(dep);
+        }
+      }
+    }
+    // main.jsx is process wiring (exercised by `vite build` + the a11y harness boot, the same
+    // convention as the backend's require.main blocks); types.js is JSDoc typedefs only and
+    // must STAY runtime-free — asserted here instead of exempted silently.
+    const typedefSource = fs.readFileSync(path.join(srcDir, 'api', 'types.js'), 'utf8');
+    expect(typedefSource).toMatch(/export \{\};/);
+    const exempt = new Set([path.join(srcDir, 'main.jsx'), path.join(srcDir, 'api', 'types.js')]);
+    const unreachable = sources
+      .filter((f) => !exempt.has(f) && !reachable.has(f))
+      .map((f) => path.relative(ROOT, f));
+    expect(unreachable).toEqual([]);
   });
 
   test('U4-PRIVACY is ON disk with its full published surface (NFR-12/13 / build-plan §4D)', () => {

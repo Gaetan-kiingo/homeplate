@@ -1,0 +1,40 @@
+/* client/src/ui/Dialog.module.css — U5-UI-KIT (NFR-07). Token-only colours: panel is the
+ * standard text-on-surface pairs (measured in styles/tokens.css), its boundary the 5.42:1
+ * UI border, the backdrop the decorative token overlay (the panel carries its own AA pairs
+ * on top of it). Responsive: the panel is fluid, capped, and scrolls internally — at the
+ * 320 px floor it can never force horizontal scroll. The panel takes programmatic focus on
+ * open, so it carries an explicit :focus ring. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--hp-space-4);
+  background: var(--hp-color-backdrop);
+}
+
+.panel {
+  background: var(--hp-color-surface);
+  color: var(--hp-color-text);
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-5);
+  width: 100%;
+  max-width: 32rem;
+  max-height: 90vh;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.panel:focus {
+  outline: var(--hp-focus-ring-width) solid var(--hp-focus-ring-color);
+  outline-offset: var(--hp-focus-ring-offset);
+}
+
+.title {
+  margin: 0 0 var(--hp-space-4);
+  font-size: var(--hp-font-size-xl);
+  line-height: var(--hp-line-height-tight);
+}

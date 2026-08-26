@@ -12,14 +12,17 @@ comment on the owning module.
 Stack (SRS §2.4, fixed): Node.js 20+/Express 4 stateless REST API (CommonJS, no transpile step),
 PostgreSQL 16 (sole source of truth), Redis 7 (sessions + read cache only), S3-compatible object
 storage for media (MinIO locally, ADR-004), transactional outbox + in-process worker for all
-deferred work (ADR-001/003). The responsive React web client arrives in waves 5–6 (SRS §2.1.2).
+deferred work (ADR-001/003). The responsive React **web** client (SRS §2.1.2 — web, not React
+Native) lives under `client/` as its own npm package: its foundation landed in wave 5, the
+feature screens land in wave 6.
 
 ## Prerequisites
 
 - Node.js 20+ (`.nvmrc`)
 - Docker with Compose v2
-- Optional: [k6](https://k6.io) for load runs (`npm run test:load`), a browser for the wave-5
-  a11y checks (`npm run test:a11y`)
+- Optional: [k6](https://k6.io) for load runs (`npm run test:load`); for the NFR-07 audit
+  (`npm run test:a11y`) the pinned chromium build: `npx playwright install chromium` (one-time
+  host step — the `playwright` package is a pinned devDependency, nothing floats)
 
 ## Running the stack
 
@@ -73,10 +76,46 @@ Verification lanes (one directory per lane so verifiers never collide):
 Checks whose implementing code belongs to waves 3–6 are reported `not_implemented`, never
 skipped (build-plan §6).
 
+## Client (responsive React web app — SRS §2.1.2)
+
+`client/` is its own npm package (Vite 5 + React 18 + react-router 6 + vitest 2), so the root
+`npm test` contract — the backend Jest suite — is untouched. Convenience scripts exist at the
+root (`npm run client:dev|client:build|client:test`), or use `--prefix`:
+
+```sh
+npm --prefix client ci          # install (client/package-lock.json is the pin)
+npm run client:dev              # HTTPS dev server on https://localhost:5173, /api proxied
+npm run client:build            # production build into client/dist/ (git-ignored)
+npm run client:test             # vitest (jsdom + testing-library), client suite only
+```
+
+TLS discipline (NFR-03): the dev/preview server serves **HTTPS only** using
+`certs/dev-{cert,key}.pem` — run `./scripts/gen-dev-certs.sh` first, and start the API
+(`npm run dev`) for the `/api` proxy. The proxy **verifies** the self-signed API certificate by
+passing it as the CA via an explicit `https.Agent`; `secure: false`,
+`rejectUnauthorized: false` and `NODE_TLS_REJECT_UNAUTHORIZED` are banned anywhere in the
+client toolchain. A non-default API port: `VITE_API_PROXY_TARGET=https://localhost:<port>`.
+
+Layout (build-plan §6.1): `client/src/{main,App,routes}.jsx` + `src/layout/` + `src/pages/`
+(U5-SHELL), `src/api/` + `src/session/` (U5-API-CLIENT), `src/ui/` + `src/styles/`
+(U5-UI-KIT), `src/features/<name>/` (wave 6 — each feature lands its own `routes.jsx`
+default-exporting an array of react-router route objects, discovered by `import.meta.glob`,
+never by editing shared files). Client sources are linted by the root gate (`npm run lint`)
+through the `client/**` ESLint override — never add `client/` to `.eslintignore`.
+
+Accessibility (NFR-07) is a build-time concern: `npm run test:a11y` runs
+`scripts/a11y-audit.js` — it builds the client, serves `client/dist/`, and drives the pinned
+`playwright` + `@axe-core/playwright` at wcag2a/wcag2aa plus keyboard checks (skip link,
+focus-to-main). **It exits non-zero until all seven NFR-07 interfaces exist and audit clean**
+(they arrive in wave 6; the audit closes in wave 7), so its presence can never be mistaken for
+coverage. Closing NFR-07 additionally requires the recorded 5-participant usability study
+(SRS §4.5, UT-01) — a human activity.
+
 ## CI
 
-`.github/workflows/ci.yml`: install → infra (`docker compose up -d --wait`) → migrate → lint →
-build check → test with coverage (SPMP §5.1.3). No secrets are used; CI runs mock adapters only.
+`.github/workflows/ci.yml`: install (root + client) → infra (`docker compose up -d --wait`) →
+migrate → lint → build check → client build → client tests → backend test with coverage
+(SPMP §5.1.3). No secrets are used; CI runs mock adapters only.
 
 ## Deployment — data at rest (NFR-12, NFR-13; ST-05/ST-06)
 

@@ -1,0 +1,32 @@
+/* client/src/ui/Spinner.module.css — U5-UI-KIT (NFR-07). Colours are tokens only; the track
+ * uses the decorative subtle border, the moving segment the primary colour — the SPOKEN
+ * loading state comes from the role="status" text alternative, never from colour or motion.
+ * Motion: duration is the motion token (zeroed under prefers-reduced-motion in tokens.css)
+ * AND the animation is disabled outright under reduced motion here, so respect for the
+ * preference never depends on token adoption alone (WCAG 2.3.3). */
+.spinner {
+  display: inline-flex;
+  align-items: center;
+}
+
+.circle {
+  display: inline-block;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 50%;
+  border: 3px solid var(--hp-color-border-subtle);
+  border-top-color: var(--hp-color-primary);
+  animation: spin var(--hp-motion-duration-spin, 0.9s) linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .circle {
+    animation: none;
+  }
+}

@@ -1,14 +1,18 @@
-# Homeplate v1.0 — Verification Report (waves 0–4)
+# Homeplate v1.0 — Verification Report (waves 0–5)
 
 **Prepared for:** Critical Design Review, 2026-08-22 · MSCS 2101, Group 6
 **Requirements baseline:** SRS v3.2 (frozen). Where the SPMP or an ADR contradicts it on a
 requirement, the SRS wins (SPMP §1.1.2). Where the SRS leaves a mechanism open (§2.4), ADR-001…011
 bind.
-**Scope of this report:** waves 0–4. Wave 4 (reviews, messaging, moderation, privacy, the FR-07
-safety finish) received its **first** verification in this run — eight independent lanes re-executed
-every acceptance clause; nothing below rests on the implementers' word. Waves 5–7 (the React
-client, the live NFR-10 measurement) are **not built**, and this report never reports an unbuilt
-requirement as a pass.
+**Scope of this report:** waves 0–5. Waves 0–4 (the complete backend) were verified in the wave-4
+round — eight independent lanes re-executed every acceptance clause — then committed (`2312e73`),
+pushed, and confirmed CI-green at `0270a01`; every backend suite cited in §3 was additionally
+**re-executed green on the wave-5 tree** in this round's full-suite run. Wave 5 added the client
+FOUNDATION only (SRS §2.1.2 — a responsive React **web** app, not React Native; WA-9): shell and
+routing, typed-error API client, session handling and a WCAG-2.1-AA-by-construction UI kit under
+`client/`, verified in §3.5. The wave-6 feature screens, the wave-7 accessibility audit and UT-01
+study, and the live NFR-10 measurement are **not built / not run**, and this report never reports
+an unbuilt requirement as a pass.
 
 ---
 
@@ -16,37 +20,45 @@ requirement as a pass.
 
 | Field | Value |
 |---|---|
-| Report date | 2026-08-21 |
-| Commit (`git rev-parse --short HEAD`) | **`cca6787`** ("Build wave 4 — UNVERIFIED CHECKPOINT") |
-| Working tree | **Contains the wave-4 verification repairs, UNCOMMITTED.** The repair round (units U-V4R-SAFETY-QUEUE, U-V4R-REVIEW-AUTHORSHIP, U-V4R-FINDINGS) sits on top of `cca6787` in the working tree: 21 modified files + 3 new files (`tests/adr-conformance/adr-wave4-invariants.test.js`, `tests/coverage/server-shutdown.test.js`, `docs/results/lt01-k6-summary-wave4.json`). The human team commits (house rule f). |
-| Previous verified baseline | `eebd638` (waves 0–3: 23 met / 5 partial / 7 not implemented, pushed to `origin/main`) |
-| CI state | **CI has NOT executed wave 4.** `origin/main` is at the wave-3 close-out. CI green on wave 4 requires the human team to commit and push this tree first. |
-| Test framework | Jest 29 + Supertest against PostgreSQL 16, Redis 7 and MinIO (docker compose), `maxWorkers: 1`, `TEST_STRICT_HANDLES=1` |
+| Report date | 2026-08-26 |
+| Commit (`git rev-parse --short HEAD`) | **`0270a01`** (wave-4 close-out + workflow spec — pushed, CI green, clean-tree wave-5 baseline) |
+| Working tree | **Contains the wave-5 client foundation and its verification round, UNCOMMITTED** on top of `0270a01`: new `client/` (its own npm package with its own lockfile), `scripts/a11y-audit.js`, `tests/adr-conformance/adr-wave5-client-invariants.test.js`, plus 9 modified files (`.eslintrc.json` client lint overrides, `.github/workflows/ci.yml` client gates, root `package.json`/`package-lock.json` a11y-harness pins, `tests/coverage/coverage-lane.test.js`, README and docs). **No backend production file (`src/`, `db/`) changed in wave 5.** The human team commits (house rule f). |
+| Previous verified baseline | `2312e73` (waves 0–4: 32 met / 2 partial / 1 not implemented, pushed to `origin/main`) |
+| CI state | **Green at `0270a01`** (the waves-0–4 gates). CI has NOT executed wave 5: the client and its gates are uncommitted. The updated workflow adds `npm --prefix client ci`, the client Vite build and the client vitest suite as separate cold-runner steps. |
+| Test framework | Backend: Jest 29 + Supertest against PostgreSQL 16, Redis 7 and MinIO (docker compose), `maxWorkers: 1`, `TEST_STRICT_HANDLES=1`. Client: Vitest 2 + Testing Library (jsdom) in the separate `client/` package. |
 
 ### Commands run for this report, and their real output
 
-These were executed by the report author on the final (repaired) tree, on an isolated lane
-(`TEST_DATABASE_URL=…/homeplate_finalrpt4_test`, derived Redis db 8, derived MinIO bucket).
-Complete output was captured to files and inspected in full — never piped to `tail` first.
+The wave-5 gate ladder, executed by the report author on the final wave-5 tree — and then
+**independently re-executed in full on 2026-08-26** before this revision was finalized (same
+results; the table shows the final re-run's output). Complete output was captured to files and
+inspected in full — never piped to `tail` first.
 
 | Command | Result |
 |---|---|
-| `TEST_STRICT_HANDLES=1 npx jest` (full suite, run **A**) | `Test Suites: 62 passed, 62 total` · `Tests: 1386 passed, 1386 total` · `Time: 93.714 s` · exit **0** · zero `✕`/`FAIL` lines |
-| `TEST_STRICT_HANDLES=1 npx jest` (full suite, run **B**, back to back, same lane) | `Test Suites: 62 passed, 62 total` · `Tests: 1386 passed, 1386 total` · `Time: 93.737 s` · exit **0** · zero `✕`/`FAIL` lines (see §6 for the determinism record) |
-| `npm run lint` (`eslint . && prettier --check .`) | exit **0** · `All matched files use Prettier code style!` |
-| `npm run build` (`scripts/check-build.js`) | exit **0** · `6 file(s), naming and ordering valid` (migrations) · `111 file(s) parse cleanly` · `createApp() boots against the .env.example environment` · `all checks passed` |
-| `k6 run … tests/load/smoke.js` (recorded artifact, `docs/results/lt01-k6-summary-wave4.json`) | k6 **v2.2.0**, 200 VUs, 30 s warm-up + 5 min steady against real TLS: **steady p(95) 123.26 ms**, p(99) 159.88 ms, error rate **0.00 %** over 1,131,196 steady requests |
-| `npm run test:a11y` | exit **1 by design** — there is still no client to audit (NFR-07) |
+| `TEST_STRICT_HANDLES=1 npm test` (full backend suite) | `Test Suites: 63 passed, 63 total` · `Tests: 1397 passed, 1397 total` · `Time: 98.114 s` · exit **0** · zero `✕`/`FAIL` lines |
+| `npm --prefix client test` (vitest run) | `Test Files 17 passed (17)` · `Tests 218 passed (218)` · `Duration 1.81 s` · exit **0** |
+| `npm run lint` (`eslint . && prettier --check .`) | exit **0** · `All matched files use Prettier code style!` — client sources are **linted**, not ignored (dedicated `.eslintrc.json` override: browser env, ESM, JSX, `react`/`react-hooks`/`jsx-a11y` plugins) |
+| `npm run build` (`scripts/check-build.js`) | exit **0** · `6 file(s), naming and ordering valid` (migrations) · `112 file(s) parse cleanly` · `createApp() boots against the .env.example environment` · `all checks passed` |
+| `npm --prefix client run build` (Vite 5) | exit **0** · `dist/` built (index.html 0.49 kB · css 4.84 kB · js 220.23 kB, gzip 71.82 kB) |
+| `npm run test:a11y` (`scripts/a11y-audit.js` — now a **real** harness) | exit **1 by design**: axe-core (wcag2a + wcag2aa) audited the two routes that exist — `/` and the 404 catch-all — with **0 serious/critical violations**, and the keyboard checks passed (first Tab lands on the skip link; activating it focuses `#main`); the gate then fails honestly because **0 of the 7 NFR-07 interfaces exist** (they are wave 6) |
+| `k6 run … tests/load/smoke.js` (recorded wave-4 artifact, `docs/results/lt01-k6-summary-wave4.json`, unchanged this round) | k6 **v2.2.0**, 200 VUs, 30 s warm-up + 5 min steady against real TLS: **steady p(95) 123.26 ms**, p(99) 159.88 ms, error rate **0.00 %** over 1,131,196 steady requests |
 
-The suite grew from **60 suites / 1345 tests** at the `cca6787` baseline (coordinator-measured,
-three consecutive strict runs) to **62 / 1386** with the repair round's added conformance and
-shutdown tests. No run hung; `--forceExit` was never used.
+**The canonical backend-suite contract is now 63 suites / 1397 tests, exit 0 under
+`TEST_STRICT_HANDLES=1`.** This supersedes the wave-4 statement of 62 / 1386: the wave-5
+verification round added `tests/adr-conformance/adr-wave5-client-invariants.test.js` (9 tests) and
+grew `tests/coverage/coverage-lane.test.js` to 50 tests. No gate, CI assertion or future report may
+pin 62 / 1386 any longer — re-running that frozen count against this tree would report a false
+regression (finding ADRC-W5-01). All 1,386 wave-0–4 tests re-ran green inside the 1,397; no backend
+production file changed in wave 5. The client suite (17 files / 218 tests) is a deliberately
+**separate** contract in the `client/` package: the backend Jest roots (`tests/`) cannot see it,
+and the root `npm test` still means exactly the backend suite. No run hung; `--forceExit` was never
+used.
 
-Additionally, the eight verification lanes each ran their own lane suites and one or two full-suite
-passes on fully isolated resources (own `_test` database, own Redis db, own bucket); their per-lane
-results are cited as evidence throughout §3 and were spot-checked — every cited test file exists on
-disk (verified by an executed existence sweep over all 39 cited paths), and the lane files all
-appear in runs A/B above with the same counts.
+The wave-4 round's evidence base is unchanged and remains on record: its eight verification lanes
+each ran on fully isolated resources (own `_test` database, own Redis db, own bucket), every cited
+test file exists on disk (executed existence sweep over all 39 cited paths), and every one of those
+lane files appears in this round's 63/1397 run with its wave-4 assertions passing.
 
 ### Status vocabulary used in this report
 
@@ -87,8 +99,10 @@ was caught only because verifiers executed the clause itself ("does an alert act
 Design elements are quoted from **SRS Appendix B**. Test IDs are the SRS §4 identifiers; the "Test
 file" column names the canonical file that actually executes them in this repository (the wave-3
 `*-reverify`/`verify-*` probe files named in the previous report were consolidated into these
-canonical lane files on 2026-08-21). Every evidence sentence below describes an **executed** test
-in runs A/B or a lane run on this tree, not a code reading.
+canonical lane files on 2026-08-21). Every evidence sentence below describes an **executed** test,
+not a code reading: the wave-0–4 rows were established by the wave-4 round's lanes and its runs
+A/B (62 suites / 1386 tests on that tree), and every cited backend suite re-ran green inside this
+round's 63 / 1397 full-suite run on the wave-5 tree.
 
 ### 3.1 Functional requirements
 
@@ -119,7 +133,7 @@ in runs A/B or a lane run on this tree, not a code reading.
 | **NFR-04** | Authentication Service | `src/modules/auth/passwords.js` | ST-02 | `tests/st-security/st-security.test.js` | **Met** | Argon2id (memoryCost 19456 KiB, timeCost 2 — OWASP floor); plaintext in no column; per-user salt; no logger/serializer emits a raw password field (repo-wide grep test). |
 | **NFR-05** | Authentication Service (rate limiting) | `src/modules/auth/rateLimit.js`, `src/config/` | ST-03 | `tests/st-security/st-security.test.js` | **Met** | Exact 5-failures-in-600 s boundary executed — numbers in §7. |
 | **NFR-06** | Eligibility Policy, Email Verification | `src/modules/eligibility/policy.js`, `src/modules/auth/service.js` | IT-02 | `tests/it-adapters/it02-verification-eligibility.test.js` | **Met** | register → outbox → worker → transport → delivered body URL → `email_verified` flips → eligibility recomputed; outage leaves the job queued, delivery completes on recovery. |
-| **NFR-07** | Web UI (React) | *(none — `client/` does not exist)* | UT-01 | *(none — `npm run test:a11y` fails by design)* | **Not implemented** | `ls client` → no such directory; zero `.jsx/.tsx` outside `node_modules`; `npm run test:a11y` exits 1 **by design** so its presence is never read as coverage. Waves 5–6. Unchanged. |
+| **NFR-07** | Web UI (React) | `client/` (own npm package): `src/{main,App,routes}.jsx`, `src/layout/**`, `src/api/**`, `src/session/**`, `src/ui/**`, `src/styles/**` | UT-01 | client vitest suite (17 files / 218 tests, §3.5) + `npm run test:a11y` (real axe-core harness, exit 1 by design) | **Partial** (was Not implemented) | **Foundation built and statically verified; the audit and the UT-01 study remain outstanding (wave 7).** The wave-5 groundwork is executed, not promised: semantic landmarks + working skip link in the layout; programmatically labelled form controls (label/hint/error via `aria-describedby`, `aria-invalid`); focus management (dialog focus trap with restore-to-opener, error summary takes focus and links to the offending control); alt enforcement on every image (dev-mode throw, production safe-degrade); a dual-channel `aria-live` announcer (polite `status` + assertive `alert`, re-announce-safe); measured contrast tokens (≥ 4.5:1 body, ≥ 3:1 large/UI/focus — asserted pair-by-pair in `ui/kit-contract.test.js`) and visible-focus tokens — all component-tested in the 218 vitest tests and linted by `jsx-a11y`. The harness is **real**: axe-core audited the two existing routes (`/`, 404 catch-all) with 0 serious/critical wcag2a+aa violations and the keyboard checks pass — then exits 1 honestly because 0 of the 7 NFR-07 interfaces exist (wave 6). **NFR-07 stays open**: the seven-interface audit and the recorded 5-participant UT-01 study are wave-7 activities; no violation-free audit of the actual interfaces and no study result exist. |
 | **NFR-08** | Logging & Monitoring Service | `src/lib/logger.js`, `src/middleware/{requestContext,errorHandler}.js`, audit sites across `src/modules/*` and `src/outbox/handlers/*` | MT-01 | `tests/mt-ut-quality/mt01-log-completeness.test.js`, `mt01-wave3-booking-audit.test.js` | **Met** (was Partial) | All four named actions now audit-verified by execution: registration, booking create, cancellation, and — newly performable in wave 4 — the **human moderation decision** (one `moderation.decision` record with decider/entity/decision id; `moderation_decisions` row `decided_by='human'`; queue item resolved; non-moderator attempt 403 with failure record). Correlation IDs proven on both sides of every wave-0–4 outbox handler incl. `moderationScan`/`dataExport`; error records structured with stack server-side only; two full captured log corpora show **zero** PII (no email-shaped bytes, no §3.4 field, no message/review content, no street address). Wave-4 events `review.created`, `message.sent`, `privacy.export_requested/_completed`, `privacy.deletion_requested`, `safety.alert_raised/_delivered` all executed. |
 | **NFR-09** | External Service Adapters, Deferred-Work Mechanism | `src/lib/resilience.js`, `src/adapters/*`, `src/outbox/worker.js` | RT-01, RT-02 | `tests/rt-lt-resilience/rt01-degradation.test.js`, `rt01-provider-outage-drill.test.js`, `rt02-outbox.test.js` | **Met** (mechanisms) | Ten per-service outage drills incl. the **new drill 10** on wave-4 surfaces: under LLM outage a review stays pending and invisible while the message still delivers; recovery completes the *same* jobs. Crash-recovery/exactly-once/backoff/dead-letter/concurrent-workers all executed; operator recovery via `scripts/requeue-dead-letters.js` proven end to end. The 99 % availability *figure* needs a deployment (§5). |
 | **NFR-10** | Moderation accuracy (FP and FN < 5 %) | pipeline: FR-08 files; eval set `tests/fixtures/moderation-eval/v1/`; harness `scripts/it03-eval.js` | IT-03 | `tests/it-adapters/it03-moderation-eval.test.js` (mechanics only) | **Partial — NOT MEASURED** | **No number exists and none is quoted, provisional or otherwise.** Change since the last report: the pipeline and scoring harness now exist and are exercised (mock-scored runs are labelled NOT-A-MEASUREMENT and carry no rate fields — asserted key-by-key), and the ADR-008 **label** sign-off is recorded (Gaetan Rieben, 2026-08-21, set v1, 224 items: 56 offensive / 56 spam / 56 fraudulent / 56 benign, balanced, ≥200). Still missing for any claim: the live IT-03 run (wave 7) with model id + prompt version recorded and a `RESULTS.md` with both rates < 0.05. No `RESULTS.md` exists anywhere in the tree (executed `find`), and no live provider call was made in this run — ADR-007/ADR-011 pin the mock under `NODE_ENV=test`, re-verified by executed tripwires. `claimability()===true` means **preconditions only**. |
@@ -136,7 +150,7 @@ in runs A/B or a lane run on this tree, not a code reading.
 | **AB-03** Spam / scripted listings | Listing Service (MEHKO), Moderation Module, Input Validation, rate limiting | `src/modules/moderation/prefilter.js`, `src/modules/listings/mehko.js`, `db/migrations/0002` | TC-08, TC-11, ST-04 | `tests/tc-booking/tc08-moderation-substrate.test.js`, `tests/st-security/st-security-wave3.test.js` | **Met** (was Partial) | Executed: 16th listing by one author in the 60-min window → escalated with `{decided_by:'pre_filter', category:'spam'}`, queue reason `rate_limited`, stays pending (never auto-rejected), zero LLM calls; link-farm and bulk-promo blocklist rules fire; 10 same-day creations → exactly 1 persisted + 9×409 (DB unique index). |
 | **AB-04** Abusive content in chat or reviews | Moderation Module, Safety Alert Service, Logging | `src/modules/moderation/*`, `src/modules/messaging/repo.js`, `src/modules/safety/*` | TC-05, TC-06, TC-08, IT-04 | `tests/st-security/st-security.test.js`, `tests/tc-core/tc06-messaging.test.js`, `tests/tc-booking/tc08-moderation-substrate.test.js` | **Met** (was Not implemented) | Abusive review born pending → flagged → human-rejected → never publicly visible; abusive message delivered immediately (ADR-002) then blocklist-auto-rejected or human-rejected and hidden from **both** participants; `MODERATION_DECISION` rows logged for both surfaces; moderator escalation `POST /api/moderation/alerts` follows the full FR-07 delivery path (IT-04) and — post-repair — the alert also appears on the unified moderation queue (W4-F1). Flag-vs-hide policy ratified as W4-F4. |
 | **AB-05** Account takeover | Authentication Service, Network Security Layer | `src/modules/auth/{passwords,rateLimit,sessions}.js`, `src/server.js` | ST-01..03 | `tests/st-security/st-security.test.js` | **Met** | 50-attempt brute force locked from attempt 6 (correct password refused throughout); opaque ≥128-bit HttpOnly+Secure+SameSite session; logout kills the Redis session; deletion kills the session immediately (wave-4 MT-01 check). |
-| **AB-06** Injection attacks (SQLi / XSS) | Input Validation Module | `src/middleware/validate.js`, `src/schemas/*`, `.github/zap/baseline-plan.yaml` | ST-04 | `tests/st-security/st-security.test.js` | **Partial** | Every executable clause is met — hostile payloads at **every** API boundary incl. all wave-4 surfaces: typed 422, no 500, tables intact, stored/returned text escaped, no concatenated SQL, all routes schema'd. The one open sub-clause is environmental: the OWASP ZAP baseline over a **rendered client** cannot run until waves 5–6 deliver one (the scan machinery exists and fails a thin crawl by design). |
+| **AB-06** Injection attacks (SQLi / XSS) | Input Validation Module | `src/middleware/validate.js`, `src/schemas/*`, `.github/zap/baseline-plan.yaml` | ST-04 | `tests/st-security/st-security.test.js` | **Partial** | Every executable clause is met — hostile payloads at **every** API boundary incl. all wave-4 surfaces: typed 422, no 500, tables intact, stored/returned text escaped, no concatenated SQL, all routes schema'd. The one open sub-clause is environmental and pre-existing: the OWASP ZAP baseline over a **rendered client** is still unrun — no ZAP result exists, and it is untestable inside the Jest lane (it needs the external ZAP tool, a running HTTPS app and network). Wave 5 **unblocks** it without closing it: `/` and the 404 route now render, so the plan's spider job (`.github/zap/baseline-plan.yaml`, kept for exactly this moment) finally has pages to walk on top of the requestor floor — but a crawl over two chrome-only shell routes would prove little. Run `npm run scan:zap` once wave 6 delivers the real screens, confirm the crawled-URL count rises above the requestor floor and no high-risk alerts appear, and record the result (finding STSEC-01); until then the report gate keeps refusing a thin crawl by design, so no vacuous pass can be recorded. |
 | **AB-07** MEHKO evasion via duplicate accounts | Registration/Email Verification, Listing Service, Logging | `src/modules/auth/service.js`, `src/modules/listings/mehko.js` | TC-10, TC-11, MT-01 | `tests/st-security/st-security.test.js`, `st-security-wave3.test.js` | **Met** | Duplicate email 409 (unique constraint, audited); unverified host with profile+agreement still 403; daily cap server-side in one place backed by the DB unique index. |
 | **AB-08** Scraping of personal data | Session auth, Eligibility Policy, data minimization | `src/modules/auth/middleware.js`, `src/modules/{listings,hosts}/serializers.js`, `src/modules/listings/access.js` | ST-06, ST-04 | `tests/st-security/st-security-wave3.test.js` | **Met** | Every endpoint 401 unauthenticated; search/host/listing payloads exactly the public allowlists; exact address only to a pending guest, reverting on cancel; export owner-only; wave-4 additions: moderation queue excerpts leak no street/coordinate/email (deep JSON scan), message payload is the exact allowlist. |
 
@@ -145,14 +159,57 @@ in runs A/B or a lane run on this tree, not a code reading.
 | Status | FR | NFR | AB | Total |
 |---|---|---|---|---|
 | **Met** | **14** | 11 | 7 | **32 / 35** |
-| **Partial** | 0 | 1 (NFR-10 — pipeline built, accuracy **not measured**) | 1 (AB-06 — ZAP-over-client clause only) | **2 / 35** |
-| **Not implemented** | 0 | 1 (NFR-07 — no client) | 0 | **1 / 35** |
+| **Partial** | 0 | 2 (NFR-10 — pipeline built, accuracy **not measured**; NFR-07 — foundation built, audit + UT-01 study outstanding) | 1 (AB-06 — ZAP-over-client clause only) | **3 / 35** |
+| **Not implemented** | 0 | 0 | 0 | **0 / 35** |
 
-Movement since the `eebd638` waves-0–3 baseline (23 / 5 / 7): FR-05, FR-06, FR-08, NFR-12, NFR-13
-and AB-04 moved from *not implemented* to **Met**; NFR-08, NFR-11, AB-01 and AB-03 closed their
-previously-unperformable clauses and moved from *Partial* to **Met**; NFR-10 moved from *not
-implemented* to *Partial* (the pipeline now exists; the measurement still does not). NFR-07 and
-AB-06's client clause are unchanged, waiting on waves 5–6.
+Movement since the `2312e73` waves-0–4 baseline (32 / 2 / 1): **NFR-07 moved from *not
+implemented* to *Partial*** — the wave-5 client foundation exists, is executed by 218 vitest tests
+and audits clean on its two rendered routes, but the seven NFR-07 interfaces (wave 6), the full
+axe audit and the 5-participant UT-01 study (wave 7) remain outstanding, so it is **not** moved to
+Met. No other row changed status; AB-06's client-crawl clause is unblocked by wave 5 but stays
+open until a recorded post-wave-6 ZAP run. Movement history for waves 0–4 is preserved in the
+`2312e73` report revision.
+
+### 3.5 Wave-5 client foundation (SRS §2.1.2) — first verification, this round
+
+Wave 5 carries no requirement row of its own — it is the foundation NFR-07 and the wave-6 screens
+stand on — so its verification is recorded here. All of the following was **executed** in the gate
+ladder of §1 (218 client tests, the 9-test ADR-conformance suite inside the backend run, the axe
+harness), not read from source:
+
+- **SRS §2.1.2 — responsive React WEB app, not React Native (WA-9):** `client/` is a Vite 5 +
+  React 18 + react-router 6 **web** package (jsdom-tested, browser-linted); it ships as its own
+  npm package so the root backend contracts are untouched.
+- **Shell and routing:** `/` renders the landmark shell and the skip link works end to end (axe
+  keyboard check); unknown paths render the 404 catch-all; feature routes glob-mount from
+  `client/src/features/*/routes.jsx`, so wave 6 adds screens without editing shared shell files
+  (`routes.test.jsx`).
+- **API client:** typed error envelopes surface the stable **code** (`NOT_ELIGIBLE` with reason
+  codes, `MEHKO_DAILY_LISTING_LIMIT`, `NO_CAPACITY`, `SEARCH_DEGRADED`, …), never a stringified
+  body, so wave-6 screens can render a real message per code and announce it via the aria-live
+  channel; NFR-09 degraded search — 200 + `degraded: true` **and** typed 503 `SEARCH_DEGRADED` —
+  is modelled as a first-class result state, not an exception; the endpoint map mirrors the real
+  mounted surface of `src/routes/index.js`, none invented (`http.test.js`, `search.test.js`,
+  `endpoints.test.js`).
+- **Session (ADR-006):** authentication state is inferred from API responses (401 handling) with
+  credentials sent on every request; the opaque HttpOnly cookie is never read — no client file
+  touches `document.cookie` (`SessionProvider.test.jsx` plus the executed conformance grep).
+- **UI kit, WCAG-2.1-AA by construction:** the NFR-07 row above itemizes the shipped and tested
+  accessibility machinery (landmarks, labels, focus management, alt enforcement, announcer,
+  measured contrast and focus tokens).
+- **ADR conformance (`tests/adr-conformance/adr-wave5-client-invariants.test.js`, 9 tests, runs
+  inside the backend suite):** no `document.cookie` read anywhere under `client/src` (ADR-006); no
+  TLS-verification bypass in client config, client source or the a11y harness, and the Vite dev
+  proxy verifies the self-signed dev certificate via an explicit CA — never `secure: false`
+  (NFR-03); `client/src/api/types.js` documents **exactly** the backend PUBLIC wire shape —
+  coarse coordinates + area label, every precise-address key absent — and no non-test client
+  module dereferences a privileged address key unconditionally (ADR-010/NFR-13); no provider,
+  model id or key literal under `client/` (ADR-007); no import under `client/src` resolves into
+  the server tree, adapters included — the client talks HTTP only (ADR-001).
+
+**Deliberately not claimed:** no wave-6 screen exists (the harness proves 0/7 interfaces); NFR-07
+remains open (§3.2); no ZAP run over the rendered client was recorded (§3.3 AB-06); no UT-01
+study occurred.
 
 ---
 
@@ -200,7 +257,7 @@ a green suite alone was never accepted as closure (§2).
 - **Severity:** minor (process), potentially masking something worse — which is why it stays open.
 - **History:** one implementer full-suite run in seven failed one test whose identity was lost to output truncation at `cca6787`. Verification chased it under a standing rule: capture COMPLETE output on every run, never truncate before reading.
 - **What this run captured:** across ~14 full-suite runs by 8 lanes plus the coordinator and this report (all with complete logs), **three** failures were observed, all with identity preserved: (1) `rt01-degradation` drill 10 `TypeError … reading 'map'` — the failing file was a sibling verifier's **mid-edit working-tree file** (mtime postdates the run's output; current version passes 26/26 scoped); (2) `adr-wave4-invariants` "benign review publishes ONLY after the worker approves" got 404 from a host-reviews read, and (3) `rt01` drill 10 again with a fixture check-constraint violation — (2) and (3) occurred in one run of the mt-ut lane while both files were being concurrently edited by their owning lanes, and neither reproduced running the suites alone, as a pair, or in a predecessor chain. All three are therefore attributable to verification-time concurrent editing, **not** to the committed tree — but the *original* baseline failure was never identified, so this cannot be declared the same defect.
-- **State on the final tree:** runs A and B of this report (62/1386, strict handles) plus the lanes' final runs are consecutive green. Static sweeps found no remaining fixed-budget or unscoped outbox drains (house rule b; the last two were re-scoped in W4-F1's repair).
+- **State on the final tree:** runs A and B of the wave-4 round (62/1386 on that tree), the lanes' final runs, the CI cold-runner run at `0270a01`, and this round's wave-5 full-suite run (63/1397, strict handles) are consecutive green. The committed-tree evidence streak has begun (wave 4 is committed, pushed and CI-green). Static sweeps found no remaining fixed-budget or unscoped outbox drains (house rule b; the last two were re-scoped in W4-F1's repair).
 - **What keeps it open / next step:** the team should keep capturing complete output on every CI and local full-suite run; if any failure appears, its identity is now guaranteed to be preserved. Close after a sustained streak on the **committed** tree (CI, cold runners) — see §9.
 
 ### W4-F7 — CLOSED by judgment (non-blocking recommendation recorded): pre-filter knobs live as frozen module constants, not in `src/config`
@@ -208,10 +265,32 @@ a green suite alone was never accepted as closure (§2).
 - **Severity:** advisory. (Flagged item 5, judged independently by five lanes with the same verdict.)
 - **Judgment: acceptable as shipped.** `src/modules/moderation/prefilter.js` `RATE_LIMIT`/`BLOCKLIST` are `Object.freeze`'d, documented with the rationale (the shared `src/config/schema.js` was owned by no wave-4 unit — a real parallel-edit hazard at build time), and exported for tests, which pin `{windowMinutes: 60, maxSubmissionsPerWindow: 15}` so a silent change fails a test. They are **not** ADR-009 caps — those verifiably live only in `src/config/locale.js` (the executable capScan passed; `90` is also max latitude and is handled). No ADR binds non-cap tunables to `src/config`. **Recommendation (non-blocking):** migrate them into `src/config` in a wave that owns `schema.js`, for operator consistency.
 
+### Wave-5 verification findings (all minor) — disposition
+
+The wave-5 verification lanes raised five findings of their own; none blocks the wave. Their
+state on this tree, re-checked at report time:
+
+- **STSEC-01 — OPEN.** The AB-06 ZAP-over-rendered-client clause is still unrun (see the AB-06
+  row and §5). Wave 5 unblocked it; a meaningful run waits for wave 6's screens.
+- **MTUT-W5-01 — CLOSED (repaired).** `client/src/App.css` carried hand-derived contrast
+  annotations that drifted from the true WCAG values (documented 14.6:1 / 6.8:1 vs computed
+  14.76:1 / 6.67:1) on colour literals outside the machine-checked gate. Re-verified on this
+  tree: App.css now uses **only** `var(--hp-color-*)` tokens (zero hex literals — executed grep)
+  and its header defers to the `tokens.css` table that `ui/kit-contract.test.js` recomputes on
+  every run, so the file can no longer drift silently.
+- **ADRC-W5-01 / COV-W5-02 — CLOSED (re-baselined by this report).** The frozen "62 suites /
+  1386 tests" backend contract statement was stale once the verification lanes added canonical
+  tests. This report restates the canonical contract as **63 suites / 1397 tests** (§1) — the
+  same re-baselining every prior verification wave performed (1345 → 1386 at wave 4). No lane
+  test file was deleted to preserve an old number.
+- **COV-W5-01 — CLOSED (this document).** `docs/verification-report.md` previously covered
+  waves 0–4 only and stated "client/ does not exist"; this revision covers waves 0–5 with the
+  NFR-07 row rewritten to Partial and kept open.
+
 ### Carried-forward open findings from waves 0–3
 
 - **F-04 → NFR-10 not measured** — still true; see the NFR-10 row and §7. The *pipeline* half is now closed; the *measurement* half is wave 7.
-- **F-05 → NFR-07 has no subject** — still true; there is no client and the UT-01 study is unschedulable until waves 5–6 (§5). The a11y harness still fails by design so absence is never mistaken for coverage.
+- **F-05 → NFR-07 has no subject** — partially closed by wave 5: the client foundation now exists and audits clean on its two rendered routes (§3.5), so the audit has a subject. The seven NFR-07 interfaces are wave 6 and the audit + UT-01 study are wave 7, so NFR-07 stays open. The a11y harness is now a **real** axe-core audit that still exits 1 by design below 7/7 interfaces, so partial coverage is never mistaken for closure.
 - **TCC-03 (FR-01 acceptance correction)** — recorded, awaiting team ratification at CDR.
 - F-01 (drain determinism), F-02 (AB 1325 weekly cap), F-03 (NFR-12/13 absent), F-06 (ADR-007 data-use review), F-07 (backup expiry unexecutable), F-08 (soft-deleted host decision), F-09 (CI) were closed in previous rounds and stay closed; F-03's subject is now built and verified (NFR-12/NFR-13 rows), and F-07's executable half (prune logic) is now covered in-process (W4-F5).
 
@@ -223,23 +302,24 @@ Not failures — checks whose evidence this repository cannot produce, with what
 
 | Check | Why it cannot be verified here | What the team must do |
 |---|---|---|
-| **UT-01 — 5-participant moderated usability study** (SRS §4.5) | A human activity; and there is still no interface to test. | Declared missed at CDR, on the record (team decision 2026-08-18). Protocol ready in `docs/ut01-usability-study-plan.md`; name participants and date at the CDR stand-up; run when wave 6 ships the interfaces; a human fills in its §6 record block. |
-| **NFR-07 — axe-core WCAG 2.1 AA audit** | No rendered interface, no browser toolchain. | Pin the harness in wave 5, audit all seven named interfaces. Until then no violation count exists and none should be quoted. |
+| **UT-01 — 5-participant moderated usability study** (SRS §4.5) | A human activity; and the wave-5 shell renders no task interface to test until wave 6. | Declared missed at CDR, on the record (team decision 2026-08-18). Protocol ready in `docs/ut01-usability-study-plan.md`; name participants and date at the CDR stand-up; run when wave 6 ships the interfaces; a human fills in its §6 record block. |
+| **NFR-07 — axe-core WCAG 2.1 AA audit of the seven interfaces** | The harness is now pinned and real (`@axe-core/playwright` + lockfile-pinned chromium, wave 5) and audits what exists — but the seven NFR-07 interfaces do not exist until wave 6. | Wave 7: run `npm run test:a11y` at 7/7 interfaces and record the result. The only violation counts that exist today are the wave-5 shell routes (`/`, 404: 0 serious/critical) — groundwork evidence, never quotable as the NFR-07 audit. |
 | **NFR-10 — live FP/FN measurement** | ADR-007/ADR-011 forbid the automated suite from calling a live provider (`NODE_ENV=test` force-pins the mock — re-verified by executed tripwires); the measurement is a deliberate, human-initiated wave-7 run. | Run `scripts/it03-eval.js` **once, live**, off-suite: record the model id and `PROMPT_VERSION`, write `RESULTS.md` with both rates and the set version, claim a pass only if both < 0.05. The label sign-off (2026-08-21) already satisfies ADR-008's human-label gate. |
 | **NFR-09 — "99 % availability during the demo period"** | A deployment measurement over calendar time. | Record uptime during the demo window. The ten RT-01 drills are the *design* evidence, not the figure. |
 | **NFR-12 — a real 30-day wall-clock erasure + backup expiry against a real backup target** | A 30-day window cannot elapse inside a test run; backup expiry needs a deployment's backup store. | The scheduling arithmetic, the due-instant execution and the prune logic are all proven by clock injection (§7); operationally, confirm the lifecycle cron (`scripts/backup.js`) is scheduled on the deployment and spot-check one real expiry. |
 | **ST-01 — external TLS/certificate scan** | Protocol enforcement is fully executed here against a real `https.Server` with the dev certificate; certificate *validity* (chain, CA, expiry, hostname) needs a deployed host. | Run `testssl.sh`/SSL Labs against the deployed host once a real certificate is issued. |
-| **AB-06 — ZAP crawl over the rendered client** | No HTML/client bundle exists; the scan harness itself fails a thin crawl by design so it cannot produce a vacuous pass. | Re-run `npm run scan:zap` after waves 5–6; confirm the URL count rises accordingly. |
-| **CI on wave 4** | The wave-4 tree (and this run's repairs) are uncommitted; CI runs `origin/main`. | Human team commits and pushes, then confirms the cold-runner run is green (62 suites / 1386 tests expected). |
+| **AB-06 — ZAP crawl over the rendered client** | Needs the external ZAP tool, a running HTTPS app and network — outside the Jest lane. Wave 5 unblocked the crawl (`/` and 404 render) but two chrome-only shell routes are not worth recording; the report gate refuses a thin crawl by design so no vacuous pass is possible. | Re-run `npm run scan:zap` after wave 6 ships the real screens; confirm the crawled-URL count rises above the requestor floor and no high-risk alerts appear; record the result with date and commit SHA (STSEC-01). |
+| **CI on wave 5** | The wave-5 tree is uncommitted; CI runs `origin/main` (green at `0270a01`, the waves-0–4 gates). | Human team commits and pushes, then confirms the cold-runner run is green: backend **63 suites / 1397 tests**, client **17 files / 218 tests**, both builds and lint. |
 
 ---
 
 ## 6. Suite determinism and process hygiene — measured, not asserted
 
 - **Strict-handles discipline:** every run cited in this report ran under `TEST_STRICT_HANDLES=1`
-  with `maxWorkers: 1`; runs A and B exited 0 with no open-handle warning and no `--forceExit`.
-  Every suite closes what it opened in `afterAll` inside a `finally`, pairing `closeDb()` with
-  `closeTestRedis()`; the globalTeardown 150 ms settle window is untouched.
+  with `maxWorkers: 1`; the wave-4 runs A and B and this round's wave-5 full-suite run (63/1397)
+  exited 0 with no open-handle warning and no `--forceExit`. Every suite closes what it opened in
+  `afterAll` inside a `finally`, pairing `closeDb()` with `closeTestRedis()`; the globalTeardown
+  150 ms settle window is untouched.
 - **Drain hygiene (house rule b / finding F-01):** a static sweep this run found every remaining
   `pollOnce` caller either scoped via `tests/helpers/outboxScope.js` (`pollOnlyThese` /
   `withOnlyTheseDue`) or using a deliberate drain-until-`claimed===0` loop with a runaway guard.
@@ -258,7 +338,8 @@ Not failures — checks whose evidence this repository cannot produce, with what
 - **Intermittent watch:** see finding W4-F6. All full-suite failures observed during this
   verification have preserved identities and are attributable to concurrent lane editing; none
   reproduced on the final tree.
-- **Coverage (lane-measured on the baseline, `--coverage` full run, 60/1345 green):** statements
+- **Coverage (lane-measured in the wave-4 round on its `cca6787` baseline, `--coverage` full run,
+  60/1345 green at that tree):** statements
   ≈ 94 %+, functions 97.7 %+ overall; **all four wave-4 modules at 100 % functions** (messaging
   additionally at 100 % branches); the 14 uncovered functions repo-wide were individually audited —
   after the W4-F5/`wireShutdown` repairs, the remainder are trivial callbacks (encode/header
@@ -353,18 +434,22 @@ Stated plainly, because an overstated CDR document is worse than none:
 1. **No NFR-10 accuracy number**, in any form. The pipeline exists; the measurement does not.
    `claimability()===true` in the harness answers "*if* a live run were made, could its numbers be
    claimed" — preconditions only, never a pass.
-2. **No NFR-07 accessibility result and no UT-01 study.** There is no client to audit or test.
+2. **No NFR-07 pass and no UT-01 study.** The wave-5 foundation exists and audits clean on its two
+   rendered shell routes — that is groundwork evidence only, never the seven-interface audit, and
+   the 5-participant study has not run. NFR-07 is Partial, not Met.
 3. **No 99 % availability figure** — only the NFR-09 degradation mechanisms, proven in ten drills.
 4. **No AB-06 ZAP result over a rendered client** — API-boundary injection defenses are proven;
-   the client crawl waits for waves 5–6.
+   wave 5 unblocked the crawl (`/` and 404 now render) but the run waits for wave 6's real screens
+   to be worth recording, and none has been made.
 5. **The 30-day erasure window is proven by clock injection, not by 30 elapsed days** (§7) — the
    scheduling arithmetic, due-instant behaviour and idempotency are exact, but no calendar month
    has passed.
 6. **NFR-01/NFR-02 numbers are developer-machine measurements**, labelled as such; they are not a
    production SLA.
-7. **Nothing in this tree is committed or CI-verified for wave 4.** `cca6787` plus the working-tree
-   repairs have been verified locally by 8 lanes and this report; CI has executed only the wave-3
-   baseline. The human team commits (house rule f), and the CI cold-runner result is the remaining
+7. **Nothing in this tree is committed or CI-verified for wave 5.** Waves 0–4 are committed,
+   pushed and CI-green at `0270a01`; the wave-5 client foundation and its verification round sit
+   uncommitted on top and have been verified locally only. The human team commits (house rule f),
+   and the CI cold-runner result (63/1397 backend + 218 client + builds + lint) is the remaining
    independence check.
 8. **Two spec-level decisions are pending and are NOT decided here:** photo-only reviews (W4-F2)
    and the standing FR-01 acceptance correction TCC-03 (ratification due at CDR). The FR-08
@@ -378,15 +463,19 @@ Stated plainly, because an overstated CDR document is worse than none:
 
 ## 9. Recommended order of work after this report
 
-1. **Commit and push** (human team): `cca6787` + the working-tree repair round, then confirm CI
-   green on a cold runner (expected 62 suites / 1386 tests). This also starts the W4-F6 evidence
-   streak on a committed tree.
+1. **Commit and push** (human team): the wave-5 working tree on top of `0270a01`, then confirm CI
+   green on a cold runner — expected: backend **63 suites / 1397 tests** (the restated canonical
+   contract, ADRC-W5-01), client **17 files / 218 tests**, both builds, lint. This extends the
+   W4-F6 evidence streak on committed trees.
 2. **At CDR (2026-08-22):** ratify TCC-03 (FR-01 degraded-flag correction) and W4-F4 (FR-08
    queue-on-flag/hide-on-rejection) as recorded; decide W4-F2 (photo-only reviews) — if option (b),
    schedule the schema+pipeline change as one unit.
-3. **Waves 5–6 (client):** unblocks NFR-07, the UT-01 study, and AB-06's ZAP clause — the only
-   non-met rows left in §3.
-4. **Wave 7 (one live IT-03 run):** off-suite, record model id + prompt version, write
-   `RESULTS.md`; NFR-10 becomes claimable only if both rates < 0.05.
+3. **Wave 6 (feature screens on the wave-5 foundation):** delivers the seven NFR-07 interfaces —
+   unblocking the wave-7 audit, the UT-01 study, and a meaningful AB-06 ZAP crawl (the only
+   non-met clauses left in §3).
+4. **Wave 7:** run `npm run test:a11y` at 7/7 interfaces and record it; run the UT-01 study (a
+   human fills in the protocol's record block); run `npm run scan:zap` and record the AB-06 result
+   with date and commit SHA; make the one live IT-03 run off-suite — record model id + prompt
+   version, write `RESULTS.md`; NFR-10 becomes claimable only if both rates < 0.05.
 5. **Housekeeping (non-blocking):** consolidate the pre-filter knobs into `src/config` (W4-F7)
    in a wave that owns `schema.js`; keep the complete-output rule for every full-suite run.

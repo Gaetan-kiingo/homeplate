@@ -1,0 +1,104 @@
+/* client/src/styles/tokens.css — the Homeplate design-token sheet (U5-UI-KIT; build-plan
+ * §6.1 5B). Requirement traceability: NFR-07 (WCAG 2.1 AA) — colour contrast, visible focus
+ * indication, reduced-motion respect, and the responsive type/spacing scale all live here as
+ * tokens so every component inherits them instead of re-deciding them.
+ *
+ * CONTRACT: components under client/src/ui/ use ONLY these custom properties — no off-token
+ * colour literals anywhere in the kit (gated by client/src/ui/kit-contract.test.js, which
+ * also RECOMPUTES every ratio below from the hex values in this file: a drifted number or an
+ * under-threshold pair fails the client suite). This file is imported exactly once, by the
+ * shell (5C); the kit's CSS modules only reference var(--hp-*).
+ *
+ * MEASURED CONTRAST CONTRACT (WCAG 2.1 relative-luminance ratios, floored to 2 decimals;
+ * tags: body = text >= 4.5:1 · large = large text >= 3:1 · ui = non-text UI boundary >= 3:1
+ * (WCAG 1.4.11) · focus = focus indicator vs adjacent colour >= 3:1 · exempt = disabled
+ * state, exempt under WCAG 1.4.3 but held >= 4.5:1 anyway · decorative = carries no
+ * information, never the sole carrier of meaning):
+ *
+ * contrast: --hp-color-text on --hp-color-surface = 14.75:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text on --hp-color-surface-raised = 13.74:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-surface = 8.81:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-surface-raised = 8.21:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-link on --hp-color-surface = 6.66:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-link on --hp-color-surface-raised = 6.21:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-primary on --hp-color-primary = 6.66:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-primary on --hp-color-primary-hover = 8.88:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-danger on --hp-color-danger = 6.57:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-danger on --hp-color-danger-hover = 9.02:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-danger-text on --hp-color-surface = 6.57:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-success-text on --hp-color-surface = 6.73:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-border on --hp-color-surface = 5.42:1 (ui; AA >= 3:1)
+ * contrast: --hp-color-border on --hp-color-surface-raised = 5.05:1 (ui; AA >= 3:1)
+ * contrast: --hp-color-focus-ring on --hp-color-surface = 6.66:1 (focus; AA >= 3:1)
+ * contrast: --hp-color-focus-ring on --hp-color-surface-raised = 6.21:1 (focus; AA >= 3:1)
+ * contrast: --hp-color-disabled-text on --hp-color-disabled-bg = 5.20:1 (exempt; WCAG 1.4.3 disabled exception, held >= 4.5:1 anyway)
+ * contrast: --hp-color-border-subtle on --hp-color-surface = 1.46:1 (decorative; dividers/card edges only — grouping is also conveyed by spacing, never by this colour alone)
+ */
+
+:root {
+  /* ---- colour ---- */
+  --hp-color-surface: #ffffff;
+  --hp-color-surface-raised: #f5f7fa;
+  --hp-color-text: #1f2933;
+  --hp-color-text-muted: #3e4c59;
+  --hp-color-link: #0b5cad;
+  --hp-color-primary: #0b5cad;
+  --hp-color-primary-hover: #094a8b;
+  --hp-color-on-primary: #ffffff;
+  --hp-color-danger: #b42318;
+  --hp-color-danger-hover: #8e1c13;
+  --hp-color-on-danger: #ffffff;
+  --hp-color-danger-text: #b42318;
+  --hp-color-success-text: #17693a;
+  --hp-color-border: #5f6b7a;
+  --hp-color-border-subtle: #d2d6db;
+  --hp-color-focus-ring: #0b5cad;
+  --hp-color-disabled-bg: #e4e7eb;
+  --hp-color-disabled-text: #52606d;
+  /* Dialog backdrop: overlays --hp-color-surface; the dialog panel on top of it carries its
+   * own AA-checked text/surface pairs, so the backdrop itself is decorative. */
+  --hp-color-backdrop: rgba(31, 41, 51, 0.6);
+
+  /* ---- visible focus indication (NFR-07: keyboard traversal has a visible indicator;
+   * ring colour pairs measured above under the `focus` tag) ---- */
+  --hp-focus-ring-width: 3px;
+  --hp-focus-ring-offset: 2px;
+  --hp-focus-ring-color: var(--hp-color-focus-ring);
+
+  /* ---- responsive type scale (rem-based so user font-size settings scale everything;
+   * clamp() steps fluidly between the 320 px floor and desktop — no breakpoint cliffs) ---- */
+  --hp-font-size-sm: 0.875rem;
+  --hp-font-size-base: 1rem;
+  --hp-font-size-lg: 1.125rem;
+  --hp-font-size-xl: clamp(1.25rem, 1.05rem + 1vw, 1.5rem);
+  --hp-font-size-2xl: clamp(1.5rem, 1.2rem + 1.5vw, 1.875rem);
+  --hp-line-height-base: 1.5;
+  --hp-line-height-tight: 1.25;
+
+  /* ---- spacing scale (rem-based, 0.25rem grid) ---- */
+  --hp-space-1: 0.25rem;
+  --hp-space-2: 0.5rem;
+  --hp-space-3: 0.75rem;
+  --hp-space-4: 1rem;
+  --hp-space-5: 1.5rem;
+  --hp-space-6: 2rem;
+  --hp-space-7: 3rem;
+
+  /* ---- shape ---- */
+  --hp-radius-sm: 0.25rem;
+  --hp-radius-md: 0.5rem;
+
+  /* ---- motion (zeroed under prefers-reduced-motion below; animated components ALSO carry
+   * their own reduced-motion guard so respect never depends on token adoption alone) ---- */
+  --hp-motion-duration: 150ms;
+  --hp-motion-duration-spin: 0.9s;
+}
+
+/* NFR-07 / WCAG 2.3.3: honour the user's reduced-motion preference at the token level so
+ * every transition/animation driven by a motion token stops in one place. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hp-motion-duration: 0.01ms;
+    --hp-motion-duration-spin: 0s;
+  }
+}

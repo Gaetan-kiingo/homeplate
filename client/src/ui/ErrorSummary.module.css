@@ -1,0 +1,32 @@
+/* client/src/ui/ErrorSummary.module.css — U5-UI-KIT (NFR-07). Token-only colours: danger
+ * border (6.57:1 on surface, well over the 3:1 UI-boundary floor) and danger text (6.57:1
+ * body pair) — and the failure is stated in TEXT and linked per field, never colour alone.
+ * The container takes programmatic focus, so it carries an explicit :focus ring too. */
+.summary {
+  border: 3px solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+  padding: var(--hp-space-4);
+  margin-block-end: var(--hp-space-5);
+}
+
+.summary:focus {
+  outline: var(--hp-focus-ring-width) solid var(--hp-focus-ring-color);
+  outline-offset: var(--hp-focus-ring-offset);
+}
+
+.heading {
+  margin: 0 0 var(--hp-space-2);
+  font-size: var(--hp-font-size-lg);
+  line-height: var(--hp-line-height-tight);
+  color: var(--hp-color-danger-text);
+}
+
+.list {
+  margin: 0;
+  padding-inline-start: var(--hp-space-5);
+}
+
+.link {
+  color: var(--hp-color-danger-text);
+  font-weight: 600;
+}

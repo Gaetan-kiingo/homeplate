@@ -1,0 +1,16 @@
+/* client/src/ui/VisuallyHidden.module.css — U5-UI-KIT (NFR-07). The standard clip pattern:
+ * content stays in the accessibility tree (screen readers announce it) while removed from
+ * the visual layout. Reused by StatusAnnouncer's live regions, FormField's error prefix and
+ * Spinner's text alternative. No colour is involved — nothing to contrast-check. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

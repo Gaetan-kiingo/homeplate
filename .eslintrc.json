@@ -30,6 +30,59 @@
       "globals": {
         "__ENV": "readonly"
       }
+    },
+    {
+      "files": ["client/**/*.js", "client/**/*.jsx"],
+      "env": {
+        "browser": true,
+        "node": false,
+        "es2022": true
+      },
+      "parserOptions": {
+        "ecmaVersion": 2022,
+        "sourceType": "module",
+        "ecmaFeatures": {
+          "jsx": true
+        }
+      },
+      "plugins": ["react", "react-hooks", "jsx-a11y"],
+      "extends": [
+        "eslint:recommended",
+        "plugin:react/recommended",
+        "plugin:react/jsx-runtime",
+        "plugin:react-hooks/recommended",
+        "plugin:jsx-a11y/recommended",
+        "prettier"
+      ],
+      "settings": {
+        "react": {
+          "version": "detect"
+        }
+      },
+      "rules": {
+        "react/prop-types": "off"
+      }
+    },
+    {
+      "files": ["client/vite.config.js", "client/vitest.setup.js"],
+      "env": {
+        "node": true,
+        "browser": false
+      }
+    },
+    {
+      "files": ["client/src/**/*.test.js", "client/src/**/*.test.jsx"],
+      "globals": {
+        "describe": "readonly",
+        "it": "readonly",
+        "test": "readonly",
+        "expect": "readonly",
+        "vi": "readonly",
+        "beforeAll": "readonly",
+        "afterAll": "readonly",
+        "beforeEach": "readonly",
+        "afterEach": "readonly"
+      }
     }
   ]
 }

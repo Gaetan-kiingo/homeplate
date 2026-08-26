@@ -28,12 +28,19 @@ jobs:
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
+          # Two npm packages, two lockfiles (wave 5: client/ is its own package).
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
 
       - name: Start infrastructure (PostgreSQL, Redis, MinIO)
         run: docker compose up -d --wait
 
       - name: Install
         run: npm ci
+
+      - name: Install client (wave 5 — client/ is its own npm package)
+        run: npm --prefix client ci
 
       - name: Generate dev TLS certificates
         # certs/ is git-ignored (NFR-03 material never committed); ST-01 needs a live TLS listener.
@@ -47,6 +54,12 @@ jobs:
 
       - name: Build check
         run: npm run build
+
+      - name: Client build (Vite — SRS §2.1.2 responsive React web client)
+        run: npm --prefix client run build
+
+      - name: Client tests (vitest; the root `npm test` backend contract is separate and unchanged)
+        run: npm --prefix client test
 
       - name: Test (Jest + Supertest, seeded test DB, coverage)
         # TEST_STRICT_HANDLES=1 turns globalTeardown's leaked-handle warning into a hard failure, so

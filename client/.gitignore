@@ -1,0 +1,4 @@
+# client/.gitignore — U5-SHELL. Build output and dependency tree of the client package
+# (the root .gitignore also excludes client/dist/; this keeps the package self-contained).
+node_modules/
+dist/

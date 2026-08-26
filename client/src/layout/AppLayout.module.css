@@ -1,0 +1,80 @@
+/* client/src/layout/AppLayout.module.css — the layout's CSS module (U5-SHELL /
+ * U5-SHELL-WIRE; build-plan §6.1 5C.1: the layout is on the UI-kit tokens from
+ * src/styles/tokens.css, imported once by App.jsx). Document-level globals (body palette,
+ * :focus-visible indicator) stay in src/App.css.
+ *
+ * Contrast (WCAG 2.1 AA, NFR-07 — every pair below is one of tokens.css's MEASURED pairs):
+ * skip link --hp-color-surface on --hp-color-text = 14.75:1 (>= 4.5:1);
+ * brand --hp-color-link on --hp-color-surface = 6.66:1;
+ * footer + session status --hp-color-text-muted on --hp-color-surface = 8.81:1;
+ * borders --hp-color-border-subtle are decorative (no information carried by colour alone).
+ *
+ * Responsive (NFR-07, 320 px floor): fluid max-width containers with padding only, and the
+ * header nav wraps — no fixed widths anywhere, so nothing can force horizontal scroll at
+ * narrow viewports.
+ */
+
+/* Skip link: first focusable element, visually hidden until focused (NFR-07). */
+.skipLink {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: var(--hp-space-2) var(--hp-space-4);
+  background: var(--hp-color-text);
+  color: var(--hp-color-surface); /* 14.75:1 on --hp-color-text */
+  z-index: 10;
+}
+
+.skipLink:focus {
+  left: 0;
+}
+
+.header {
+  border-bottom: 1px solid var(--hp-color-border-subtle);
+}
+
+.nav,
+.main,
+.footer {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 0 var(--hp-space-4);
+}
+
+/* Session-aware nav row (5C): brand left, login-state display right; wraps at the 320 px
+ * floor instead of overflowing. */
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: var(--hp-space-4);
+}
+
+.brand {
+  display: inline-block;
+  padding: var(--hp-space-3) 0;
+  font-weight: 700;
+  color: var(--hp-color-link); /* 6.66:1 on --hp-color-surface */
+  text-decoration: none;
+}
+
+/* Login-state display (5C, display only — no controls until wave 6). */
+.sessionStatus {
+  color: var(--hp-color-text-muted); /* 8.81:1 on --hp-color-surface */
+  font-size: var(--hp-font-size-sm);
+  padding-bottom: var(--hp-space-2);
+}
+
+.main {
+  padding-top: var(--hp-space-4);
+  padding-bottom: var(--hp-space-6);
+}
+
+.footer {
+  border-top: 1px solid var(--hp-color-border-subtle);
+  padding-top: var(--hp-space-3);
+  padding-bottom: var(--hp-space-5);
+  color: var(--hp-color-text-muted); /* 8.81:1 on --hp-color-surface */
+  font-size: var(--hp-font-size-sm);
+}
