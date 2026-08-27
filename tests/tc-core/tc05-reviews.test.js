@@ -162,6 +162,38 @@ describe('TC-05 · refusal matrix at the review boundary', () => {
     expect(rows).toEqual([]);
   });
 
+  test('422 comment REQUIRED (ratified 2026-08-26, e8a610d): missing, empty, whitespace-only and PHOTO-ONLY reviews are all refused; no row, no media', async () => {
+    // FR-05 acceptance: "A review comment is REQUIRED (min 1 character): photo-only reviews
+    // are rejected with 422" — the team's RATIFIED reading (specDecision, closes W4-F2).
+    const booking = await completedBooking();
+    const key = mediaUrls.createUploadTarget(guest.id, 'review', 'image/jpeg', {
+      sizeBytes: 2048,
+    }).storageKey;
+    const bodies = [
+      { rating: 5 }, // comment absent entirely
+      { rating: 5, comment: '' }, // empty string
+      { rating: 5, comment: '   \n\t ' }, // whitespace-only (safeText trims to empty)
+      { rating: 5, imageKeys: [key] }, // the ratified case: photo-only, no comment
+      { rating: 5, comment: '', imageKeys: [key] }, // photo + empty comment
+    ];
+    for (const body of bodies) {
+      const res = await support.post(app, `/api/bookings/${booking.id}/reviews`, guestCookie, body);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBeDefined();
+    }
+    const { rows } = await dbh.query(`SELECT id FROM reviews WHERE booking_id = $1`, [booking.id]);
+    expect(rows).toEqual([]);
+    // The refused photo-only submissions must not have claimed the upload key either.
+    const media = await dbh.query(`SELECT id FROM media_objects WHERE storage_key = $1`, [key]);
+    expect(media.rows).toEqual([]);
+    // And a 1-character comment is the ratified minimum — it succeeds.
+    const ok = await support.post(app, `/api/bookings/${booking.id}/reviews`, guestCookie, {
+      rating: 5,
+      comment: 'k',
+    });
+    expect(ok.status).toBe(201);
+  });
+
   test('409 on a booking that is not completed; the row count stays zero', async () => {
     const pending = await dbh.makeBooking({ listing_id: listing.id, guest_id: guest.id });
     const res = await support.post(app, `/api/bookings/${pending.id}/reviews`, guestCookie, {

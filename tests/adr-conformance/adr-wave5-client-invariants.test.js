@@ -128,16 +128,30 @@ describe('ADR-010 / NFR-13 — the client documents EXACTLY the backend public w
     }
   });
 
-  test('no non-test client module dereferences a privileged address key unconditionally', () => {
-    // Wave 5 ships no booking-gated screen, so ANY .addressLine1/.postalCode dereference in
-    // shipped client code is premature precision-assumption. (Tests and the typedef file may
-    // mention the names; shipped modules may not touch them yet.)
+  test('privileged address keys are read ONLY by the booking-gated listing detail screen, presence-guarded', () => {
+    // Re-baselined by U6R-FIX (finding W6-G2). Wave 5 shipped no booking-gated screen, so
+    // this guard banned every .addressLine1/.postalCode dereference outright. Wave 6 ships
+    // exactly the screen ADR-010 permits: ListingDetailPage renders the exact address only
+    // when the SERVER's booking-gated serializer included it (pending/in-progress guest —
+    // src/modules/listings/access.js). The invariant keeps its direction: no OTHER shipped
+    // module may touch a privileged key, and the one gated screen must presence-guard on
+    // the payload itself carrying it — never assume the key exists (build-plan G.2 #8).
+    const gatedScreen = path.join(CLIENT_SRC, 'features', 'discovery', 'ListingDetailPage.jsx');
+    expect(fs.existsSync(gatedScreen)).toBe(true);
     const offenders = [];
     for (const file of listFiles(CLIENT_SRC, ['.js', '.jsx'])) {
       if (file.endsWith('.test.js') || file.endsWith('.test.jsx')) continue;
       if (file === path.join(CLIENT_SRC, 'api', 'types.js')) continue;
       const text = fs.readFileSync(file, 'utf8');
-      if (/\.(addressLine1|addressLine2|postalCode)\b/.test(text)) offenders.push(rel(file));
+      if (!/\.(addressLine1|addressLine2|postalCode)\b/.test(text)) continue;
+      if (file !== gatedScreen) {
+        offenders.push(rel(file));
+        continue;
+      }
+      // The gated screen must gate rendering on the payload carrying the key.
+      if (!/addressLine1\s*!==\s*undefined/.test(text)) {
+        offenders.push(`${rel(file)} (presence guard missing)`);
+      }
     }
     expect(offenders).toEqual([]);
   });

@@ -1,0 +1,267 @@
+{
+  "unit": "U6R-FIX",
+  "date": "2026-08-26",
+  "traceability": "U6R-FIX — repair of every confirmed wave-6 finding (gates.json + four lane JSONs), cause-first, with per-finding re-execution. Requirements touched: FR-01..FR-14, NFR-05, NFR-06, NFR-07, NFR-09, NFR-12, NFR-13, AB-08. Consumed by U6-REPORT.",
+  "baseline": "e8a610d + wave-6A feature trees + 6B findings JSONs; this unit's edits are confined to client/src/features/** plus the two stale wave-5 guard test files gates.json explicitly dispositioned to U6R-FIX",
+  "repairPolicy": "Cause-first only: no spec weakened, no assertion deleted. The two re-baselined scope guards keep their invariant's direction (exact five-tree scope list; privileged-address access confined to the one ADR-010-gated screen, presence-guarded). Every client fix goes to the shape the SERVER actually emits, and the specs that had stubbed never-emitted shapes were corrected to the real ones.",
+  "findings": [
+    {
+      "id": "W6-G1",
+      "source": "gates.json (also booking.json F-B1 part 1)",
+      "severity": "blocking (backend gate exit 1)",
+      "status": "FIXED",
+      "file": "tests/coverage/coverage-lane.test.js",
+      "cause": "Wave-5-era scope guard asserted client/src/features/*/routes.jsx does not exist; wave 6's whole purpose was to create five such trees, so the guard's premise expired by design.",
+      "fix": "Re-baselined the guard to the wave-6 end-state: it now asserts the feature-route directory list is EXACTLY ['account','booking','community','discovery','moderation'] (sorted), so a sixth out-of-scope tree (payments, GPS, AI listing generation — SRS §1.2) still fails the guard. Test renamed to say what it now checks.",
+      "reExecution": "TEST_STRICT_HANDLES=1 npx jest tests/coverage/coverage-lane.test.js --runInBand → PASS; full suite 63/1397 exit 0 twice (95.2 s, 97.4 s). No longer reproduces."
+    },
+    {
+      "id": "W6-G2",
+      "source": "gates.json (also booking.json F-B1 part 2)",
+      "severity": "blocking (backend gate exit 1)",
+      "status": "FIXED",
+      "file": "tests/adr-conformance/adr-wave5-client-invariants.test.js",
+      "cause": "Blanket ban on any .addressLine1/.addressLine2/.postalCode dereference in shipped client code — written when no booking-gated screen existed. Wave 6 ships exactly the screen ADR-010 permits (ListingDetailPage renders the exact address only when the server's booking-gated serializer included it).",
+      "fix": "Narrowed the guard while keeping its ADR-010 direction: privileged address keys may be read ONLY by client/src/features/discovery/ListingDetailPage.jsx, and that file must contain the payload presence-guard (addressLine1 !== undefined); any other module touching a privileged key, or the gated screen losing its guard, still fails. The guard also asserts the gated screen exists so it cannot silently revert.",
+      "reExecution": "TEST_STRICT_HANDLES=1 npx jest tests/adr-conformance/adr-wave5-client-invariants.test.js --runInBand → PASS (59 tests across both guard suites); full suite 63/1397 exit 0 twice. No longer reproduces."
+    },
+    {
+      "id": "W6-G3",
+      "source": "gates.json",
+      "severity": "flake (non-reproducible)",
+      "status": "NOT REPRODUCING — no code change, per the gates lane's own disposition",
+      "file": "tests/st-security/st-security-wave3.test.js:677",
+      "cause": "Transient DB contention: the AB-08 stranger GET answered 500 once while the LT-01 volume suite saturated the same PostgreSQL server (an idle-pool 'terminating connection' error was visible in that run). Failed on gates run 1 only; passed run 2 and in isolation.",
+      "fix": "None (cause is cross-suite infrastructure contention, not wave-6 code; the gates lane dispositioned it 'candidate hardening for a later wave, NOT a wave-6 blocker'). Changing backend test scheduling is outside wave-6 ownership.",
+      "reExecution": "Two further full-suite runs this session under TEST_STRICT_HANDLES=1: 63 suites / 1397 tests, exit 0 both times — st-security-wave3 passed under full contention twice. Still open as a known flaky-under-contention candidate for a later wave."
+    },
+    {
+      "id": "D-01",
+      "source": "discovery.json",
+      "severity": "low",
+      "status": "FIXED",
+      "file": "client/src/features/discovery/ListingDetailPage.jsx",
+      "cause": "Withheld-address note claimed disclosure requires 'a confirmed reservation'; src/modules/listings/access.js releases the address to a guest with a booking in status pending/in_progress — i.e. as soon as a seat is reserved.",
+      "fix": "Copy now reads 'The exact address is shared once you have reserved a seat for this meal.' — matching the real disclosure trigger. Spec regex updated to pin the corrected copy (assertion strengthened to the truthful sentence, not weakened).",
+      "reExecution": "ListingDetailPage.test.jsx 'renders coarse area only and the disclosure note...' → PASS with the new copy; full client suite 32 files / 344 tests exit 0."
+    },
+    {
+      "id": "D-02",
+      "source": "discovery.json",
+      "severity": "low (coverage gap)",
+      "status": "FIXED",
+      "file": "client/src/features/discovery/ListingDetailPage.test.jsx",
+      "cause": "The moderationStatus 'rejected' owner-notice branch had no spec; only 'pending' was pinned.",
+      "fix": "Added 'surfaces rejected moderation status to the owner (FR-08 — repair of finding D-02)': renders a rejected listing, asserts the rejected notice and the absent Reserve CTA (clone of the pending spec, per the lane's suggested repair).",
+      "reExecution": "New spec PASSES (in the 344). The reproduction 'grep rejected ... → no test renders a rejected listing' now returns the covering spec."
+    },
+    {
+      "id": "F-B1",
+      "source": "booking.json",
+      "status": "FIXED — same defect as W6-G1 + W6-G2; see those entries",
+      "reExecution": "TEST_STRICT_HANDLES=1 npm test → 'Test Suites: 63 passed, 63 total; Tests: 1397 passed, 1397 total', exit 0 (twice) — the lane's reproduction command no longer shows the 2 failures."
+    },
+    {
+      "id": "F-B2",
+      "source": "booking.json",
+      "severity": "low",
+      "status": "FIXED",
+      "file": "client/src/features/booking/BookingDetailPage.jsx",
+      "cause": "A pending booking whose listing.scheduledStart fails Date.parse fell into the same branch as a genuinely started meal and rendered 'The meal has started' untruthfully (unreachable via the real API, which always serializes an ISO instant).",
+      "fix": "The 'has started' sentence now renders only for in_progress, or pending WITH a finite parsed start time; a pending booking with an unparseable start gets neutral copy ('Cancellation is currently unavailable for this booking.') — no claim the client cannot verify. Server-side refusal remains the enforcement either way.",
+      "reExecution": "The lane's reproduction (render pending + scheduledStart 'not-a-date') is now the spec 'stays neutral on an unparseable scheduledStart — never claims the meal started (finding F-B2)': asserts no cancel button, NO 'meal has started' text, neutral copy visible → PASS."
+    },
+    {
+      "id": "OBS-B3",
+      "source": "booking.json",
+      "severity": "observation (coordinator visibility)",
+      "status": "NOT FIXED — out of wave-6 scope by design",
+      "why": "mehkoCapMessage (FR-11 rendering contract) stays fully implemented and unit-tested, but no wave-6 unit owned a listing-create/manage screen, so no live UI path can trigger a MEHKO cap. Adding such a screen would be new feature work outside every wave-6 unit brief (build-plan §6). Remains flagged for the coordinator so FR-11's client surfacing is not marked complete beyond the rendering contract."
+    },
+    {
+      "id": "U6VC-F1",
+      "source": "community.json (confirmed), with the lane's cross-tree note",
+      "severity": "low",
+      "status": "FIXED — across all four feature trees, not just community",
+      "files": [
+        "client/src/features/community/components/communityMessages.js (NO_SESSION keyed; AUTHENTICATION_REQUIRED kept as the eligibility middleware's bare-default alias)",
+        "client/src/features/booking/components/bookingErrors.js + BookingsListPage.jsx + BookingDetailPage.jsx (both codes accepted on the 401 paths)",
+        "client/src/features/account/components/errorCopy.js (NO_SESSION case added)",
+        "client/src/features/moderation/components/errorCopy.js (NO_SESSION case added)",
+        "client/src/features/booking/components/testHarness.jsx + booking/account/moderation specs (401 stubs corrected to the code the server actually emits)"
+      ],
+      "cause": "requireSession — the only auth gate on the community-consumed routes — always answers 401 code NO_SESSION (src/modules/auth/middleware.js:34,39), but the client maps keyed only AUTHENTICATION_REQUIRED (the src/lib/errors.js class default, emitted live only by the eligibility middleware's bare AuthenticationError), leaving the actionable sign-in copy unreachable dead code.",
+      "fix": "Sign-in guidance keyed under NO_SESSION everywhere, with AUTHENTICATION_REQUIRED retained as an alias (both codes are live in the wild). Per the lane's suggested repair, one 401 NO_SESSION spec added per community screen: MessagesPage (load path), ReviewPage (submit path, new it.each row), SafetyAlertPage (confirm path) — each asserts the actionable copy renders outside the live region AND is announced assertively. Test stubs that had modeled the never-emitted code were corrected to NO_SESSION (same class of fix as AMV-W6-01: never stub a shape the server does not produce).",
+      "reExecution": "All three new specs PASS; full client suite 32 files / 344 tests exit 0; backend grep re-confirmed the live codes (auth/middleware.js NO_SESSION; eligibility/middleware.js bare default)."
+    },
+    {
+      "id": "U6VC-O1",
+      "source": "community.json (out-of-lane observation)",
+      "severity": "flake (observed once)",
+      "status": "NOT REPRODUCING — hardened",
+      "file": "client/src/features/booking/BookingsListPage.test.jsx",
+      "cause": "The first content assertion of the list spec awaited testing-library's 1 s default timeout; under full-suite worker contention the session+list round-trips can exceed it, leaving the captured DOM at 'Loading your bookings'. Observed once (community lane's full-suite run); green in every other run.",
+      "fix": "The first findByRole in that spec now waits up to 5 s ({ timeout: 5000 }) — a wait-budget widening, not an assertion change.",
+      "reExecution": "npm --prefix client test run repeatedly this session (4 full runs during repair): 32 files, all green each time; the spec passes."
+    },
+    {
+      "id": "U6VC-O2",
+      "source": "community.json",
+      "status": "NOT FIXED — informational, by the lane's own analysis",
+      "why": "Upload-before-POST ordering is forced by the schema (imageKeys must ride the review body); orphan-media lifecycle is server-owned (delete-mark + NFR-12 erasure by key). No FR-05 clause constrains the ordering. Left for the wave-7 UX pass as the lane intended."
+    },
+    {
+      "id": "U6VC-O3",
+      "source": "community.json",
+      "status": "NO ACTION NEEDED — the lane recorded the 15 s poll as satisfying FR-06 with correct aria-live etiquette; no defect stated."
+    },
+    {
+      "id": "AMV-W6-01",
+      "source": "account-mod.json",
+      "severity": "major",
+      "status": "FIXED",
+      "files": [
+        "client/src/features/account/LoginPage.jsx",
+        "client/src/features/account/components/errorCopy.js",
+        "client/src/features/account/LoginPage.test.jsx",
+        "client/src/features/account/routes.jsx (comment)"
+      ],
+      "cause": "LoginPage matched err.code === 'RATE_LIMITED', but the server's login lockout is code LOGIN_RATE_LIMITED (src/modules/auth/service.js:318, pinned by tests/unit/identity.test.js:565) — the NFR-05 lockout copy was dead code and the spec masked it by stubbing the wrong code.",
+      "fix": "Throttle detection now goes through errorCopy.isThrottleError(err) — the 429 STATUS family, which no future code rename can silently bypass (the lane's suggested repair). messageForAccountError also names LOGIN_RATE_LIMITED / VERIFICATION_RESEND_RATE_LIMITED explicitly for its generic fallback. LoginPage.test.jsx now stubs the REAL shape: 429 LOGIN_RATE_LIMITED with the server's own message.",
+      "reExecution": "LoginPage.test.jsx 'NFR-05: renders the 429 lockout HONESTLY...' PASSES against the real code: asserts 'Too many failed sign-in attempts', 'about 5 minutes' (details.retryAfterSeconds 300) and 'the lock lifts by itself'. Full client suite exit 0."
+    },
+    {
+      "id": "AMV-W6-02",
+      "source": "account-mod.json",
+      "severity": "minor",
+      "status": "FIXED",
+      "files": [
+        "client/src/features/account/SignupPage.jsx",
+        "client/src/features/account/components/ResendVerificationForm.jsx",
+        "client/src/features/account/components/errorCopy.js (resendThrottledMessage centralized)",
+        "client/src/features/account/SignupPage.test.jsx"
+      ],
+      "cause": "Same class as AMV-W6-01 on the resend throttle: client matched 'RATE_LIMITED', server emits VERIFICATION_RESEND_RATE_LIMITED (src/modules/auth/service.js:174).",
+      "fix": "Both resend surfaces use isThrottleError + the new shared resendThrottledMessage (copy centralized in errorCopy.js exactly as the lane suggested, removing the duplicated template literal). SignupPage.test.jsx stubs the real code and the server's real message.",
+      "reExecution": "SignupPage.test.jsx 'renders the resend throttle (429) honestly with its retry horizon' PASSES against VERIFICATION_RESEND_RATE_LIMITED ('about 2 minutes' from retryAfterSeconds 120). Full client suite exit 0."
+    },
+    {
+      "id": "AMV-W6-03",
+      "source": "account-mod.json",
+      "severity": "low",
+      "status": "FIXED",
+      "file": "client/src/features/account/components/ExportSection.jsx",
+      "cause": "STATUS_LABELS lacked the 'processing' enum value (db data_request_status; set by src/modules/privacy/repo.js when the worker picks the export up), so that one state rendered — and was announced — as the raw enum word.",
+      "fix": "Added processing: 'Processing — your copy is being assembled'; the not-ready announcement now speaks the human label (STATUS_LABELS[row.status] || row.status) instead of 'Export status: processing'. The || fallback stays for honesty on any future unknown enum value.",
+      "reExecution": "New spec \"renders a human label for the worker's 'processing' status, never the raw enum (AMV-W6-03)\" PASSES: request → status check answering 'processing' → the label renders in the status row and the raw enum word never renders alone."
+    },
+    {
+      "id": "AMV-W6-04",
+      "source": "account-mod.json (observation, explicitly left to U6R-FIX to decide)",
+      "severity": "info",
+      "status": "FIXED (implemented the lane's suggested improvement)",
+      "files": ["client/src/features/account/AccountPage.jsx", "client/src/features/account/AccountPage.test.jsx"],
+      "decision": "The pre-202 copy (section + dialog) necessarily keeps the static SRS-frozen '30 days' — no response exists yet and PRIVACY_ERASURE_DAYS defaults to 30. The post-202 accepted state now ALSO renders the server's own request.dueAt ('— scheduled for <Month D, YYYY>', UTC), removing even config-override drift where a response exists.",
+      "reExecution": "Deletion spec extended: asserts 'scheduled for September 25, 2026' renders from the stubbed dueAt → PASS."
+    },
+    {
+      "id": "AMV-W6-05",
+      "source": "account-mod.json (observation, optional)",
+      "severity": "info (coverage nicety)",
+      "status": "FIXED",
+      "file": "client/src/features/account/AccountPage.test.jsx",
+      "fix": "Added 'renders NAME_MISSING positively when fullName is absent (AMV-W6-05)': a BLOCKED_USER variant with fullName null asserts '(NAME_MISSING)', its 'Add your full name' guidance and the #account-profile fix anchor — all five reason codes are now positively machine-checked.",
+      "reExecution": "New spec PASSES."
+    },
+    {
+      "id": "D-OBS-1",
+      "source": "discovery.json (observation)",
+      "status": "NOT FIXED — deliberate",
+      "why": "Retry pushing a duplicate history entry is cosmetic, covered by no acceptance clause, and the passing NFR-09 retry specs pin the current setSearchParams behaviour; changing navigation semantics during a repair round risks more than it buys. Left for a wave-7 UX pass, as the lane itself concluded ('not raised as a finding')."
+    },
+    {
+      "id": "D-OBS-2",
+      "source": "discovery.json (observation)",
+      "status": "NOT FIXED — requires a backend payload change (exposing pageSize on GET /api/hosts/:id), which is outside wave-6 ownership; the current derivation is correct on every reachable state per the lane's analysis."
+    },
+    {
+      "id": "D-OBS-3",
+      "source": "discovery.json (observation)",
+      "status": "NO ACTION NEEDED — a note on verification scope, not a defect."
+    }
+  ],
+  "gateLadderAfterRepair": {
+    "backendTest": {
+      "command": "TEST_STRICT_HANDLES=1 npm test",
+      "run1": "63 suites / 1397 tests, exit 0, 95.2 s",
+      "run2": "63 suites / 1397 tests, exit 0, 97.4 s",
+      "verdict": "GREEN — the exact 63/1397 contract, twice, including the two re-baselined guards and st-security-wave3 under full contention"
+    },
+    "clientTest": {
+      "command": "npm --prefix client test",
+      "result": "32 files / 344 tests, exit 0 (6B measured 32/337; this unit added 7 specs — D-02 rejected notice, F-B2 neutral copy, 3x U6VC-F1 401 NO_SESSION, AMV-W6-03 processing label, AMV-W6-05 NAME_MISSING — and corrected 1 multi-element assertion pattern in its own new specs during authoring)",
+      "verdict": "GREEN"
+    },
+    "lint": {
+      "command": "npm run lint",
+      "result": "eslint . && prettier --check . — clean; client/** react/react-hooks/jsx-a11y override active on every touched file",
+      "verdict": "GREEN"
+    },
+    "backendBuild": {
+      "command": "npm run build",
+      "result": "check-build: 6 migrations valid (0006 highest, none added), all files parse, createApp() boots against .env.example",
+      "verdict": "GREEN"
+    },
+    "clientBuild": {
+      "command": "npm --prefix client run build",
+      "result": "vite 5.4.21: 127 modules, dist assets built (index-DYfoSgqX.js 313.66 kB / gzip 96.98 kB)",
+      "verdict": "GREEN"
+    },
+    "a11yAudit": {
+      "command": "npm run test:a11y",
+      "result": "7/7 NFR-07 interfaces present; all 11 non-parameterized routes audited CLEAN (0 serious/critical wcag2a+wcag2aa); keyboard skip-link check passes; exit 1 listing ONLY the 6 parameterized routes awaiting wave-7 seeded ids",
+      "coverageVsWave6B": "IDENTICAL to the 6B measurement — not below it (acceptance clause met)",
+      "nfr07Status": "STILL NOT MET, by design: 6 parameterized routes unaudited until wave-7 fixtures AND the UT-01 five-participant study (human activity) remains outstanding"
+    },
+    "grepGates": {
+      "documentCookie": "0 non-comment hits under client/src — GREEN",
+      "hexLiterals": "0 in client/src/App.css and 0 in every feature .module.css — GREEN",
+      "capLiterals": "unchanged from 6B (no cap-shaped literal introduced; bookingErrors.js still carries zero numeric cap literals, pinned by its module-level grep spec) — GREEN"
+    }
+  },
+  "filesTouched": {
+    "ownedFeatureTrees": [
+      "client/src/features/discovery/ListingDetailPage.jsx",
+      "client/src/features/discovery/ListingDetailPage.test.jsx",
+      "client/src/features/booking/BookingDetailPage.jsx",
+      "client/src/features/booking/BookingDetailPage.test.jsx",
+      "client/src/features/booking/BookingsListPage.jsx",
+      "client/src/features/booking/BookingsListPage.test.jsx",
+      "client/src/features/booking/components/bookingErrors.js",
+      "client/src/features/booking/components/testHarness.jsx",
+      "client/src/features/community/components/communityMessages.js",
+      "client/src/features/community/MessagesPage.test.jsx",
+      "client/src/features/community/ReviewPage.test.jsx",
+      "client/src/features/community/SafetyAlertPage.test.jsx",
+      "client/src/features/account/AccountPage.jsx",
+      "client/src/features/account/AccountPage.test.jsx",
+      "client/src/features/account/LoginPage.jsx",
+      "client/src/features/account/LoginPage.test.jsx",
+      "client/src/features/account/SignupPage.jsx",
+      "client/src/features/account/SignupPage.test.jsx",
+      "client/src/features/account/VerifyEmailPage.test.jsx",
+      "client/src/features/account/routes.jsx",
+      "client/src/features/account/components/errorCopy.js",
+      "client/src/features/account/components/ExportSection.jsx",
+      "client/src/features/account/components/ResendVerificationForm.jsx",
+      "client/src/features/moderation/components/errorCopy.js",
+      "client/src/features/moderation/QueuePage.test.jsx"
+    ],
+    "outsideOwnershipByDisposition": [
+      "tests/coverage/coverage-lane.test.js (W6-G1 — gates.json disposition names U6R-FIX; canonical lane file updated in place, no new test file)",
+      "tests/adr-conformance/adr-wave5-client-invariants.test.js (W6-G2 — same disposition; house rule G.4 'backend test-placement rules apply to any backend test touched' honoured)"
+    ],
+    "backendSourceTouched": "NONE — git status over src/, db/, scripts/ shows zero changes; the 63/1397 contract held on both post-repair runs"
+  },
+  "committed": "nothing — working tree left for the human team per ground rules"
+}

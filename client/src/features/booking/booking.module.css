@@ -1,0 +1,103 @@
+/* client/src/features/booking/booking.module.css — U6-BOOKING screen styles (SPMP WA-9).
+ * Token-only colours from src/styles/tokens.css (App.css stays hex-free; so does this file).
+ *
+ * Contrast (WCAG 2.1 AA, NFR-07 — every pair below is one of tokens.css's MEASURED pairs):
+ * .errorText  --hp-color-danger-text on --hp-color-surface = 6.57:1 (>= 4.5:1);
+ * .successText --hp-color-success-text on --hp-color-surface = 6.73:1;
+ * .mutedText  --hp-color-text-muted on --hp-color-surface = 8.81:1 (and 8.21:1 on
+ *             --hp-color-surface-raised inside .notice);
+ * .notice border --hp-color-border on --hp-color-surface = 5.42:1 (ui, >= 3:1) — and the
+ * notice is ALSO introduced by its own heading, never by the border colour alone.
+ *
+ * Responsive (NFR-07, 320 px floor): fluid single-column blocks, wrapping flex action rows,
+ * no fixed widths — nothing here can force horizontal scroll at narrow viewports. */
+
+/* FR-09 eligibility notice: what is missing + how to fix it. */
+.notice {
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-4);
+  margin: var(--hp-space-4) 0;
+}
+
+.noticeList {
+  margin: var(--hp-space-3) 0 0;
+  padding-left: var(--hp-space-5);
+  display: grid;
+  gap: var(--hp-space-3);
+}
+
+.noticeWhat {
+  font-weight: 600;
+  margin: 0;
+}
+
+.errorText {
+  color: var(--hp-color-danger-text);
+}
+
+.successText {
+  color: var(--hp-color-success-text);
+}
+
+.mutedText {
+  color: var(--hp-color-text-muted);
+}
+
+/* Listing summary definition list: single column so the 320 px floor never scrolls. */
+.metaList {
+  margin: var(--hp-space-3) 0;
+}
+
+.metaList dt {
+  font-weight: 600;
+  margin-top: var(--hp-space-2);
+}
+
+.metaList dd {
+  margin: 0;
+}
+
+/* Bookings list: the list semantics stay (see BookingsListPage), the bullets go. */
+.bookingList {
+  list-style: none;
+  margin: var(--hp-space-4) 0;
+  padding: 0;
+  display: grid;
+  gap: var(--hp-space-4);
+}
+
+.bookingItemHeading {
+  margin: 0 0 var(--hp-space-2);
+  font-size: var(--hp-font-size-lg);
+  line-height: var(--hp-line-height-tight);
+}
+
+/* Filter controls: fluid columns that collapse cleanly at the 320 px floor. */
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0 var(--hp-space-4);
+  max-width: 32rem;
+}
+
+/* Action rows (reserve / cancel / dialog buttons): wrap, never overflow. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hp-space-3);
+  margin: var(--hp-space-4) 0;
+}
+
+.section {
+  margin: var(--hp-space-5) 0;
+}
+
+.relatedList {
+  margin: var(--hp-space-2) 0 0;
+  padding-left: var(--hp-space-5);
+  display: grid;
+  gap: var(--hp-space-2);
+}

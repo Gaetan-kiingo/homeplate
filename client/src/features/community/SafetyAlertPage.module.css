@@ -1,0 +1,22 @@
+/* client/src/features/community/SafetyAlertPage.module.css — U6-COMMUNITY (FR-07, NFR-07).
+ * Token-only colours (build-plan G.3 — zero hex literals outside styles/tokens.css); the
+ * pairs used are tokens.css MEASURED pairs: error text --hp-color-danger-text on
+ * --hp-color-surface = 6.57:1 (body ≥ 4.5:1), and the error is also conveyed in TEXT
+ * (announced via aria-live), never by colour alone. Dialog actions wrap at the 320 px
+ * floor instead of overflowing — nothing here can force horizontal scroll. */
+
+.error {
+  font-weight: 600;
+  color: var(--hp-color-danger-text);
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  margin-block-start: var(--hp-space-4);
+}
+
+.outcome {
+  margin-block-start: var(--hp-space-5);
+}

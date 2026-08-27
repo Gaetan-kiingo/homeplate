@@ -1,0 +1,51 @@
+/* client/src/features/community/MessagesPage.module.css — U6-COMMUNITY (FR-06, NFR-07).
+ * Token-only colours (build-plan G.3 — zero hex literals outside styles/tokens.css); every
+ * pair is one of tokens.css's MEASURED pairs: meta/truncation text --hp-color-text-muted on
+ * --hp-color-surface = 8.81:1 (body ≥ 4.5:1); message body --hp-color-text on surface =
+ * 14.75:1; send error --hp-color-danger-text on surface = 6.57:1; message borders are
+ * --hp-color-border-subtle, documented DECORATIVE (grouping is also conveyed by spacing and
+ * the list structure, never by the border colour alone).
+ * Responsive (320 px floor): fluid widths and overflow-wrap only — nothing here can force
+ * horizontal scroll. */
+
+.messageList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-3);
+}
+
+.message {
+  background: var(--hp-color-surface);
+  border: 1px solid var(--hp-color-border-subtle);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-3);
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.messageMeta {
+  margin: 0 0 var(--hp-space-1);
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+
+.messageSender {
+  font-weight: 600;
+}
+
+.messageBody {
+  margin: 0;
+  color: var(--hp-color-text);
+}
+
+.truncationNote {
+  color: var(--hp-color-text-muted);
+}
+
+.sendError {
+  font-weight: 600;
+  color: var(--hp-color-danger-text);
+}

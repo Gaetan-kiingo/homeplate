@@ -74,7 +74,7 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
     expect(offenders).toEqual([]);
   });
 
-  test('wave-5 client foundation is ON disk; wave-6 feature screens are NOT yet (scope guard — SRS §1.2 / §2.1.2, build-plan §6.1)', () => {
+  test('wave-5 client foundation and the five wave-6 feature trees are ON disk (scope guard — SRS §1.2 / §2.1.2, build-plan §6/G.4)', () => {
     // `safety` left the absent-list when U4-SAFETY landed (FR-07): its coverage is asserted
     // by tests/unit/safety.test.js, tc07-safety.test.js and it04-safety-delivery.test.js.
     // `moderation` left it when U4-MODERATION landed (FR-08) — the positive assertion is in
@@ -99,19 +99,24 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
     ]) {
       expect(fs.existsSync(path.join(ROOT, 'client', f))).toBe(true);
     }
-    // Wave-6 scope guard, same pattern as before: no feature screens exist yet. A wave-6
-    // feature lands as client/src/features/<name>/routes.jsx (glob-discovered); when the
-    // first one lands, this assertion leaves the same way `client` just did.
+    // Wave-6 scope guard, re-baselined by U6R-FIX (finding W6-G1): the four 6A units
+    // landed exactly five feature trees, each publishing client/src/features/<name>/routes.jsx
+    // for the glob-discovering router (client/src/routes.jsx). The list is EXACT on purpose —
+    // a sixth tree (payments, GPS tracking, AI listing generation, ...) would be out-of-scope
+    // work (SRS §1.2) and must fail this guard until a build-plan revision adds it.
     const featuresDir = path.join(ROOT, 'client', 'src', 'features');
-    const featureRouteFiles = fs.existsSync(featuresDir)
-      ? fs
-          .readdirSync(featuresDir, { withFileTypes: true })
-          .filter(
-            (e) => e.isDirectory() && fs.existsSync(path.join(featuresDir, e.name, 'routes.jsx'))
-          )
-          .map((e) => e.name)
-      : [];
-    expect(featureRouteFiles).toEqual([]);
+    const featureRouteFiles = fs
+      .readdirSync(featuresDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && fs.existsSync(path.join(featuresDir, e.name, 'routes.jsx')))
+      .map((e) => e.name)
+      .sort();
+    expect(featureRouteFiles).toEqual([
+      'account',
+      'booking',
+      'community',
+      'discovery',
+      'moderation',
+    ]);
   });
 
   test('wave-5 client sources carry no stub markers and no banned TLS/cookie escapes (SRS §2.1.2, NFR-03; build-plan §6.1)', () => {

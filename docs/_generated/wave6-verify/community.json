@@ -1,0 +1,126 @@
+{
+  "lane": "U6V-COMMUNITY",
+  "date": "2026-08-26",
+  "baseCommit": "e8a610d",
+  "treeState": "e8a610d + untracked wave-6 feature subtrees; client/src/features/community/** is the subject under verification (uncommitted, as built by U6-COMMUNITY)",
+  "requirements": ["FR-05", "FR-06", "FR-07", "FR-08", "NFR-07"],
+  "sourceEdits": "none — verify-only; the only file this lane created is this findings JSON",
+  "summary": "All ten briefed clauses PASS by re-execution. The FR-05 comment-required rule (ratified 2026-08-26) is marked on the form BEFORE submit and a photo-only review is blocked client-side with an explanation and zero outbound requests; REVIEW_EXISTS/BOOKING_NOT_COMPLETED/VALIDATION_FAILED 409/422 refusals render real per-code copy into the assertive aria-live region; a sent message's 201 body renders immediately with no moderation state ever displayed (ADR-002), and 403 NOT_PARTICIPANT / 409 BOOKING_CANCELLED map to typed human messages on both the load and send paths; the safety alert demands an explicit kit-Dialog confirmation (open and cancel provably send nothing), reports the truthful three-part FR-07 outcome, and the no-emergency-contact path is surfaced both before raising and in the outcome with /account links; the review success state states born-pending and never says published. Backend contracts the screens rely on were re-executed against this exact tree: TC-05, TC-06, TC-07, TC-08 and the wave-4 status suite all pass (5 suites / 60 tests). Community client specs: 3 files / 23 tests pass; eslint + prettier clean; npm run test:a11y exits 1 honestly with 7/7 NFR-07 interfaces present, all 11 static routes clean at wcag2a/wcag2aa, and the three community routes among the 6 parameterized routes that stay unaudited until wave-7 fixture ids. ONE low-severity confirmed finding (U6VC-F1): the live 401 code on every community endpoint is NO_SESSION, but the shared community error map only keys AUTHENTICATION_REQUIRED, so the actionable go-sign-in copy is unreachable and 401s fall back to the server's terse envelope message. One out-of-lane observation for U6V-BOOKING (client full-suite failure in BookingsListPage.test.jsx).",
+  "checks": [
+    {
+      "subject": "FR-05 — comment requirement marked BEFORE submit (ratified 2026-08-26, W4-F2)",
+      "status": "pass",
+      "clause": "comment-required marked before submit",
+      "evidence": "client/src/features/community/ReviewPage.jsx: intro copy 'A rating and a written comment are required; photos are optional.'; the Comment FormField carries required (native `required` + visible '(required)' marker via client/src/ui/FormField.jsx:56) plus the hint 'Required — describe your experience in at least one character. Photos can never replace the comment.' — all rendered on first paint, before any submit. Re-executed: `npx vitest run src/features/community` → ReviewPage.test.jsx 'marks rating and comment required, blocks an empty submit with a focused summary, sends nothing' PASSES: both controls toBeRequired(), an empty submit renders the GDS ErrorSummary (role=alert) which TAKES FOCUS with one link per field (#review-rating, #review-comment), and fn.mock.calls proves the ONLY traffic was session hydration — no review POST left the browser."
+    },
+    {
+      "subject": "FR-05 — photo-only review blocked client-side with an explanation, nothing uploaded",
+      "status": "pass",
+      "clause": "photo-only blocked with explanation",
+      "evidence": "ReviewPage.jsx handleSubmit: comment.trim()==='' with files.length>0 yields the specific message 'Write a comment — photos alone cannot be submitted: every review needs at least one character of text.' and returns BEFORE uploadPhotos() or the review POST run, so the rule is never discovered as a server 422. Re-executed: ReviewPage.test.jsx 'blocks a photo-only review client-side with an explanation and uploads nothing' PASSES — rating 5 + one uploaded File, submit → ErrorSummary link with that exact copy href='#review-comment', and zero /api/media or /reviews calls. Server enforcement stays authoritative: src/schemas/reviews.js:64 comment = safeText({min:1,max:2000}); re-executed tests/tc-core/tc05-reviews.test.js PASSES on this tree (422 photo-only pinned server-side). The client also sends comment.trim(), matching the schema's min-1 after-trim reading."
+    },
+    {
+      "subject": "FR-05 — REVIEW_EXISTS and the other typed submit refusals render real per-code messages",
+      "status": "pass",
+      "clause": "REVIEW_EXISTS/409 handling",
+      "evidence": "ReviewPage.jsx REVIEW_OVERRIDES maps REVIEW_EXISTS → 'You have already reviewed this booking — each participant can leave one review.' and BOOKING_NOT_COMPLETED → 'This booking is not completed yet…'; MEDIA_UPLOAD_FAILED and MEDIA_KEY_FORBIDDEN carry their own copy; messageForError (components/communityMessages.js) falls back to the server's envelope message for VALIDATION_FAILED. Re-executed: ReviewPage.test.jsx it.each over REVIEW_EXISTS(409)/BOOKING_NOT_COMPLETED(409)/VALIDATION_FAILED(422) PASSES — each message is rendered in the page (excluding the aria-live mirror), mirrored into the assertive live region, and the form SURVIVES the refusal (no fake success). MEDIA_UPLOAD_FAILED case additionally proves the review POST never fires when a photo PUT fails (reviewCalls(fn) length 0). Backend codes confirmed real on this tree: src/modules/reviews/service.js lines 99/113/120/128/163-168 (MEDIA_KEY_FORBIDDEN, BOOKING_NOT_FOUND, NOT_PARTICIPANT, BOOKING_NOT_COMPLETED, REVIEW_EXISTS on constraint reviews_one_per_booking_author)."
+    },
+    {
+      "subject": "FR-06 — message immediacy: the 201 body renders at once, no moderation state shown",
+      "status": "pass",
+      "clause": "message immediacy",
+      "evidence": "MessagesPage.jsx handleSend renders the POST's 201 `message` straight into the list ('the 201 body IS the delivered message'), clears the draft, and announces 'Message sent.' politely; no code path reads or displays any moderation field, and the page copy states 'delivered immediately and checked for safety afterwards' (the user-facing face of ADR-002 deliver-first). Re-executed: MessagesPage.test.jsx 'renders the delivered message immediately, announces it and clears the field' PASSES — exactly one POST with body {body:'…'}, the sent text visible without any refresh. Backend side re-executed on this tree: tests/tc-core/tc06-messaging.test.js PASSES (201 + same-transaction moderation.scan outbox row, zero LLM adapter calls on the request path). Server response shape verified: src/modules/messaging/service.js serializeMessage → {id,bookingId,senderId,body,createdAt}, exactly the fields the screen consumes."
+    },
+    {
+      "subject": "FR-06 — 403 NOT_PARTICIPANT / 409 BOOKING_CANCELLED mapping on load AND send paths",
+      "status": "pass",
+      "clause": "message 403/409 mapping",
+      "evidence": "MessagesPage.jsx MESSAGE_OVERRIDES: NOT_PARTICIPANT → \"Only this booking's guest or host can read or send messages in this conversation.\"; BOOKING_CANCELLED → 'This booking is cancelled, so its conversation is closed.'; load failures set the 'Conversation unavailable' error card (send form withheld), send failures render inline; both are announced assertively. Re-executed: MessagesPage.test.jsx 'renders the typed 403 NOT_PARTICIPANT message for a third party, with no send form', 'renders the typed 409 BOOKING_CANCELLED message when the thread itself is closed' and 'maps a 409 BOOKING_CANCELLED send to its typed message and announces it' all PASS — the rendered text is asserted OUTSIDE the aria-live mirror, and the mirror carries it too. Codes confirmed real: src/modules/messaging/service.js:70-88 (BOOKING_NOT_FOUND 404 / NOT_PARTICIPANT 403 / BOOKING_CANCELLED 409), and the shared gate applies to both verbs (assertThreadOpen). NFR-02 kept: PAGE_SIZE 50 ≤ the schema cap 100 (src/schemas/common.js:44); a long thread shows the LATEST page with an honest 'Showing the latest N of T messages' note."
+    },
+    {
+      "subject": "FR-07 — raising an alert demands explicit confirmation; open/cancel provably send nothing",
+      "status": "pass",
+      "clause": "safety-alert confirm",
+      "evidence": "SafetyAlertPage.jsx posts ONLY from the Dialog's 'Yes, raise the alert' button; the kit Dialog (client/src/ui/Dialog.jsx) is the full WCAG modal pattern — role=dialog aria-modal, focus moved in (initialFocusRef = the Cancel button, so the destructive action is never the default focus), Tab trap, Escape closes, focus restored to the opener. Re-executed: SafetyAlertPage.test.jsx 'explains the three-part outcome and sends nothing on render' and 'opening the dialog does not post; cancelling closes it without posting' PASS — alertCalls(fn) is 0 after render, after open, and after cancel; 'confirming posts the empty-body alert…' proves exactly one POST with body '{}' (matching src/schemas/safety.js:28 raiseAlertBody = z.object({}))."
+    },
+    {
+      "subject": "FR-07 — the success state reports the truthful three-part outcome",
+      "status": "pass",
+      "clause": "three-part outcome",
+      "evidence": "SafetyAlertPage.jsx outcome card lists exactly the three FR-07 legs: (1) persisted — 'saved and cannot be lost' (true: the 201 commits the SAFETY_ALERT row + outbox row in one transaction before any delivery, ADR-001/003); (2) moderators notified — 'already visible in their review queue and stays there until it is handled' (true at 201 time: GET /api/moderation/alerts lists persisted alerts regardless of delivery state — re-executed tests/tc-core/tc07-safety.test.js PASSES including the dead-lettered-but-still-listed terminal state); (3) delivery ATTEMPTED by email with automatic retry — phrased as attempt, never 'delivered' (the worker delivers; src/outbox/handlers/safetyAlert.js). The same three parts are stated BEFORE raising under 'What happens when you raise an alert'. Re-executed: 'confirming posts the empty-body alert and reports the three-part outcome' PASSES, including the polite announcement 'Safety alert recorded. Moderators are notified and delivery to your emergency contact will be attempted.' Typed refusal path also re-executed: 403 NOT_PARTICIPANT renders and announces \"Only this booking's guest or host can use this page.\" with no outcome card and the dialog closed."
+    },
+    {
+      "subject": "FR-07 — no-emergency-contact path surfaced before raising and in the outcome",
+      "status": "pass",
+      "clause": "no-emergency-contact path",
+      "evidence": "SafetyAlertPage.jsx: hasContact = Boolean(user.emergencyContact) from the session; an authenticated user without one gets the 'No emergency contact on file' card with a link to /account BEFORE raising, adjusted copy inside the confirm dialog ('only moderators will be notified'), and an outcome leg stating no delivery was attempted, with a second /account link. Re-executed: SafetyAlertPage.test.jsx 'points to /account before raising and reports no delivery attempted after' PASSES (two /account links total; polite announcement omits the delivery clause). The session shape carries the field on BOTH hydration paths: src/modules/users/repo.js serializeUser includes emergencyContact (null when none), and src/modules/auth/routes.js:37,116 serialize register/login responses through the same serializer. Contact-with-no-email cannot exist (src/schemas/auth.js:68-72 — name, phone AND email all required), so hasContact truthfully implies an email channel exists; the server's no_channel leg matches (src/outbox/handlers/safetyAlert.js:176-198)."
+    },
+    {
+      "subject": "FR-08 — born-pending statements after the public-content submit (reviews)",
+      "status": "pass",
+      "clause": "born-pending statements",
+      "evidence": "ReviewPage.jsx success state: heading 'Review submitted — pending moderation', body 'not public yet: every review is checked by Homeplate moderation first and appears only once approved', polite announcement 'Review submitted. It is pending moderation and will not be public until approved.' — the word 'published' appears nowhere, and the submit form is unmounted after success (no double-submit). Re-executed: ReviewPage.test.jsx 'posts {rating, comment, imageKeys: []} and states the review is pending moderation' PASSES. The messaging screen deliberately makes NO pending statement — messages are not public content and deliver immediately (ADR-002); its copy says 'checked for safety afterwards' and renders no per-message moderation state, matching the ratified flag-vs-hide policy (W4-F4/TCB-W4-02). Server truth re-executed on this tree: tc05-reviews (born pending, absent from public reads until approved) and tc08-moderation-substrate PASS."
+    },
+    {
+      "subject": "NFR-07 — the accessibility clauses checkable now, per screen",
+      "status": "pass",
+      "clause": "NFR-07 checkable clauses",
+      "evidence": "Structure: each of the three screens owns exactly one h1 + document.title via usePageTitle (asserted in all three specs); sections use labelled h2 landmarks under the shell's AppLayout landmark layout (mounted via the routes.jsx glob — client/src/routes.jsx:54). Labels: every control goes through FormField (label htmlFor, hint/error via aria-describedby, aria-invalid, native required + visible '(required)' marker — client/src/ui/FormField.jsx). Errors: pre-submit violations use the focused role=alert ErrorSummary with per-field links; async failures render in-page AND mirror into the shell StatusAnnouncer regions (polite role=status / assertive role=alert) — all asserted in the specs, which also verify the rendered copy exists OUTSIDE the live region. Dialog: full keyboard pattern (trap, Escape, restore; Cancel takes initial focus). Images: the screens render no <img> (photos are file inputs; the kit Img with required alt is not needed here). Contrast/tokens: all three .module.css files are token-only — grep over client/src/features/community for hex literals returns zero; pairs used are tokens.css measured pairs (documented in-file: muted 8.81:1, body 14.75:1, danger 6.57:1 — all ≥ 4.5:1). Axe: `npm run test:a11y` cannot audit the three community routes yet (parameterized — wave-7 fixture ids), so axe evidence for these exact pages is deferred to wave 7 BY DESIGN; the harness confirms the routes exist and every auditable route on the tree is clean."
+    },
+    {
+      "subject": "NFR-07 harness — honest interface coverage after wave 6",
+      "status": "pass",
+      "clause": "a11y harness re-run",
+      "evidence": "`npm run test:a11y` on this tree: EXIT 1 (honestly red, by the §8.6 rule). Coverage: 7 of 7 NFR-07 interfaces EXIST — Messaging (FR-06) is satisfied by this lane's route /bookings/:bookingId/messages, which matches the harness pattern /^\\/bookings\\/[^/]+\\/messages/ (pinned by MessagesPage.test.jsx 'declares exactly the three community paths…'). All 11 auditable static routes report 0 serious/critical wcag2a+wcag2aa violations; the keyboard check (skip link → #main) passes. 6 parameterized routes (the three community ones plus /bookings/:bookingId, /listings/:id, /hosts/:id) exist but stay UNAUDITED until wave-7 seeded fixture ids and hold the gate red. NFR-07 remains OPEN regardless: the UT-01 five-participant study is a human activity."
+    },
+    {
+      "subject": "Backend contracts the community screens consume — re-executed, not assumed",
+      "status": "pass",
+      "clause": "contract fidelity",
+      "evidence": "Endpoint transcription verified against src/modules/{reviews,messaging,safety}/routes.js: POST /api/bookings/:id/reviews → {review}; POST|GET /api/bookings/:id/messages → {message} | {items,page,pageSize,total}; POST /api/bookings/:id/safety-alerts (empty body) → {alert}; the ADR-004 media supply path (POST /api/media/uploads → PUT storage URL with credentials:'omit' → POST /api/media) matches client/src/api/media.js, and the ReviewPage spec pins the cookie-less PUT. Re-executed on isolated lane infra (db homeplate_u6vcomm_test / redis db 11 / bucket homeplate-media-u6vcomm-test): tc05-reviews, tc06-messaging, tc05-07-wave4-status (28 tests) and tc07-safety, tc08-moderation-substrate (32 tests) — 5 suites / 60 tests, ALL PASS, under TEST_STRICT_HANDLES=1. The client-side endpoint-surface spec (client/src/api/endpoints.test.js, includes the zero-document.cookie grep gate) passes inside the client suite run."
+    }
+  ],
+  "findings": [
+    {
+      "id": "U6VC-F1",
+      "severity": "low",
+      "confidence": "confirmed",
+      "requirement": "NFR-07 (error copy quality; build-plan G.2 render-a-real-message-per-code)",
+      "file": "client/src/features/community/components/communityMessages.js",
+      "line": 17,
+      "summary": "The live 401 code on every community endpoint is NO_SESSION, but the shared community map only keys AUTHENTICATION_REQUIRED, so the actionable sign-in copy is unreachable dead code.",
+      "detail": "src/modules/auth/middleware.js:34,39 — requireSession, the only auth gate on all five community-consumed routes, always overrides the AuthenticationError default with { code: 'NO_SESSION' }, and src/middleware/errorHandler.js:28 passes err.code through to the envelope verbatim. communityMessages.js BASE_MESSAGES keys 'AUTHENTICATION_REQUIRED' (the src/lib/errors.js:55 default that requireSession never emits), so an anonymous or expired-session user on MessagesPage / ReviewPage / SafetyAlertPage falls through to the envelope-message fallback and sees the terse server text ('Authentication required' / 'Session is invalid or expired') instead of the map's actionable 'You need to sign in first. Go to the login page, sign in, then come back here.' NOT a G.2 violation outright — the fallback is still a human sentence, never a code or stringified body, and the 401 also flips the session store to anonymous via the http.js broadcast — but the copy the unit wrote for exactly this case can never render, and none of the three community specs exercises a 401, so the gap was invisible to the suite. The same latent NO_SESSION-vs-AUTHENTICATION_REQUIRED assumption appears in the booking and account lanes (client/src/features/booking/components/bookingErrors.js:181, BookingsListPage.jsx:66, account/components/errorCopy.js:73, moderation/components/errorCopy.js:22) — flagged here for the coordinator since those files are outside this lane; the discovery lane's specs already use NO_SESSION correctly.",
+      "suggestedFix": "In communityMessages.js, key the sign-in copy under NO_SESSION (keeping AUTHENTICATION_REQUIRED as an alias is harmless and covers the eligibility middleware's bare default), and add one spec per screen stubbing a 401 {code:'NO_SESSION'} asserting the actionable copy renders and is announced. Owner: U6R-FIX (file is inside the community subtree).",
+      "clauseImpact": "None of the ten briefed clauses fails: 401 is not among the briefed refusal codes, and the rendered fallback is still human. Copy-quality gap only."
+    }
+  ],
+  "observations": [
+    {
+      "id": "U6VC-O1",
+      "scope": "out-of-lane (U6-BOOKING / U6V-BOOKING)",
+      "summary": "Full client suite on this tree: 32 files / 337 tests, 336 pass, 1 FAIL in client/src/features/booking/BookingsListPage.test.jsx:88 (expects link 'Ramen night' with href '/bookings/b2'; getByRole('link',{name:'Ramen night'}) finds none — page stuck at 'Loading your bookings' in the captured DOM). Booking subtree is not this lane's ownership and sibling lanes may have been mid-edit; reported for the booking verifier / U6R-FIX, not counted against community. The community subset re-run in isolation is fully green (3 files / 23 tests)."
+    },
+    {
+      "id": "U6VC-O2",
+      "scope": "informational (no clause breached)",
+      "summary": "ReviewPage uploads and attaches photos BEFORE the review POST, so a subsequent 409 (REVIEW_EXISTS / BOOKING_NOT_COMPLETED) leaves already-attached media rows, and a retry mints fresh keys (duplicates). Ownership/lifecycle is server-side (delete-mark + NFR-12 erasure by key), the keys are namespaced to the caller, and no FR-05 clause constrains this ordering — noted only so the wave-7 UX pass knows the trade-off was seen. Sequencing the review POST first is impossible: the schema needs the keys in the body."
+    },
+    {
+      "id": "U6VC-O3",
+      "scope": "informational",
+      "summary": "MessagesPage's 15 s poll (REFRESH_INTERVAL_MS) satisfies FR-06 'periodic refresh' with aria-live etiquette (announces only genuinely new arrivals, transient poll failures keep the last good view — both pinned by specs). A failed initial load self-heals on the next successful poll. No finding."
+    }
+  ],
+  "commandsRun": [
+    "npm --prefix client test  → 32 files / 337 tests: 336 pass, 1 fail (BookingsListPage.test.jsx:88 — out-of-lane, see U6VC-O1)",
+    "npx vitest run src/features/community  (cwd client/)  → 3 files / 23 tests, ALL PASS (SafetyAlertPage 5, MessagesPage 10, ReviewPage 8)",
+    "npx eslint client/src/features/community  → exit 0; npx prettier --check client/src/features/community  → 'All matched files use Prettier code style!', exit 0",
+    "npm run test:a11y  → exit 1 (honest red): 7/7 NFR-07 interfaces present, 11/11 auditable static routes 0 serious/critical wcag2a+wcag2aa, keyboard skip-link check passes, 6 parameterized routes (incl. the three community routes) unaudited pending wave-7 fixture ids",
+    "TEST_STRICT_HANDLES=1 TEST_DATABASE_URL=postgres://…/homeplate_u6vcomm_test TEST_REDIS_URL=redis://localhost:6379/11 OBJECT_STORAGE_BUCKET=homeplate-media-u6vcomm-test npx jest tests/tc-core/tc05-reviews.test.js tests/tc-core/tc06-messaging.test.js tests/tc-core/tc05-07-wave4-status.test.js --runInBand  → 3 suites / 28 tests PASS",
+    "TEST_STRICT_HANDLES=1 (same lane infra) npx jest tests/tc-core/tc07-safety.test.js tests/tc-booking/tc08-moderation-substrate.test.js --runInBand  → 2 suites / 32 tests PASS",
+    "grep -rn 'document.cookie' client/src  → 4 hits, all comments or the grep-gate spec itself; zero real references",
+    "grep hex-literal scan over client/src/features/community  → zero hits (token-only CSS)"
+  ],
+  "gateNote": "The full backend ladder (63 suites / 1397 tests) and root lint/build are U6V-GATES-A11Y's assignment in this parallel wave; this lane re-executed the five backend acceptance suites its clauses depend on rather than racing a sibling for the whole ladder on shared infrastructure (wave-3 postmortem: concurrent full-suite runs produced machine-contention flakes). Nothing in this lane touched backend source or tests.",
+  "consumedBy": "U6R-FIX"
+}

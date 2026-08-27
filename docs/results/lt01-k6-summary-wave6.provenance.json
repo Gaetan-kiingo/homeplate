@@ -1,0 +1,21 @@
+{
+  "artifact": "lt01-k6-summary-wave6.json",
+  "requirement": ["NFR-01", "NFR-02"],
+  "lane": "rt-lt-resilience verifier (wave-6 re-execution)",
+  "scenario": "tests/load/smoke.js defaults — 200 VUs, 30s warmup + 5m steady, closed model, 20 sessions",
+  "k6Version": "k6 v2.2.0 (commit/00a9a1b7f5, go1.26.5, darwin/arm64)",
+  "runDate": "2026-08-26T17:17-07:00 (America/Los_Angeles)",
+  "commit": "e8a610d850104b2ec748f917ff62b180f2f13d3a (wave-6 working tree, backend identical to baseline)",
+  "server": "isolated stack: node scripts/dev.js (api+worker) on port 3100, DATABASE_URL=homeplate_rtlt_load (throwaway, dropped after the run), REDIS_URL db 12 (flushed after), NODE_ENV=development, mock adapters per .env",
+  "dataset": "npm run seed:volume into the throwaway DB — 10,000 users, 1,000 host_profiles, 1,000 approved active listings on one America/Los_Angeles day, 1,000 bookings (NFR-02 floor enforced by the script, MIN_LISTINGS=1000)",
+  "host": "darwin 24.6.0, 12 CPUs, 24 GB, load avg 4.87 at start; sibling verifier lanes active on the same machine (contention biases latency UP, so the pass is conservative)",
+  "steadyPhaseResults": {
+    "overallP95Ms": 120.07,
+    "endpointsP95Ms": { "search": 2.86, "listingDetail": 109.05, "hostPage": 129.2, "hostReviews": 68.11 },
+    "errorRate": 0,
+    "requestsSteady": 1028672,
+    "requestsTotal": 1129229,
+    "throughputRps": 3413.9,
+    "allThresholdsPassed": true
+  }
+}

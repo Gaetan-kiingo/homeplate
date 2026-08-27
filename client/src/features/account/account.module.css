@@ -1,0 +1,119 @@
+/* client/src/features/account/account.module.css — U6-ACCOUNT-MOD styles (NFR-07: token-only
+ * colours from styles/tokens.css — zero raw colour literals, so every pair inherits the
+ * AA-measured contrast contract; 320 px reflow: fluid max-widths and wrapping flex rows, with
+ * horizontal scrolling never introduced by this sheet). */
+
+.lead {
+  color: var(--hp-color-text-muted);
+  max-width: 65ch;
+}
+
+.section {
+  margin-block: var(--hp-space-6);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 30rem;
+}
+
+.fieldset {
+  border: 1px solid var(--hp-color-border-subtle);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-4);
+  margin: var(--hp-space-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+}
+
+.fieldset legend {
+  font-weight: 600;
+  padding-inline: var(--hp-space-2);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  margin-block-start: var(--hp-space-3);
+}
+
+/* Visible failure text; the assertive announcement comes from useAnnounce(), so this box
+ * deliberately carries no role="alert" (one spoken announcement, not two). The failure is
+ * stated in text — colour is never the only carrier (WCAG 1.4.1). */
+.errorBox {
+  border: 2px solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+  color: var(--hp-color-danger-text);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+
+.noticeBox {
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sm);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+
+.ready {
+  color: var(--hp-color-success-text);
+  font-weight: 600;
+}
+
+.blocked {
+  color: var(--hp-color-danger-text);
+  font-weight: 600;
+}
+
+.reasonList {
+  margin: var(--hp-space-2) 0 0;
+  padding-inline-start: var(--hp-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 65ch;
+}
+
+.reasonCode {
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--hp-space-2);
+  max-width: 65ch;
+}
+
+.checkboxRow input {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  accent-color: var(--hp-color-primary);
+}
+
+.checkboxRow input:focus-visible {
+  outline: var(--hp-focus-ring-width) solid var(--hp-focus-ring-color);
+  outline-offset: var(--hp-focus-ring-offset);
+}
+
+.metaList {
+  margin: 0;
+}
+
+.metaList dt {
+  font-weight: 600;
+  margin-block-start: var(--hp-space-2);
+}
+
+.metaList dd {
+  margin: 0;
+  color: var(--hp-color-text-muted);
+}

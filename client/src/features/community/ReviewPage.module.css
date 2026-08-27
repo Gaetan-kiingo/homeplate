@@ -1,0 +1,15 @@
+/* client/src/features/community/ReviewPage.module.css — U6-COMMUNITY (FR-05, NFR-07).
+ * Token-only colours (build-plan G.3 — zero hex literals outside styles/tokens.css); the
+ * pairs used are tokens.css MEASURED pairs: file note --hp-color-text-muted on
+ * --hp-color-surface = 8.81:1 (body ≥ 4.5:1); server error --hp-color-danger-text on
+ * surface = 6.57:1, and the error is also conveyed in TEXT (announced via aria-live),
+ * never by colour alone. Fluid widths only — nothing forces horizontal scroll at 320 px. */
+
+.fileNote {
+  color: var(--hp-color-text-muted);
+}
+
+.serverError {
+  font-weight: 600;
+  color: var(--hp-color-danger-text);
+}

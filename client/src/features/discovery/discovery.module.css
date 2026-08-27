@@ -1,0 +1,209 @@
+/* client/src/features/discovery/discovery.module.css — U6-DISCOVERY screen styles
+ * (FR-01 search, FR-02 listing detail, FR-03 host profile).
+ * NFR-07: every colour is a var(--hp-*) token from client/src/styles/tokens.css, whose
+ * text/background pairs are contrast-measured by client/src/ui/kit-contract.test.js —
+ * no colour literals here, so nothing can drift below AA. Layout is fluid (grid auto-fill,
+ * max-width 100% media) down to the 320 px floor with no horizontal scroll. */
+
+.lede {
+  color: var(--hp-color-text-muted);
+  max-width: 60ch;
+}
+
+/* FR-01 filter form: responsive grid of labelled FormFields. */
+.searchForm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--hp-space-4);
+  align-items: end;
+  margin-block: var(--hp-space-5);
+}
+
+.formActions {
+  display: flex;
+  gap: var(--hp-space-3);
+  align-items: center;
+}
+
+/* Active host-filter notice (FR-01 hostId filter, applied from a host-profile link). */
+.filterChip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  align-items: center;
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block-end: var(--hp-space-4);
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border-subtle);
+  border-radius: var(--hp-radius-md);
+}
+
+.filterChip p {
+  margin: 0;
+}
+
+/* Informational state box: degraded-mode explanation (NFR-09), empty results, notices. */
+.stateBox {
+  padding: var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border-subtle);
+  border-inline-start: var(--hp-space-1) solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sm);
+  color: var(--hp-color-text);
+}
+
+/* Terminal failure box (SEARCH_DEGRADED unavailable, NETWORK_ERROR, NOT_FOUND …). */
+.errorBox {
+  padding: var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border-subtle);
+  border-inline-start: var(--hp-space-1) solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+}
+
+.errorBox h2 {
+  margin-block-start: 0;
+}
+
+/* FR-01 result grid / FR-03 example dishes. */
+.resultsList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  gap: var(--hp-space-4);
+}
+
+.resultCard {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+}
+
+.cardImage {
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--hp-radius-sm);
+}
+
+.cardTitle {
+  font-size: var(--hp-font-size-lg);
+  line-height: var(--hp-line-height-tight);
+  margin: 0;
+}
+
+.cardMeta {
+  margin: 0;
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+}
+
+/* Shared pager (search result pages, review pages). */
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  align-items: center;
+  margin-block-start: var(--hp-space-4);
+}
+
+.pageStatus {
+  margin: 0;
+}
+
+/* FR-02 / FR-03 detail sections. */
+.section {
+  margin-block-start: var(--hp-space-6);
+}
+
+.metaList {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--hp-space-3) var(--hp-space-5);
+}
+
+.metaList dt {
+  font-weight: 600;
+}
+
+.metaList dd {
+  margin: var(--hp-space-1) 0 0 0;
+}
+
+.metaGroup {
+  margin: 0;
+}
+
+/* FR-02 allergy warning — visually distinct, still token-contrast text. */
+.allergy {
+  padding: var(--hp-space-3) var(--hp-space-4);
+  background: var(--hp-color-surface-raised);
+  border-inline-start: var(--hp-space-1) solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+}
+
+/* ADR-010 disclosure note: why no exact address is shown. */
+.addressNote {
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+  max-width: 60ch;
+}
+
+/* FR-02 / FR-03 photo galleries. */
+.gallery {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: var(--hp-space-3);
+}
+
+.galleryImage {
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: var(--hp-radius-sm);
+}
+
+/* FR-05 review cards. */
+.reviewList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-4);
+}
+
+.reviewHead {
+  margin: 0;
+}
+
+.reviewBody {
+  margin-block-end: 0;
+}
+
+/* Reserve CTA — a real link styled with the measured primary-button token pair; the
+ * visible focus indicator comes from the App.css global :focus-visible outline. */
+.reserveCta {
+  display: inline-block;
+  padding: var(--hp-space-3) var(--hp-space-5);
+  background: var(--hp-color-primary);
+  color: var(--hp-color-on-primary);
+  border-radius: var(--hp-radius-md);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.reserveCta:hover {
+  background: var(--hp-color-primary-hover);
+}

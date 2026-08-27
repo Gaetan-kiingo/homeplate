@@ -1,0 +1,127 @@
+/* client/src/features/moderation/moderation.module.css — U6-ACCOUNT-MOD styles for the
+ * FR-08 queue and FR-07 alerts views (NFR-07: token-only colours from styles/tokens.css —
+ * zero raw colour literals; 320 px reflow: wrapping flex rows, fluid list items, no
+ * horizontal scroll introduced here; status is always carried by TEXT, colour only
+ * reinforces it). */
+
+.lead {
+  color: var(--hp-color-text-muted);
+  max-width: 65ch;
+}
+
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-4);
+  margin-block: var(--hp-space-3);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-4);
+  align-items: flex-start;
+  margin-block: var(--hp-space-4);
+}
+
+.filters > * {
+  min-width: 12rem;
+}
+
+.itemList {
+  list-style: none;
+  margin: var(--hp-space-4) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-4);
+}
+
+.excerpt {
+  background: var(--hp-color-surface-raised);
+  border-radius: var(--hp-radius-sm);
+  padding: var(--hp-space-3);
+  overflow-wrap: break-word;
+}
+
+.meta {
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+}
+
+.metaList {
+  margin: var(--hp-space-2) 0 0;
+  font-size: var(--hp-font-size-sm);
+}
+
+.metaList dt {
+  font-weight: 600;
+  margin-block-start: var(--hp-space-1);
+}
+
+.metaList dd {
+  margin: 0;
+  color: var(--hp-color-text-muted);
+  overflow-wrap: break-word;
+}
+
+.decisionForm {
+  border-block-start: 1px solid var(--hp-color-border-subtle);
+  margin-block-start: var(--hp-space-3);
+  padding-block-start: var(--hp-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 30rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 30rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  margin-block-start: var(--hp-space-2);
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  align-items: center;
+  margin-block: var(--hp-space-4);
+}
+
+/* Visible failure text; the assertive announcement comes from useAnnounce() (no duplicate
+ * role="alert"), and failure is stated in text — never colour alone (WCAG 1.4.1). */
+.errorBox {
+  border: 2px solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+  color: var(--hp-color-danger-text);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+
+.noticeBox {
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sm);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+
+.statusFailed {
+  color: var(--hp-color-danger-text);
+  font-weight: 600;
+}
+
+.statusDelivered {
+  color: var(--hp-color-success-text);
+  font-weight: 600;
+}

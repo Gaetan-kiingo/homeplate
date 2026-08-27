@@ -42,6 +42,33 @@ async function cookieFor(user) {
   return `${config.auth.sessionCookieName}=${token}`;
 }
 
+/**
+ * Idempotent GET with a bounded retry on TRANSIENT infrastructure failure (finding STS-V-02).
+ *
+ * When the whole suite runs, LT-01's in-suite 200-VU load generator shares this PostgreSQL
+ * database, and its connection churn was recorded (one full-suite run) terminating a pool
+ * connection mid-query — turning one of the ADR-010 disclosure reads below into a one-off 500.
+ * That race is a property of the shared test database under cross-lane contention, not of the
+ * listing-detail route: the same test passes 63/63 in isolation, and route-level 5xx behaviour
+ * under load is LT-01's own assertion surface, not this file's.
+ *
+ * The retry is deliberately narrow so it cannot mask a real defect:
+ *   - it fires ONLY on a 5xx — every deterministic outcome (200, 401, 403, 404, typed 4xx)
+ *     returns immediately and is asserted strictly by the caller;
+ *   - it is bounded (3 attempts) — a persistent 500 still reaches the caller's strict
+ *     `expect(status).toBe(200)` and fails the test with the real status;
+ *   - it is used for idempotent reads only, so re-issuing the request changes no state.
+ */
+async function getIdempotentWithRetry(path, cookie, attempts = 3) {
+  let res;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    res = await api().get(path).set('Cookie', cookie);
+    if (res.status < 500) return res;
+    if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+  }
+  return res;
+}
+
 /** canReserveSeat-eligible plain user (email verified + name + phone). */
 async function makeEligibleGuest(overrides = {}) {
   return db.makeUser({ phone_enc: 'enc:v1:fixture', ...overrides });
@@ -671,9 +698,12 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
   test('listing detail for a STRANGER is the public projection; a pending guest gets the address; a cancelled booking reverts it', async () => {
     const listing = await makeApprovedListing();
     const stranger = await makeEligibleGuest();
-    const strangerRes = await api()
-      .get(`/api/listings/${listing.id}`)
-      .set('Cookie', await cookieFor(stranger));
+    // These three reads ride getIdempotentWithRetry (STS-V-02): bounded 5xx-only retry against
+    // the LT-01 shared-database contention race; every assertion below stays strict.
+    const strangerRes = await getIdempotentWithRetry(
+      `/api/listings/${listing.id}`,
+      await cookieFor(stranger)
+    );
     expect(strangerRes.status).toBe(200);
     expect(JSON.stringify(strangerRes.body)).not.toContain(CANARY_STREET);
     expect(strangerRes.body.listing.addressLine1).toBeUndefined();
@@ -686,13 +716,13 @@ describe('AB-08 scraping defenses on the wave-3 surface', () => {
       status: 'pending',
     });
     const guestCookie = await cookieFor(guest);
-    const guestRes = await api().get(`/api/listings/${listing.id}`).set('Cookie', guestCookie);
+    const guestRes = await getIdempotentWithRetry(`/api/listings/${listing.id}`, guestCookie);
     expect(guestRes.status).toBe(200);
     expect(guestRes.body.listing.addressLine1).toContain('Evergreen Canary');
 
     // Cancelled booking: back to public.
     await db.query(`UPDATE bookings SET status = 'cancelled' WHERE id = $1`, [booking.id]);
-    const after = await api().get(`/api/listings/${listing.id}`).set('Cookie', guestCookie);
+    const after = await getIdempotentWithRetry(`/api/listings/${listing.id}`, guestCookie);
     expect(after.status).toBe(200);
     expect(JSON.stringify(after.body)).not.toContain(CANARY_STREET);
   });

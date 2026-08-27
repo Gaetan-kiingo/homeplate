@@ -1,0 +1,218 @@
+{
+  "unit": "U6V-DISCOVERY",
+  "date": "2026-08-26",
+  "verifies": "U6-DISCOVERY (client/src/features/discovery/**)",
+  "requirements": ["FR-01", "FR-02", "FR-03", "NFR-09", "AB-08", "NFR-07"],
+  "baseline": "e8a610d + untracked wave-6A feature subtrees on disk",
+  "method": "Re-executed the client acceptance by (1) running the full client vitest suite and reading every discovery spec body to confirm the assertions are substantive, (2) independently reading every discovery source file against the backend serializer allowlists (src/modules/listings/serializers.js, src/modules/hosts/serializers.js), the API client contract (client/src/api/search.js|listings.js|hosts.js) and src/modules/listings/access.js, (3) running npm run lint and npm run test:a11y (which live-renders /search under axe), and (4) targeted greps for document.cookie, precise-coordinate rendering, colour literals and focus-outline suppression. Zero source edits; this file is the unit's only write.",
+  "gates": {
+    "clientTests": {
+      "command": "npm --prefix client test",
+      "result": "32 files / 337 tests, exit 0 (baseline was 17/218; discovery contributes SearchPage.test.jsx 11 tests, ListingDetailPage.test.jsx 9 tests, HostProfilePage.test.jsx 7 tests, plus the route-declaration spec)"
+    },
+    "lint": {
+      "command": "npm run lint",
+      "result": "eslint . && prettier --check . — clean; client/** react/react-hooks/jsx-a11y override active, discovery source is linted, not ignored"
+    },
+    "a11yAudit": {
+      "command": "npm run test:a11y",
+      "result": "7/7 NFR-07 interfaces present. Discovery owns three: /search (audited LIVE: 0 serious/critical wcag2a+wcag2aa violations), /listings/:id (present, parameterized, unaudited until wave-7 seeded ids), /hosts/:id (present, parameterized, unaudited until wave-7 seeded ids). Overall exit 1 by design, listing only parameterized routes — exactly the honest wave-6 outcome build-plan G.1 prescribes.",
+      "backendSuiteNote": "The full backend ladder is U6V-GATES-A11Y's lane per build-plan G.4; not re-run here to avoid concurrent-suite DB cross-talk. No backend file was touched by U6-DISCOVERY or by this unit."
+    }
+  },
+  "verdicts": {
+    "FR-01": [
+      {
+        "clause": "Search screen accepts every src/schemas/search.js filter (location+radiusKm, from/to window, cuisine, hostId) and nothing invented; empty query is a plain browse",
+        "verdict": "pass",
+        "evidence": "SearchPage.jsx queryFromParams/formFromParams transcribe exactly {location, radiusKm, from, to, cuisine, hostId, page}; SearchPage.test.jsx 'labels every schema filter' asserts the five typed filters and that the first call is api.search({}) — empty browse. hostId arrives only by link from a host profile and shows as a clearable notice ('applies the hostId filter from the URL and clears it on demand' passes)."
+      },
+      {
+        "clause": "Timezone-carrying datetimes: from/to submitted as ISO 8601 instants, never a zoneless local string (ADR-009: the server never guesses a zone)",
+        "verdict": "pass",
+        "evidence": "onSubmit converts datetime-local values via new Date(v).toISOString(); spec 'submits the typed filters as schema params' asserts the exact ISO instant. Round-trip back into the form goes through format.isoToLocalInput."
+      },
+      {
+        "clause": "Filters live in the URL (shareable results, working back button); pagination through the URL with bounded pages",
+        "verdict": "pass",
+        "evidence": "URL query is the single source of truth (effect keyed on searchParams); 'pages results ... through the URL' asserts page=2 lands in the api call and 'Page 2 of 3' renders from the server-declared page/pageSize/total — no unbounded fetch."
+      },
+      {
+        "clause": "Results are the ADR-010 public projection only — coarse area label, never an address, never precise coordinates",
+        "verdict": "pass",
+        "evidence": "ListingCard renders location exclusively via format.areaText (areaLabel/city/region). grep over discovery source: coarseLat/coarseLng/lat/lng are never rendered (they appear only in test fixtures, where ListingDetailPage.test.jsx asserts precise values do NOT appear). The public payload cannot leak what the card never reads."
+      },
+      {
+        "clause": "Client-side field validation follows the ErrorSummary pattern without issuing an invalid request",
+        "verdict": "pass",
+        "evidence": "'blocks an invalid radius client-side' asserts role=alert summary with a per-field link, aria-invalid on the control, and api.search still called exactly once."
+      }
+    ],
+    "FR-02": [
+      {
+        "clause": "Detail screen renders every FR-02 payload field: dish name+description, ingredients, allergy warning, date/duration, seat capacity + seats remaining, images, host summary (displayName, bio, averageRating, reviewCount), approved-review preview",
+        "verdict": "pass",
+        "evidence": "Field names cross-checked one-to-one against src/modules/listings/serializers.js PUBLIC_KEYS + DETAIL_CONTEXT_KEYS + HOST_SUMMARY_KEYS — no invented field. 'renders every FR-02 field' asserts each value including the LA-wall-clock schedule ('Sep 3, 2026, 6:30 PM' for 2026-09-04T01:30Z — format.js pins America/Los_Angeles so it is deterministic on any machine), '90 minutes', '4 of 6 seats remaining', both derived alt texts, the host link to /hosts/:id and the review preview. Absent allergen data renders an explicit 'No allergen information provided by the host.' rather than a blank."
+      },
+      {
+        "clause": "Review preview is honest about being a page (TCC-04): reviewsTotal/reviewsPageSize drive onward paging through GET /api/hosts/:id/reviews with the SAME page size",
+        "verdict": "pass",
+        "evidence": "ReviewsSection computes totalPages from reviewsTotal/reviewsPageSize; 'pages onward through the host reviews' asserts api.hosts.reviews('host-1', {page: 2, pageSize: 5}) and the polite aria-live page announcement."
+      },
+      {
+        "clause": "Pending/rejected listings: 404 renders a typed not-found state; the owning host sees the listing with its moderation status surfaced (FR-08 born-pending)",
+        "verdict": "pass",
+        "evidence": "'renders a typed not-found state' (404 path, own h1, announced, escape link to /search) and 'surfaces pending moderation status to the owner' (pending notice, Reserve CTA suppressed) both pass. The rejected-branch notice exists in ListingDetailPage.jsx and is correct by inspection but has no spec — see finding D-02."
+      },
+      {
+        "clause": "FR-12 entry: Reserve CTA to /bookings/new?listing=<id> (URL string only, no cross-feature import) only while an active approved listing has seats",
+        "verdict": "pass",
+        "evidence": "'offers a Reserve CTA' asserts the exact href; 'replaces the Reserve CTA when no seats remain' asserts the honest full-state message. components/paths.js builds every cross-feature URL as a string; grep confirms no import from features/booking or features/account."
+      }
+    ],
+    "FR-03": [
+      {
+        "clause": "Host page renders selfIntroduction, example dishes (approved listings), reviews with numeric ratings + average, kitchen/dining images",
+        "verdict": "pass",
+        "evidence": "Field names cross-checked against src/modules/hosts/serializers.js HOST_PAGE_KEYS/REVIEW_KEYS. 'renders identity, introduction, alt-texted pictures, example dishes and reviews' asserts every field including 'Rated 4.6 out of 5 from 12 reviews', memberSince ('March 2026'), derived alt on both photos, and the example dish card linking to /listings/:id."
+      },
+      {
+        "clause": "Empty states are honest, never fabricated",
+        "verdict": "pass",
+        "evidence": "'renders honest empty states' asserts explicit no-introduction / no-dishes / 'No reviews yet' copy and zero img elements — nothing invented for a sparse host."
+      },
+      {
+        "clause": "ADR-010: example dishes show coarse area only; the host payload carries no contact/address key and the screen renders none",
+        "verdict": "pass",
+        "evidence": "Example dishes render through the same ListingCard (areaText only). HostProfilePage reads exactly HOST_PAGE_KEYS — no email/phone/address key is read anywhere in the file. Reviews of erased authors render the backend's neutral display name pass-through (NFR-12)."
+      },
+      {
+        "clause": "Review paging through GET /api/hosts/:id/reviews using the embedded preview length as the page size, with failure announced and state preserved",
+        "verdict": "pass",
+        "evidence": "'pages the reviews ... using the preview length as page size' asserts {page: 2, pageSize: 5} then back to page 1; 'announces a review-paging failure and stays on the current page' asserts the assertive announcement and that page 1 content survives. The preview length equals hosts/service.js PROFILE_REVIEWS_LIMIT (5) on any host with more reviews than the limit, so page boundaries line up with the backend."
+      }
+    ],
+    "NFR-09": [
+      {
+        "clause": "State 'ok': fresh results render with an announced count (mocked ok payload)",
+        "verdict": "pass",
+        "evidence": "'renders the ok state' asserts the result card, coarse area, alt text, detail link and the polite '2 meals found.' announcement."
+      },
+      {
+        "clause": "State 'degraded' (mocked degraded payload): STALE results still render under a visible explanation that is also announced — never hidden, never a crash",
+        "verdict": "pass",
+        "evidence": "'renders the degraded state' mocks {state:'degraded', listings:[...]} and asserts the results render, DEGRADED_EXPLANATION is visible next to them, and the polite live region contains 'may be out of date'. This matches the corrected TCC-03 contract: the flag accompanies a stale-cache adapter answer and the client renders it as a state, not an error."
+      },
+      {
+        "clause": "State 'unavailable' (typed 503 SEARCH_DEGRADED): the server's user-facing message renders with a retry control, announced assertively — no bare spinner, no crash; transport failure (NETWORK_ERROR) renders the same way",
+        "verdict": "pass",
+        "evidence": "'renders the unavailable state' asserts the server message in a headed section, the Try-again button, spinner absence, and the assertive announcement; 'renders a typed transport failure' covers NETWORK_ERROR identically. Retry works: setSearchParams pushes a new location whose identity re-fires the search effect (verified against react-router's location semantics; deps include location)."
+      }
+    ],
+    "AB-08": [
+      {
+        "clause": "All three discovery endpoints are session-gated: a 401 redirects to /login?next=<original URL> instead of dead-ending or rendering personal data",
+        "verdict": "pass",
+        "evidence": "All three 401 specs pass, each asserting pathname /login and the encoded next param preserving the full original URL including query (/search?cuisine=Ethiopian)."
+      },
+      {
+        "clause": "No client-side session material: zero document.cookie under discovery",
+        "verdict": "pass",
+        "evidence": "grep -rn 'document.cookie' client/src/features/discovery → no matches (the client-wide grep gate also covers this)."
+      },
+      {
+        "clause": "The screens never widen the scraping surface: no field outside the backend allowlists is read, no precise location renders on any list path",
+        "verdict": "pass",
+        "evidence": "Every rendered key traced to PUBLIC_KEYS / HOST_PAGE_KEYS / REVIEW_KEYS / HOST_SUMMARY_KEYS; the only privileged read (addressLine1/2, postalCode in ListingDetailPage.addressText) is gated on the payload itself carrying addressLine1 — the ADR-010 booking-gated path the server controls."
+      }
+    ],
+    "ADR-010-no-precise-leak": [
+      {
+        "clause": "The pages never fabricate or mislabel a precise address; precise coordinates are never rendered even when present",
+        "verdict": "pass",
+        "evidence": "Public payload: the detail page renders 'Approximate area' from areaText only, plus a note explaining the address is withheld ('renders coarse area only and the disclosure note' passes, asserting no Address row exists). Privileged payload: 'renders the exact address ONLY when the payload itself carries it' asserts the address row appears, the withheld-note disappears, and the precise lat/lng values (32.749123 / -117.129456) appear NOWHERE in the DOM. Source grep confirms coarseLat/coarseLng/lat/lng are never rendered by any discovery file. The coarse area is always labelled 'Approximate area', never presented as an address."
+      }
+    ],
+    "NFR-07-checkable-clauses": [
+      {
+        "clause": "Semantic landmarks",
+        "verdict": "pass",
+        "evidence": "Screens render inside the wave-5 shell (header / labelled nav / main#main tabIndex=-1 / footer, skip link first-focusable — AppLayout.jsx); routes.test.jsx asserts feature routes mount inside the landmarks; the live axe run on /search reports 0 serious/critical violations, and the audit's keyboard check (skip link → #main) passes on this tree."
+      },
+      {
+        "clause": "Sensible heading order, one h1 per screen",
+        "verdict": "pass",
+        "evidence": "All three page specs assert exactly one level-1 heading and a document.title per phase (loading/ready/error each keep their own h1). Manual review: h1 → section h2s → h3 only under an h2 (Ingredients; ListingCard/review card titles) — no skipped level on any screen."
+      },
+      {
+        "clause": "Every form control labelled",
+        "verdict": "pass",
+        "evidence": "All five search filters go through the kit FormField (label htmlFor + aria-describedby hint/error + aria-invalid); asserted via getByLabelText for each. No unlabelled control exists in the subtree."
+      },
+      {
+        "clause": "Visible focus on every interactive element",
+        "verdict": "pass",
+        "evidence": "discovery.module.css contains zero outline suppression (grep for outline:none/0 → no match); focus indicators come from the kit's global :focus-visible outline (noted at discovery.module.css ~line 196). ErrorSummary takes programmatic focus on failed submit; review-pager buttons use kit busy (aria-disabled) rather than a focus-dropping hard disable mid-action."
+      },
+      {
+        "clause": "Alt text on every image",
+        "verdict": "pass",
+        "evidence": "Every image renders through the kit Img (non-empty alt enforced, dev-throw on misuse) with derived alt text; specs assert the exact strings ('Injera Night — photo 1 of 2', 'Chef Alem — kitchen and dining photo 1 of 2', 'Photo of Sunset Tacos')."
+      },
+      {
+        "clause": "Errors and async status announced through aria-live",
+        "verdict": "pass",
+        "evidence": "useAnnounce (stable frozen identity — safe in effect deps, no announce-loop) feeds the shell-mounted StatusAnnouncer: polite for result counts / degraded explanation / review-page changes, assertive for load failures / unavailable / network errors. Ten separate live-region assertions pass across the three specs."
+      },
+      {
+        "clause": "Token-only styling, contrast >= 4.5:1 via kit tokens",
+        "verdict": "pass",
+        "evidence": "grep over discovery.module.css: zero hex/rgb()/hsl() literals; 50 var(--hp-*) references; text/background pairs are tokens whose contrast is measured by client/src/ui/kit-contract.test.js (passing). Live axe on /search reports no contrast violation."
+      },
+      {
+        "clause": "Interface presence for the a11y harness",
+        "verdict": "pass",
+        "evidence": "routes.jsx declares exactly 'search', 'listings/:id', 'hosts/:id' (spec-asserted); npm run test:a11y maps them to NFR-07 interfaces 1-3 — /search audited clean live, the two parameterized routes present-but-unaudited until wave-7 seeded ids, holding the overall gate red by design (build-plan G.1). NFR-07 itself stays open: UT-01 is a human activity."
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "D-01",
+      "severity": "low",
+      "blocking": false,
+      "requirement": "FR-02 / ADR-010",
+      "file": "client/src/features/discovery/ListingDetailPage.jsx",
+      "summary": "The withheld-address note overstates the disclosure trigger: it says the exact address is shared 'only after you hold a confirmed reservation', but the backend (src/modules/listings/access.js) releases it to a guest whose booking is in status 'pending' or 'in_progress' — i.e. as soon as a reservation is placed, before any confirmation.",
+      "reproduction": "1) Render /listings/:id with a public payload (no addressLine1): the note 'The exact address is shared only after you hold a confirmed reservation for this meal.' is visible. 2) Read src/modules/listings/access.js lines 63-67: canViewPreciseLocation grants access for booking status IN ('pending', 'in_progress'). 3) A guest who has just reserved (pending) therefore sees the address while the copy told them confirmation was required.",
+      "impact": "No leak — the copy under-promises, the server decides disclosure. But it misdescribes system behaviour to the user, and UT-01 participants who reserve and immediately see the address may report the mismatch. One-line copy fix, e.g. 'The exact address is shared once you have reserved a seat for this meal.'",
+      "suggestedOwner": "U6R-FIX"
+    },
+    {
+      "id": "D-02",
+      "severity": "low",
+      "blocking": false,
+      "requirement": "FR-02 / FR-08",
+      "file": "client/src/features/discovery/ListingDetailPage.test.jsx",
+      "summary": "The moderationStatus === 'rejected' owner-notice branch of ListingDetailPage.jsx has no spec: only the 'pending' branch is tested, so a regression that drops or garbles the rejected notice would pass the suite.",
+      "reproduction": "grep \"rejected\" client/src/features/discovery/ListingDetailPage.test.jsx → no test renders a rejected listing. The branch itself (ListingDetailPage.jsx: 'This listing was rejected by moderation and is not publicly visible.') is correct by inspection and mirrors the tested pending branch.",
+      "impact": "Test-coverage gap only; behaviour on this tree is correct. Add one spec cloning the pending-notice test with moderationStatus: 'rejected'.",
+      "suggestedOwner": "U6R-FIX"
+    }
+  ],
+  "observations": [
+    {
+      "id": "D-OBS-1",
+      "note": "SearchPage retry() re-issues the identical query via setSearchParams, which PUSHES a duplicate history entry — after a retry the back button needs two presses to leave the failed search. Cosmetic; { replace: true } on the retry navigation would avoid it. Not raised as a finding: no acceptance clause covers history depth."
+    },
+    {
+      "id": "D-OBS-2",
+      "note": "ReviewsSection on the host page derives its page size from the embedded preview length (hosts/service.js PROFILE_REVIEWS_LIMIT = 5, not exposed in the payload). Boundaries line up on every reachable state (a non-empty first page is guaranteed whenever reviewCount > 0); the zero-length defensive path renders without a pager. The listing-detail path is cleaner (reviewsPageSize rides the payload). If the backend ever exposes pageSize on GET /api/hosts/:id this derivation should switch to it."
+    },
+    {
+      "id": "D-OBS-3",
+      "note": "Server-side FR-01/02/03 clauses (approved-only filtering, Redis cache precision, adapter spies, p95, key allowlists) are backend properties verified by the wave 3-4 lanes (TC-01..03, RT-01, adr-conformance) and were NOT re-executed here; this unit verified the client consumes exactly those contracts without widening them."
+    }
+  ],
+  "sourceEditsByThisUnit": "none — docs/_generated/wave6-verify/discovery.json is the only file written"
+}

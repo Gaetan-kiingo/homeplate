@@ -1,0 +1,170 @@
+{
+  "unit": "U6V-BOOKING",
+  "verifies": "U6-BOOKING (client/src/features/booking/**)",
+  "requirements": ["FR-04", "FR-09", "FR-11", "FR-12", "FR-13", "FR-14", "NFR-07"],
+  "date": "2026-08-26",
+  "tree": "wave-6 build on baseline e8a610d; zero source edits by this lane (verify-only)",
+  "verdictSummary": {
+    "FR-09 reason-code copy + fix links": "PASS",
+    "NO_CAPACITY vs pending-limit distinct": "PASS",
+    "FR-11 cap errors from payload details + cap-literal grep": "PASS (with observation OBS-B3: no live screen can yet trigger a MEHKO cap)",
+    "FR-14 cancel gating by start time": "PASS (edge note F-B2)",
+    "FR-04 completion double-confirm rendering": "PASS",
+    "FR-13 surfacing statement": "PASS",
+    "NFR-07 checkable-now clauses (booking screens)": "PASS on audited routes; /bookings/:bookingId parameterized and unaudited by design until wave 7"
+  },
+  "clauses": [
+    {
+      "id": "C1",
+      "clause": "FR-09 — reason-code copy exists for every one of the five reason codes with a working fix link",
+      "verdict": "PASS",
+      "evidence": [
+        "client/src/features/booking/components/bookingErrors.js ELIGIBILITY_FIXES covers all five policy codes from src/modules/eligibility/policy.js REASONS (lines 46-52): EMAIL_UNVERIFIED, NAME_MISSING, PHONE_MISSING, HOST_PROFILE_INCOMPLETE, HOST_AGREEMENT_MISSING — each with distinct WHAT ('what') and HOW ('how') copy plus fixPath '/account' and a specific fixLabel; USER_NOT_FOUND (the sixth policy code) is also covered with fixPath '/login'.",
+        "Fix links are real routes: '/account' and '/login' are declared in client/src/features/account/routes.jsx (lines 24-27), so every <Link to={item.fixPath}> resolves.",
+        "EMAIL_UNVERIFIED's fix is a working ACTION, not just a link: components/EligibilityNotice.jsx ResendVerification posts /api/auth/resend-verification (endpoint confirmed at src/modules/auth/routes.js line 88 and client/src/api/auth.js line 67) with the session user's email, renders the outcome visibly and announces it via aria-live.",
+        "Unknown reason codes render honestly (code + generic account link) instead of being dropped — describeEligibilityReasons fallback in bookingErrors.js.",
+        "Server shape matched: src/modules/eligibility/middleware.js answers 403 { error: { code: 'NOT_ELIGIBLE', details: { action, reasons } } }; ReservePage.jsx reads err.details.reasons and renders <EligibilityNotice> plus an assertive announcement.",
+        "Tests: ReservePage.test.jsx 'renders WHAT is missing and HOW to fix it per reason code, with fix links' (asserts copy + /account hrefs for three guest-side codes) and 'EMAIL_UNVERIFIED resend really posts and announces the outcome' (asserts the POST body and the announced/visible confirmation). Host-side codes HOST_PROFILE_INCOMPLETE / HOST_AGREEMENT_MISSING cannot be produced by canReserveSeat, but their copy + links exist in the shared map, satisfying the clause."
+      ]
+    },
+    {
+      "id": "C2",
+      "clause": "FR-12 / AB-02 — NO_CAPACITY and the pending-limit distinct",
+      "verdict": "PASS",
+      "evidence": [
+        "The pending-limit code on this tree is BOOKING_LIMIT (src/modules/bookings/service.js line 111: 409 with details { limit: config.booking.maxConcurrentPending }); NO_CAPACITY at line 156.",
+        "bookingErrors.js bookingErrorMessage renders DISTINCT copy per code: NO_CAPACITY = 'No seats are left on this listing — another guest took the last seat...'; BOOKING_LIMIT = 'You already have {details.limit} pending bookings — that is the per-guest limit...' with the limit read from the payload (and a limit-free fallback when details.limit is absent).",
+        "Tests: ReservePage.test.jsx 'NO_CAPACITY renders and announces its own message' and 'the per-guest pending cap (BOOKING_LIMIT) renders a distinct message with the limit from the payload' — the latter also asserts the NO_CAPACITY copy is NOT present, proving distinctness."
+      ]
+    },
+    {
+      "id": "C3",
+      "clause": "FR-11 / ADR-009 — cap errors rendered from payload details; grep proving no 1/30/90 cap literal under client/src",
+      "verdict": "PASS",
+      "capLiteralGrep": {
+        "command": "grep -rnE '\\b(30|60|90)\\b' client/src --include='*.js' --include='*.jsx' --include='*.css' | grep -v '.test.'",
+        "quotedResult": [
+          "client/src/features/account/routes.jsx:11:// NFR-12 / NFR-13 — /account hosts deletion (confirm dialog naming the 30-day erasure)",
+          "client/src/features/account/AccountPage.jsx:13 and :60 — NFR-12 30-day erasure copy",
+          "client/src/features/account/components/DeleteAccountSection.jsx:6,7,35,54,70 — NFR-12 30-day erasure copy",
+          "client/src/features/account/components/errorCopy.js:20 'if (seconds < 90)' and :23 'seconds / 60' — Retry-After seconds-to-minutes humanizer",
+          "client/src/features/account/components/ExportSection.jsx:6,88,106 and client/src/api/users.js:9 — NFR-13 30-day statutory export SLA copy",
+          "client/src/features/discovery/components/format.js:41 — comment example '6:30 PM'"
+        ],
+        "interpretation": "ZERO hits are MEHKO cap values. Every 30/60/90 literal is NFR-12/NFR-13 30-day lifecycle copy, a time-unit conversion, or a comment example — none is a meals/listings cap. A cap-phrase grep (numeric literal within 30 chars of 'meal'/'listing') returned only photo alt-text indexing (index + 1), a time-format comment, and 'meals found' pluralization. Bare '\\b1\\b' in the booking subtree is only FIRST_PAGE = 1 pagination, pluralization ternaries, page arithmetic, a month-index conversion, and a test-fixture phone number — no cap semantics.",
+        "moduleLevelAssertion": "ReservePage.test.jsx 'the cap-rendering module carries NO cap-shaped numeric literal (ADR-009 grep)' asserts /\\b(1|30|60|90)\\b/ does not match components/bookingErrors.js at all — and it passes."
+      },
+      "evidence": [
+        "mehkoCapMessage (bookingErrors.js) names WHICH cap (Daily listing cap / Daily meal cap / Weekly meal cap) and WHEN it resets (next America/Los_Angeles calendar day; the Monday after details.weekEnd), reading limit, localDate, weekStart, weekEnd and alreadyScheduled EXCLUSIVELY from the server's error details.",
+        "Backend detail shapes matched: MEHKO_DAILY_LISTING_LIMIT 409 {localDate, limit}; MEHKO_DAILY_MEAL_LIMIT / MEHKO_WEEKLY_MEAL_LIMIT 422 incl. {weekStart, weekEnd, limit, alreadyScheduled} (build-plan G.2 contract, ADR-009 as amended by AB 1325: 1/30/90 — values live in src/config and in error payloads only).",
+        "Tests exercise NON-production cap values (limit 2, 25, 80; alreadyScheduled 21, 77) and assert they render — proof the copy is payload-driven, not constant-driven; plus bookingErrorMessage routes all three MEHKO codes to the same cap copy.",
+        "formatters.js formatCalendarDate renders 'YYYY-MM-DD' cap days at UTC midnight of the literal day — never re-projected through the viewer's timezone, so the day shown cannot drift off the day the server enforced."
+      ]
+    },
+    {
+      "id": "C4",
+      "clause": "FR-14 — cancel gating by start time",
+      "verdict": "PASS",
+      "evidence": [
+        "BookingDetailPage.jsx: canCancel = booking.status === 'pending' && Date.parse(listing.scheduledStart) > Date.now() — cancel is offered ONLY on a pending booking strictly before the scheduled start, matching the server rule (repo.markCancelledBeforeStart; 409 CANCEL_TOO_LATE at/after start, src/modules/bookings/service.js lines 226-236).",
+        "At/after start the action is ABSENT and the screen says why ('The meal has started — this booking can no longer be cancelled.'); a cancelled booking shows the terminal state; other statuses get 'Only upcoming reserved bookings can be cancelled.'",
+        "The action sits behind the kit's confirm Dialog with initial focus on the SAFE action ('Keep the booking'); Escape closes without firing the POST and returns focus to the trigger (both tested).",
+        "Server-side refusal remains the enforcement: if the server declines anyway, CANCEL_TOO_LATE and BOOKING_NOT_CANCELLABLE (with details.status, provided by the backend at service.js line 233-235) render as real sentences and are announced (tested).",
+        "Success path announces seat-restored + both-participants-notified and re-renders the cancelled state from the response body (tested).",
+        "Tests: BookingDetailPage.test.jsx FR-14 describe block — 4 specs covering dialog cancel, Escape, the absent-action-past-start state, and the CANCEL_TOO_LATE server refusal."
+      ]
+    },
+    {
+      "id": "C5",
+      "clause": "FR-04 — completion double-confirm rendering",
+      "verdict": "PASS",
+      "evidence": [
+        "BookingDetailPage.jsx 'Meal completion' section renders BOTH flags (guest/host) as text with '(you)' on the caller's row, driven by booking.role + guestConfirmedCompletion/hostConfirmedCompletion — exactly the serializeBooking fields (src/modules/bookings/service.js lines 62-77).",
+        "The confirm action appears ONLY while status === 'in_progress' AND the caller's own flag is unset; after own confirmation the button is gone and 'You have confirmed — waiting for the other participant.' renders; a pending booking explains completion opens when the meal is in progress (server: 409 BOOKING_NOT_IN_PROGRESS, rendered + announced if forced).",
+        "The response's awaitingOtherParty drives the announcement: one confirmation announces awaiting-the-other; both-confirmed announces 'Meal completed', shows completedAt, and unlocks the /bookings/:id/review link (FR-05 completed-bookings-only).",
+        "Both perspectives tested: guest confirming first (awaitingOtherParty true) and host confirming against their own unset flag; response shape {booking, awaitingOtherParty} confirmed at src/modules/bookings/routes.js confirm-completion → res.json(result) and service.js line 344.",
+        "Tests: BookingDetailPage.test.jsx FR-04 describe block — 4 specs."
+      ]
+    },
+    {
+      "id": "C6",
+      "clause": "FR-13 — surfacing statement (email is the ADR-011 channel; no in-app feed endpoint exists)",
+      "verdict": "PASS",
+      "evidence": [
+        "ReservePage.jsx states before confirm: 'Booking updates are confirmed by email — Homeplate notifies you and the host whenever this booking's status changes.'; the success announcement names the email confirmations.",
+        "BookingDetailPage.jsx Status section states: 'Email notifications are sent to both participants whenever this booking's status changes — reservation, cancellation and completion.'; cancel and completion announcements repeat the email statement.",
+        "BookingsListPage.jsx surfaces lifecycle status as text on every row (statusLabel + role), linking to the detail page that carries the statement.",
+        "This matches build-plan G.5(1)'s stated FR-13 reading exactly: no in-app notification endpoint exists on this tree (grep of src/routes and modules confirms), email via SendGrid is the ADR-011 channel, so wave 6 surfaces status changes and states that email notifications are sent. Tests assert the statement on both reserve ('confirmed by email') and detail ('Email notifications are sent to both participants') screens."
+      ]
+    },
+    {
+      "id": "C7",
+      "clause": "NFR-07 — accessibility clauses checkable now, booking screens",
+      "verdict": "PASS on audited routes; parameterized detail route unaudited by design until wave 7",
+      "evidence": [
+        "npm run test:a11y on this tree: '/bookings (booking) — 0 serious/critical wcag2a+wcag2aa violations' and '/bookings/new (booking) — 0 serious/critical wcag2a+wcag2aa violations'; keyboard check 'first Tab reaches the skip link; activating it focuses #main' passes; booking-flow interface reported PRESENT (route /bookings); overall 7 of 7 NFR-07 interfaces exist; harness exits 1 (FAIL) listing 6 parameterized routes incl. /bookings/:bookingId as unaudited — exactly the honest wave-6 outcome build-plan G.1 mandates. Do not flip NFR-07 on this: UT-01 (human study) also remains.",
+        "Structural checks read from source: exactly one h1 per screen (asserted in tests); document.title via usePageTitle; filters labelled through FormField (getByLabelText passes); Dialog is the kit's focus-trapping modal with focus restore; every outcome both announced via the kit's role=status/alert live regions (region-scoped test helper) AND rendered as visible text; ListingSummary is a real dl/dt/dd; status conveyed as text, never colour alone; booking.module.css is token-only (no hex literals; spot-checked); anonymous states render sign-in links instead of dead controls; no images rendered in booking screens, so no alt-text exposure."
+      ]
+    }
+  ],
+  "contractChecks": [
+    "api.bookings.{create,list,getBooking,cancel,confirmCompletion} transcribe src/modules/bookings/routes.js exactly; response envelopes {booking}, {bookings,page,pageSize}, {booking,awaitingOtherParty} all matched against routes.js/service.js on this tree.",
+    "ApiError exposes .code and .details (client/src/api/errors.js lines 50-51); every booking-surface code the backend can emit (BOOKING_LIMIT, NO_CAPACITY, OWN_LISTING, LISTING_STARTED, LISTING_NOT_BOOKABLE, LISTING_NOT_FOUND, CANCEL_TOO_LATE, BOOKING_NOT_CANCELLABLE, BOOKING_NOT_IN_PROGRESS, BOOKING_NOT_FOUND, NOT_PARTICIPANT, NOT_ELIGIBLE, VALIDATION_FAILED, AUTHENTICATION_REQUIRED, RATE_LIMITED) has a distinct human sentence in bookingErrorMessage; unknown codes fall back to the ApiError's own user-presentable message, never a stringified body.",
+    "ADR-010: booking screens render coarse location only (areaLabel/city[/region] via ListingSummary) with the honest '(approximate area — the exact address is shared with confirmed guests)' note; ZERO addressLine1/addressLine2/postalCode references anywhere under client/src/features/booking; serializeListingRef embeds no precise field, and the client never assumes one.",
+    "Session discipline: signed-in state from useSession() only; zero document.cookie under client/src (backend grep-gate test passes); 401 handling flips to the sign-in prompt.",
+    "Wave-6 parallel-work rule respected: cross-feature navigation by URL string only (/login, /signup, /account, /search, /listings/:id, /bookings/:id/messages|review|safety-alert); no import crosses a feature boundary; only wave-5 kit/api/session/layout modules are imported.",
+    "Traceability: every booking module carries an FR/NFR-cited header comment (routes.jsx, all three pages, all five components)."
+  ],
+  "findings": [
+    {
+      "id": "F-B1",
+      "severity": "high (wave gate), not a booking-screen defect",
+      "owner": "outside U6-BOOKING's subtree — for U6R-FIX (backend test files)",
+      "title": "Backend gate is red on the wave-6 tree: 2 stale wave-5 scope guards fail (63 suites / 1397 tests → 61 passed suites, 1395 passed tests, exit 1)",
+      "detail": "1) tests/coverage/coverage-lane.test.js line 77 'wave-5 client foundation is ON disk; wave-6 feature screens are NOT yet (scope guard)' — asserts client/src/features/*/routes.jsx does not exist; wave 6 legitimately created five of them. 2) tests/adr-conformance/adr-wave5-client-invariants.test.js line 131 'no non-test client module dereferences a privileged address key unconditionally' — its own comment scopes it to 'Wave 5 ships no booking-gated screen'; the single offender is client/src/features/discovery/ListingDetailPage.jsx, whose dereference IS presence-guarded (lines 116-118) on the booking-gated payload ADR-010 explicitly permits. Both guards must be re-baselined for the wave-6 tree (the second should assert conditional access rather than absence). No booking file is implicated: the booking subtree has zero address-key references, and all 33 booking client specs pass.",
+      "reproduce": "TEST_STRICT_HANDLES=1 npm test → 'Test Suites: 2 failed, 61 passed, 63 total; Tests: 2 failed, 1395 passed, 1397 total' (99.4 s)"
+    },
+    {
+      "id": "F-B2",
+      "severity": "low",
+      "owner": "U6-BOOKING (client/src/features/booking/BookingDetailPage.jsx)",
+      "title": "Degenerate-payload edge: an unparseable scheduledStart on a pending booking renders 'The meal has started' untruthfully",
+      "detail": "canCancel requires Number.isFinite(startMs) && startMs > Date.now(); if the API ever returned a pending booking whose listing.scheduledStart fails Date.parse, beforeStart is false and the Cancellation section claims 'The meal has started — this booking can no longer be cancelled.' even though it has not. The server contract always supplies an ISO instant (serializeListingRef from a timestamptz column), so this is unreachable on the real API — recorded for completeness; neutral copy for the NaN case would remove it. Not gate-blocking.",
+      "reproduce": "Render BookingDetailPage with booking.status='pending' and listing.scheduledStart='not-a-date' (test harness)."
+    },
+    {
+      "id": "OBS-B3",
+      "severity": "observation (coordinator visibility, not a defect of any wave-6 unit)",
+      "owner": "coordinator / future wave",
+      "title": "FR-11 client surfacing is a tested rendering contract with no live screen path yet",
+      "detail": "mehkoCapMessage fully implements payload-driven MEHKO cap copy and is unit-tested, but no wave-6 route lets a host create or update a listing (no /listings/new or listing-management screen exists; grep for a client createListing call site under features/ returns nothing), so no user can currently trigger a MEHKO cap error in the UI. This matches the §6 unit scoping (no wave-6 unit owned listing-management UI; U6-BOOKING's brief is FR-04/12/13/14) — flagged so FR-11's client-side surfacing is not marked complete beyond the rendering contract."
+    }
+  ],
+  "commands": [
+    {
+      "command": "npm --prefix client test -- src/features/booking",
+      "result": "3 files / 33 tests, all pass (BookingsListPage 7, ReservePage 14, BookingDetailPage 12)"
+    },
+    {
+      "command": "npm --prefix client test",
+      "result": "32 files / 337 tests, exit 0 (baseline was 17/218; wave 6 added 15 files / 119 tests)"
+    },
+    {
+      "command": "npm run lint",
+      "result": "eslint . && prettier --check . — clean ('All matched files use Prettier code style!')"
+    },
+    {
+      "command": "TEST_STRICT_HANDLES=1 npm test",
+      "result": "63 suites / 1397 tests: 2 failed, 61 passed / 1395 passed, exit 1, 99.4 s — both failures are the stale wave-5 guards in finding F-B1, neither in booking-owned code"
+    },
+    {
+      "command": "npm run test:a11y",
+      "result": "7/7 NFR-07 interfaces present; 11 non-parameterized routes audited with 0 serious/critical wcag2a+wcag2aa violations (incl. /bookings and /bookings/new); skip-link keyboard check ok; exit 1 (by design) listing 6 parameterized routes as unaudited until wave-7 seeded ids"
+    },
+    {
+      "command": "grep -rnE '\\b(30|60|90)\\b' client/src (non-test) + cap-phrase grep + '\\b1\\b' over the booking subtree",
+      "result": "zero MEHKO cap literals — full quoted result in clause C3"
+    }
+  ],
+  "sourceEdits": "NONE — this lane wrote only this findings file."
+}

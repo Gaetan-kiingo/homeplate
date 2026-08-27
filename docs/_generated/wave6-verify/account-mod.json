@@ -1,0 +1,154 @@
+{
+  "unit": "U6V-ACCOUNT-MOD",
+  "date": "2026-08-26",
+  "baseline": "e8a610d + wave-6A working tree (U6-ACCOUNT-MOD built)",
+  "scope": "Verify-only re-execution of the account + moderation screens (client/src/features/{account,moderation}/**) against FR-07, FR-08, FR-09, FR-10, NFR-05, NFR-06, NFR-07, NFR-12, NFR-13. Zero source edits were made.",
+  "commandsRun": [
+    {
+      "command": "npm --prefix client test",
+      "result": "exit 0 — 32 files / 337 tests passed (baseline was 17/218; wave 6 added the screen specs, incl. this unit's 6 spec files: LoginPage 6, SignupPage 5, VerifyEmailPage 3, AccountPage 8, QueuePage 8, AlertsPage 6)"
+    },
+    {
+      "command": "npm run lint",
+      "result": "exit 0 — eslint clean (client/** react/react-hooks/jsx-a11y override active), prettier clean"
+    },
+    {
+      "command": "npm run test:a11y",
+      "result": "7 of 7 NFR-07 interfaces present. This unit's six routes ALL audited clean: /login, /signup, /verify-email, /account, /moderation, /moderation/alerts each report 0 serious/critical wcag2a+wcag2aa violations; keyboard skip-link check passed. Overall exit 1 BY DESIGN: 6 parameterized routes (none owned by this unit's screens: /bookings/:id*, /listings/:id, /hosts/:id) stay unaudited until wave-7 seeded ids. This is exactly the honest wave-6 outcome build-plan §G.1 prescribes."
+    },
+    {
+      "command": "TEST_STRICT_HANDLES=1 npx jest tests/tc-booking/tc08-moderation-substrate.test.js tests/tc-core/tc07-safety.test.js tests/unit/identity.test.js",
+      "result": "exit 0 — 3 suites / 72 tests. Re-executes the SERVER enforcement behind the client role gate (queue 401 anonymous / 403 ordinary / 200 moderator; NOT_MODERATOR on /api/moderation/alerts both GET and POST) and the ST-03 login lockout (attempt 6 is 429 with Retry-After and body.error.code 'LOGIN_RATE_LIMITED' — the evidence for finding AMV-W6-01)."
+    }
+  ],
+  "clauseVerdicts": [
+    {
+      "clause": "FR-10 signup states: register -> unverified account -> check-your-email state -> resend recovery (always-202 anti-enumeration copy)",
+      "verdict": "PASS",
+      "evidence": "SignupPage.jsx: POST /api/auth/register via api.auth.register (matches src/modules/auth/routes.js + src/schemas/auth.js register — email, password 8..72, optional fullName/phone E.164, pre-submit mirrors only); success flips to the check-your-email state whose copy says verification is required before reserving/publishing; resend uses api.auth.resendVerification with resendQueuedMessage() promising neither existence nor delivery (AB-05). 409 EMAIL_IN_USE (src/modules/auth/service.js:118) gets its own message. Tests: SignupPage.test.jsx (5 passing, incl. no-API-call client validation and the 409)."
+    },
+    {
+      "clause": "FR-10 verify-email states: token redeemed exactly once from the mailed link; wrong/used/expired token rendered honestly with the resend recovery path; missing-token state",
+      "verdict": "PASS",
+      "evidence": "VerifyEmailPage.jsx: ?token relayed once to POST /api/auth/verify-email (redeemedTokenRef guards the StrictMode double effect — the single-use token is never burned twice); server 400 INVALID_VERIFICATION_TOKEN (src/modules/auth/service.js:285) renders its own message + ResendVerificationForm; token-less visits get the explain-and-resend state and never post. On success the session snapshot is refreshed so the /account eligibility panel reflects the verified email (NFR-06). Tests: VerifyEmailPage.test.jsx (3 passing)."
+    },
+    {
+      "clause": "FR-10/NFR-05 login states: sign-in, INVALID_CREDENTIALS, already-signed-in, client-side empty-submit block",
+      "verdict": "PASS",
+      "evidence": "LoginPage.jsx: useSession().login (opaque HttpOnly cookie set server-side; zero document.cookie under client/src — grep re-run clean, gate test at client/src/api/endpoints.test.js:338); INVALID_CREDENTIALS renders 'Invalid email or password.' visibly and announced; authenticated visitors get the already-signed-in state instead of a second form; empty submit renders a focus-taking ErrorSummary with no API call; success lands on location.state.from || /account. Tests: LoginPage.test.jsx (6 passing)."
+    },
+    {
+      "clause": "NFR-05 lockout MESSAGE: the 429 lockout renders the honest lockout copy naming the temporary lock and the retry horizon from details.retryAfterSeconds",
+      "verdict": "FAIL",
+      "evidence": "See finding AMV-W6-01. The dedicated copy exists and is correct (errorCopy.js loginLockoutMessage) but is dead code against the real API: the server's login-lockout code is 'LOGIN_RATE_LIMITED', not the 'RATE_LIMITED' the screen matches on. Server ENFORCEMENT itself re-verified green (tests/unit/identity.test.js:565, run this session)."
+    },
+    {
+      "clause": "FR-09/NFR-06 eligibility panel completeness: both flags + all five reason codes with fix paths",
+      "verdict": "PASS",
+      "evidence": "EligibilityPanel.jsx: both verdicts come VERBATIM from the server flags (user.canReserveSeat/canPublishListing, served by the owner allowlist serializer src/modules/users/repo.js serializeUser — flags persisted from the ONE policy module per NFR-06); the GUIDANCE map carries all five codes (EMAIL_UNVERIFIED, NAME_MISSING, PHONE_MISSING, HOST_PROFILE_INCOMPLETE, HOST_AGREEMENT_MISSING) with concrete fix paths (/verify-email link, #account-profile anchors); the derivation of WHICH codes are outstanding mirrors src/modules/eligibility/policy.js exactly — same deterministic order (policy.js reasonsFor), same predicates (nonBlank fullName/phone = hasFullName/hasPhone; nonBlank hostProfile.bio = isHostProfileComplete, policy.js:68-71; hostAgreementAcceptedAt null-check = hasHostAgreement) — and decides nothing: an unexplainable false flag gets honest fallback copy, never a guess. Tests: AccountPage.test.jsx renders 4 codes positively, asserts NAME_MISSING correctly ABSENT when fullName present, and asserts real fix-link hrefs. Note AMV-W6-05: NAME_MISSING is never positively rendered by a test (code path identical per-code; verified by inspection)."
+    },
+    {
+      "clause": "NFR-06 profile update: PATCH /api/users/me schema-transcribed; recomputed flags flow back into the panel",
+      "verdict": "PASS",
+      "evidence": "ProfileForm.jsx transcribes src/schemas/auth.js profileUpdate field-for-field (fullName nullable, phone E.164 nullable, emergencyContact all-three-or-null §3.4-minimal, hostProfile { bio 1..2000 set-only, acceptHostAgreement literal-true one-way }, at-least-one-field refine mirrored by the 'Nothing to save' pre-check); PATCHes only dirty fields; the response's recomputed flags feed the panel via onSaved and the ambient session store is refreshed. Tests: AccountPage.test.jsx asserts minimal-diff PATCH bodies, hostProfile {bio, acceptHostAgreement:true}, and all-three-or-none contact validation before any PATCH."
+    },
+    {
+      "clause": "NFR-12 deletion: explicit confirm dialog that NAMES the 30-day erasure; cancel sends nothing; 202 -> accepted state + session to anonymous",
+      "verdict": "PASS",
+      "evidence": "DeleteAccountSection.jsx: section copy and the Dialog body both state personal data is 'permanently erased 30 days after this request'; nothing is sent until the confirm button inside the focus-trapped, Escape-closable kit Dialog (initial focus on Cancel, the safe action); DELETE /api/users/me matches src/modules/privacy/routes.js (202 { request }, session destroyed + cookie cleared server-side) and config PRIVACY_ERASURE_DAYS defaults to 30 (src/config/schema.js:128) so the copy is accurate; the accepted state renders and the store re-hydrates to anonymous. Tests: AccountPage.test.jsx asserts cancel-sends-nothing, the DELETE on confirm, the dialog naming the 30-day erasure, and the accepted state. Note AMV-W6-04."
+    },
+    {
+      "clause": "NFR-13 export request + retrieval: 202 request with 30-day SLA due date -> status check -> completed copy rendered",
+      "verdict": "PASS",
+      "evidence": "ExportSection.jsx mirrors the src/modules/privacy/routes.js lifecycle exactly: POST /api/users/me/export -> 202 { request } (renders status, requested date, 'Ready by <dueAt> (30-day statutory deadline)' from the SERVER's dueAt, never pretending the copy is instant); GET /api/users/me/export/:id -> { export } with data once completed, rendered as JSON in a labelled read-only (natively focusable) textarea. Owner-scoping/404-for-foreign-ids is server-side (privacy routes, re-verified wave 4). Tests: AccountPage.test.jsx runs request -> poll -> completed-copy end to end. Note AMV-W6-03 ('processing' status renders as the raw enum string)."
+    },
+    {
+      "clause": "FR-08 queue renders all FOUR content types incl. safety_alert, with operable approve/reject decisions",
+      "verdict": "PASS",
+      "evidence": "QueuePage.jsx TYPE_LABELS = {listing, review, message, safety_alert} — byte-identical to src/schemas/moderation.js CONTENT_TYPES (the W4-F1 repair set); safety_alert items get honest no-excerpt copy plus a link to /moderation/alerts; the decision form (category required from the schema's CATEGORIES enum [offensive, spam, fraudulent, benign], optional note <= 1000) posts to POST /api/moderation/queue/:id/decision and is rendered for every non-resolved item of every type; the {item} response updates in place with null-excerpt/contentStatus correctly preserved via ?? fallback (the decision response reloads no content row — matches serializeQueueEntry(item, null, row) in src/modules/moderation/service.js:466); QUEUE_ITEM_RESOLVED (moderator race, 409) renders its own message. Filters/paging match queueQuery. 'Born pending / never public until approved' is stated on-screen. Tests: QueuePage.test.jsx (8 passing) incl. all-four-types rendering and the full decision round-trip."
+    },
+    {
+      "clause": "FR-08 non-moderator 403 screen",
+      "verdict": "PASS",
+      "evidence": "ModeratorGate.jsx: anonymous -> sign-in prompt (no doomed fetch); signed-in non-moderator -> clean ForbiddenScreen naming the 403 with a way out; and the SAME ForbiddenScreen renders when the SERVER answers 403 (both QueuePage and AlertsPage route loadError.status===403 to it, covering a client-gate bypass). Tests cover all three paths on QueuePage and both on AlertsPage."
+    },
+    {
+      "clause": "Roles gate is UX-only — server enforcement asserted",
+      "verdict": "PASS",
+      "evidence": "Client gate reads user.roles from the response-inferred session snapshot only (MODERATOR_ROLE mirrors src/modules/moderation/service.js:53) and grants nothing: every /api/moderation route independently enforces the role server-side (moderation service.js:318 and safety service.js:209,258 throw 403 NOT_MODERATOR). RE-EXECUTED this session: tc08-moderation-substrate (queue 401/403/200), tc07-safety (NOT_MODERATOR on the alerts queue), unit moderation+safety NOT_MODERATOR assertions — 72 tests, exit 0."
+    },
+    {
+      "clause": "FR-07 safety-alert moderator view: full delivery lifecycle incl. the dead-lettered terminal state, alert remains visible; AB-04 escalation",
+      "verdict": "PASS",
+      "evidence": "AlertsPage.jsx DELIVERY_STATES covers exactly src/schemas/safety.js ALERT_DELIVERY_STATUSES (pending, retrying, delivered, failed, no_channel); 'failed' is named 'Failed (dead-lettered)' with follow-up-manually guidance and the alert stays listed (server-side clause re-verified via tc07). Rendered fields (id, bookingId+bookingStatus, listingId, raisedByUserId, createdAt, deliveredAt) are precisely the safety serializeQueueEntry allowlist — no address/contact/PII exists in the payload (AB-08). AB-04 escalation posts { bookingId } (schemas/safety.js escalateAlertBody) and the confirmation says RECORDED, never delivered (ADR-001/003: the worker delivers). Tests: AlertsPage.test.jsx (6 passing) incl. every delivery state and the escalation round-trip."
+    },
+    {
+      "clause": "NFR-07 checkable clauses on this unit's six routes: landmarks/heading order, labels, focus, alt text, aria-live wiring, token-only contrast, axe clean",
+      "verdict": "PASS",
+      "evidence": "npm run test:a11y (this session): /login, /signup, /verify-email, /account, /moderation, /moderation/alerts each audited with 0 serious/critical wcag2a+wcag2aa violations; keyboard skip-link traversal passed. One h1 per page via usePageTitle on all six screens (verified per file), h2/h3 section order under it; every control labelled through FormField (incl. per-item stable ids in the queue) or an explicit htmlFor (host-agreement checkbox); no images on these screens; every outcome is visible text AND announced through useAnnounce (stable frozen identity — safe in effect deps, no announce-loop); account.module.css and moderation.module.css contain zero hex literals (grep clean — kit tokens only). Loading states are labelled Spinners; no state is a bare spinner or blank."
+    },
+    {
+      "clause": "NFR-07 overall status",
+      "verdict": "OPEN (by design)",
+      "evidence": "All 7 interfaces exist and the audit runs 7/7-present; exit is still 1 because six parameterized routes need wave-7 seeded ids, and the UT-01 five-participant study is a human activity. Do NOT move NFR-07 to met."
+    }
+  ],
+  "findings": [
+    {
+      "id": "AMV-W6-01",
+      "severity": "major",
+      "status": "CONFIRMED",
+      "requirement": "NFR-05 (lockout message clause); NFR-07 (announced honest error)",
+      "file": "client/src/features/account/LoginPage.jsx:65 (with client/src/features/account/components/errorCopy.js:63 and LoginPage.test.jsx:181)",
+      "summary": "The honest login-lockout message never renders against the real API: the screen matches err.code === 'RATE_LIMITED' but the server's login lockout is code 'LOGIN_RATE_LIMITED'.",
+      "detail": "src/modules/auth/service.js:318 throws RateLimitError with code OVERRIDDEN to 'LOGIN_RATE_LIMITED' (options spread wins over the class default 'RATE_LIMITED' in src/lib/errors.js:83), the error envelope passes err.code through verbatim (src/middleware/errorHandler.js:28), and the client ApiError carries server codes verbatim (client/src/api/errors.js). Proof re-executed this session: tests/unit/identity.test.js:565 asserts body.error.code === 'LOGIN_RATE_LIMITED' and passed. So on a real lockout, LoginPage's check is false, loginLockoutMessage() (the NFR-05 copy naming the temporary lock and the retryAfterSeconds horizon) is dead code, and messageForAccountError falls through its 'RATE_LIMITED' case to the default branch — the user sees the bare server string 'Too many failed login attempts — try again later' with no retry horizon and no lock-lifts-by-itself explanation. The unit's own test masks the defect by stubbing the WRONG code (LoginPage.test.jsx:181 mocks 'RATE_LIMITED'), which is exactly the class of mistake the FR-10 acceptance correction warns about: the test asserts against a shape the server never produces.",
+      "suggestedRepair": "In LoginPage (and errorCopy.js), treat the lockout as the family of 429 auth codes — match 'LOGIN_RATE_LIMITED' (and keep 'RATE_LIMITED' for forward-compat), or match err.status === 429 on the login path; update LoginPage.test.jsx to stub the code the backend actually emits ('LOGIN_RATE_LIMITED', pinned by tests/unit/identity.test.js:565)."
+    },
+    {
+      "id": "AMV-W6-02",
+      "severity": "minor",
+      "status": "CONFIRMED",
+      "requirement": "FR-10 (resend recovery path UX); NFR-07",
+      "file": "client/src/features/account/SignupPage.jsx:119 and client/src/features/account/components/ResendVerificationForm.jsx:48 (with SignupPage.test.jsx:172)",
+      "summary": "Same code-mismatch class as AMV-W6-01 on the resend-verification throttle: the client matches 'RATE_LIMITED' but the server emits 'VERIFICATION_RESEND_RATE_LIMITED'.",
+      "detail": "src/modules/auth/service.js:174 throws the resend throttle with code 'VERIFICATION_RESEND_RATE_LIMITED'. Both resend surfaces check for 'RATE_LIMITED', so the tailored wait-N-then-retry copy (with the formatted retryAfterSeconds horizon) never renders; the fallback shows the server's generic 'Too many verification requests — try again later' without the horizon. SignupPage.test.jsx:172 stubs the wrong code and therefore passes. Lower severity than AMV-W6-01 because the fallback message is still honest and the throttle is not an SRS-numbered clause the way the NFR-05 lockout is.",
+      "suggestedRepair": "Match 'VERIFICATION_RESEND_RATE_LIMITED' (or err.status === 429) on both resend paths; fix the test stub. Consider centralizing 'is this a 429 throttle' in errorCopy.js so future server code names cannot silently bypass the copy."
+    },
+    {
+      "id": "AMV-W6-03",
+      "severity": "low",
+      "status": "CONFIRMED",
+      "requirement": "NFR-13 (export UX polish)",
+      "file": "client/src/features/account/components/ExportSection.jsx (STATUS_LABELS)",
+      "summary": "STATUS_LABELS lacks the 'processing' status, so a worker-picked-up export renders the raw enum string 'processing' instead of a human label.",
+      "detail": "db/migrations/0001_core_schema.sql:75 defines data_request_status AS ENUM ('pending','processing','completed','failed') and src/modules/privacy/repo.js:93 transitions requests to 'processing' when the export job is picked up. The `STATUS_LABELS[request.status] || request.status` fallback keeps this honest (never wrong, never blank), and the status-check announcement also speaks the raw word — but it is the only lifecycle state without human copy. Cosmetic; no requirement clause fails.",
+      "suggestedRepair": "Add processing: 'Processing — the copy is being assembled' to STATUS_LABELS."
+    },
+    {
+      "id": "AMV-W6-04",
+      "severity": "info",
+      "status": "OBSERVATION",
+      "requirement": "NFR-12",
+      "file": "client/src/features/account/components/DeleteAccountSection.jsx, AccountPage.jsx (deletion-accepted state)",
+      "summary": "The '30 days' in the deletion copy is a static string rather than derived from the 202 response's request.dueAt.",
+      "detail": "Accurate as shipped: NFR-12's 30-day window is a frozen SRS number and config PRIVACY_ERASURE_DAYS defaults to 30 (src/config/schema.js:128, .env.example pins 30). The dialog necessarily renders BEFORE any response exists, so a static number there is unavoidable; only the post-202 accepted state could render request.dueAt instead. Drift is possible only if a deployment overrides PRIVACY_ERASURE_DAYS away from the SRS's own number. Not a defect against the frozen baseline; recorded so U6R-FIX can decide (rendering dueAt in the accepted state would remove even that drift)."
+    },
+    {
+      "id": "AMV-W6-05",
+      "severity": "info",
+      "status": "OBSERVATION",
+      "requirement": "FR-09/NFR-06 (test coverage, not behaviour)",
+      "file": "client/src/features/account/AccountPage.test.jsx:120",
+      "summary": "NAME_MISSING is the one reason code never positively rendered by a test — the blocked-user fixture has a fullName, so the test asserts its (correct) absence only.",
+      "detail": "All five codes share one rendering path (GUIDANCE map + FlagBlock loop) and the NAME_MISSING derivation (missingForReserve: !nonBlank(user.fullName)) mirrors policy.js reasonsFor exactly, so behaviour is verified by inspection and by the four sibling codes' positive assertions. Purely a coverage nicety: a second blocked fixture (or a NAME_MISSING-only fixture) would make the panel's five-code completeness fully machine-checked.",
+      "suggestedRepair": "Optional: extend the blocked-user test with a fixture missing fullName and assert '(NAME_MISSING)' plus its fix anchor."
+    }
+  ],
+  "gateStatus": {
+    "clientTests": "32 files / 337 tests, exit 0",
+    "lint": "clean",
+    "a11yAudit": "7/7 interfaces present; this unit's 6 routes 0 serious/critical; exit 1 by design (6 parameterized routes await wave-7 seeded ids)",
+    "backendTargeted": "3 suites / 72 tests re-executed for server-enforcement clauses, exit 0 (full backend ladder is U6V-GATES-A11Y's lane)"
+  },
+  "sourceEdits": "none — the only file created is this findings JSON"
+}

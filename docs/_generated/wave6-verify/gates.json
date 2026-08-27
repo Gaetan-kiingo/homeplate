@@ -1,0 +1,156 @@
+{
+  "traceability": "U6V-GATES-A11Y — gate ladder + NFR-07 a11y interface coverage record. Requirements: NFR-07 (accessibility harness coverage), NFR-03 (secure transport/session grep gate: zero document.cookie), NFR-11 (quality gates: lint/build/test ladder). Cited by U6R-FIX and U6-REPORT.",
+  "unit": "U6V-GATES-A11Y",
+  "measuredOn": "2026-08-26",
+  "baseline": "e8a610d (waves 0-5 verified, CI green) + untracked wave-6 feature trees: client/src/features/{discovery,booking,community,account,moderation}",
+  "environment": {
+    "node": ">=20 per engines",
+    "docker": "homeplate-postgres-1 healthy, homeplate-redis-1 healthy, homeplate-minio-1 healthy",
+    "notes": "All commands run at repo root on the full wave-6 working tree; complete outputs captured."
+  },
+  "gates": {
+    "backendTest": {
+      "command": "TEST_STRICT_HANDLES=1 npm test",
+      "contract": "63 suites / 1397 tests, exit 0 (backend untouched by wave 6)",
+      "run1": {
+        "exit": 1,
+        "suites": "3 failed, 60 passed, 63 total",
+        "tests": "3 failed, 1394 passed, 1397 total",
+        "timeSeconds": 104.2
+      },
+      "run2": {
+        "exit": 1,
+        "suites": "2 failed, 61 passed, 63 total",
+        "tests": "2 failed, 1395 passed, 1397 total",
+        "timeSeconds": 101.6
+      },
+      "verdict": "RED — suite/test COUNTS match the 63/1397 contract exactly (backend source untouched), but exit is 1 on both runs. Every failure is analyzed below; 2 are deterministic stale wave-5 scope guards invalidated by wave 6 landing (backend test files — outside wave-6 unit ownership, need U6R-FIX), 1 was a non-reproducible contention flake.",
+      "failures": [
+        {
+          "id": "W6-G1",
+          "file": "tests/coverage/coverage-lane.test.js",
+          "line": 114,
+          "test": "wave-5 client foundation is ON disk; wave-6 feature screens are NOT yet (scope guard — SRS §1.2 / §2.1.2, build-plan §6.1)",
+          "assertion": "expect(featureRouteFiles).toEqual([]) — received ['account','booking','community','discovery','moderation']",
+          "reproducible": true,
+          "analysis": "Wave-5-era scope guard that asserts client/src/features/*/routes.jsx does not exist. Wave 6's entire purpose is to create those five feature trees, so the guard's premise expired by design the moment U6-DISCOVERY..U6-ACCOUNT-MOD landed. NOT a product defect; the guard did its job through wave 5 and must now be updated (or retired) by U6R-FIX to assert the wave-6 end-state instead.",
+          "disposition": "U6R-FIX: update the scope guard to the wave-6 tree (five feature dirs expected present)."
+        },
+        {
+          "id": "W6-G2",
+          "file": "tests/adr-conformance/adr-wave5-client-invariants.test.js",
+          "line": 142,
+          "test": "no non-test client module dereferences a privileged address key unconditionally",
+          "assertion": "expect(offenders).toEqual([]) — received ['client/src/features/discovery/ListingDetailPage.jsx']",
+          "reproducible": true,
+          "analysis": "The test's own comment states its premise: 'Wave 5 ships no booking-gated screen, so ANY .addressLine1/.postalCode dereference in shipped client code is premature precision-assumption.' Wave 6 ships exactly that booking-gated screen (ADR-010: pending/in-progress guest sees the exact address). ListingDetailPage.jsx is ADR-010-conformant: it guards with hasPreciseAddress (addressLine1 !== undefined && !== null && !== '') and renders the precise address only when the SERVER's booking-gated serializer included it; the public payload never carries the key. The regex-level blanket ban is what expired, not the invariant.",
+          "disposition": "U6R-FIX: narrow the guard from 'zero dereferences anywhere' to 'no UNGUARDED dereference / no claim of the key in the public typedef', keeping the ADR-010 direction of the check."
+        },
+        {
+          "id": "W6-G3",
+          "file": "tests/st-security/st-security-wave3.test.js",
+          "line": 677,
+          "test": "AB-08 scraping defenses — listing detail for a STRANGER is the public projection; a pending guest gets the address; a cancelled booking reverts it",
+          "assertion": "expect(strangerRes.status).toBe(200) — received 500 (run 1 only)",
+          "reproducible": false,
+          "analysis": "Failed on run 1, PASSED on run 2 of the identical tree, and passes in isolation (npx jest tests/st-security/st-security-wave3.test.js: 50/50, 0.73s vs 5.48s under full-suite contention). Backend source is untouched vs the verified e8a610d baseline. Evidence points to transient cross-worker contention: the suite runs in parallel with tests/rt-lt-resilience/lt-volume-latency.test.js (LT-01: 200 VUs, 145k requests over 45s against the same PostgreSQL server) and a 'terminating connection due to administrator command' idle-pool error is visible in the run-1 log from a resilience suite. A DB-level transient during the stranger GET surfaces as the 500. Flake, not a wave-6 regression.",
+          "disposition": "Record as flaky-under-contention; candidate hardening for a later wave (retry-once in the test, or serialize the volume-latency suite), NOT a wave-6 blocker."
+        }
+      ]
+    },
+    "clientTest": {
+      "command": "npm --prefix client test",
+      "exit": 0,
+      "files": "32 passed (32)",
+      "tests": "337 passed (337)",
+      "durationSeconds": 3.28,
+      "baselineComparison": "Baseline was 17 files / 218 tests; wave 6 added 15 spec files / 119 tests, all green.",
+      "verdict": "GREEN"
+    },
+    "lint": {
+      "command": "npm run lint (eslint . && prettier --check .)",
+      "exit": 0,
+      "output": "eslint clean; 'All matched files use Prettier code style!' — client/** react/react-hooks/jsx-a11y override active, client source linted, not ignored.",
+      "verdict": "GREEN"
+    },
+    "backendBuild": {
+      "command": "npm run build",
+      "exit": 0,
+      "output": "check-build: 6 migration file(s) valid (0006 highest, none added by wave 6); 112 file(s) parse cleanly; createApp() boots against .env.example.",
+      "verdict": "GREEN"
+    },
+    "clientBuild": {
+      "command": "npm --prefix client run build",
+      "exit": 0,
+      "output": "vite v5.4.21: 127 modules transformed; dist/index.html 0.49 kB, assets/index-BPuO7LYm.css 16.91 kB, assets/index-BuglZpN6.js 313.20 kB (gzip 96.83 kB); built in 508ms.",
+      "verdict": "GREEN"
+    },
+    "a11yAudit": {
+      "command": "npm run test:a11y",
+      "exit": 1,
+      "interfacesPresent": "7/7",
+      "interfacesWithAtLeastOneRouteAuditedClean": "4/7",
+      "seriousOrCriticalViolations": 0,
+      "advisoryViolations": 0,
+      "keyboard": "PASS — first Tab reaches the skip link (a[href=\"#main\"]); activating it moves focus to #main",
+      "perInterface": [
+        { "interface": "Search / browse (FR-01)", "route": "/search", "status": "AUDITED CLEAN" },
+        { "interface": "Listing detail (FR-02)", "route": "/listings/:id", "status": "PRESENT, UNAUDITED (parameterized — wave-7 fixture ids)" },
+        { "interface": "Host profile (FR-03)", "route": "/hosts/:id", "status": "PRESENT, UNAUDITED (parameterized — wave-7 fixture ids)" },
+        { "interface": "Booking flow (FR-04, FR-12)", "route": "/bookings", "status": "AUDITED CLEAN (also /bookings/new clean; /bookings/:bookingId unaudited)" },
+        { "interface": "Signup / login (FR-09, FR-10)", "route": "/login", "status": "AUDITED CLEAN (also /signup, /verify-email, /account clean)" },
+        { "interface": "Messaging (FR-06)", "route": "/bookings/:bookingId/messages", "status": "PRESENT, UNAUDITED (parameterized — wave-7 fixture ids)" },
+        { "interface": "Moderator queue (FR-08)", "route": "/moderation", "status": "AUDITED CLEAN (also /moderation/alerts clean)" }
+      ],
+      "routesAuditedClean": [
+        "/ (shell)",
+        "/a11y-audit-not-a-page (shell 404 catch-all)",
+        "/login (account)",
+        "/signup (account)",
+        "/verify-email (account)",
+        "/account (account)",
+        "/bookings (booking)",
+        "/bookings/new (booking)",
+        "/search (discovery)",
+        "/moderation (moderation)",
+        "/moderation/alerts (moderation)"
+      ],
+      "routesParameterizedUnaudited": [
+        "/bookings/:bookingId (booking)",
+        "/bookings/:bookingId/messages (community)",
+        "/bookings/:bookingId/review (community)",
+        "/bookings/:bookingId/safety-alert (community)",
+        "/listings/:id (discovery)",
+        "/hosts/:id (discovery)"
+      ],
+      "violationsVerbatim": [],
+      "verdict": "RED BY DESIGN, at the exact expected end-state for wave 6: 7 of the 7 NFR-07 interfaces exist on this tree; all 11 non-parameterized routes audited CLEAN at wcag2a+wcag2aa (0 serious, 0 critical, 0 lower-impact notes); keyboard checks pass; exit 1 lists ONLY the 6 parameterized routes that need seeded fixture ids (wave 7 flips the gate). NFR-07 remains NOT MET regardless of this harness: it additionally requires the recorded 5-participant UT-01 usability study (human activity, docs/ut01-usability-study-plan.md)."
+    },
+    "grepGates": {
+      "documentCookie": {
+        "command": "grep -rn 'document\\.cookie' client/src",
+        "hits": 0,
+        "verdict": "GREEN — session stays opaque/HttpOnly (NFR-03); no client JS reads the cookie."
+      },
+      "capLiterals": {
+        "command": "grep MEHKO_/cap-number patterns over client/src (non-test)",
+        "hits": 0,
+        "detail": "client/src/features/booking/components/bookingErrors.js renders MEHKO_DAILY_LISTING_LIMIT / MEHKO_DAILY_MEAL_LIMIT / MEHKO_WEEKLY_MEAL_LIMIT messages with every number and boundary date read from the server error's details payload (limit, alreadyScheduled, localDate, weekStart, weekEnd) — zero client-side cap constants (FR-11 / ADR-009). Only regex hit is a date-format doc comment ('6:30 PM'), a false positive.",
+        "verdict": "GREEN"
+      },
+      "hexLiteralsAppCss": {
+        "command": "grep -nE '#[0-9a-fA-F]{3,8}\\b' client/src/App.css",
+        "hits": 0,
+        "verdict": "GREEN — App.css remains token-only (NFR-07 contrast tokens intact)."
+      }
+    }
+  },
+  "summary": {
+    "green": ["clientTest (32/337)", "lint", "backendBuild", "clientBuild", "grep:documentCookie", "grep:capLiterals", "grep:hexLiteralsAppCss"],
+    "red": [
+      "backendTest — 63/1397 counts intact but exit 1: two deterministic stale wave-5 scope guards (W6-G1 coverage-lane.test.js:114, W6-G2 adr-wave5-client-invariants.test.js:142) that U6R-FIX must update for the wave-6 tree, plus one non-reproducible contention flake (W6-G3 st-security-wave3.test.js:677, passes isolated and on rerun)",
+      "a11yAudit — expected red: exit 1 solely for 6 parameterized routes awaiting wave-7 fixture ids; 7/7 interfaces present, all auditable routes clean"
+    ],
+    "nfr07Status": "NOT MET (and must not be claimed met): harness evidence is 7/7 interfaces present with every auditable route clean, but 6 parameterized routes are unaudited until wave-7 fixtures AND the UT-01 five-participant study is an outstanding human activity."
+  }
+}

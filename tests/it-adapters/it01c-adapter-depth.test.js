@@ -697,7 +697,7 @@ describe('IT-01 · booking.promote early-delivery depth (IT3-F1 regression, FR-0
 
 // ==============================================================================================
 describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measurable in this tree', () => {
-  test('ADR-008 evaluation set now EXISTS and conforms, but no results file and no sign-off exist', () => {
+  test('ADR-008 evaluation set EXISTS, conforms and is label-signed-off; only the live run/results file is missing', () => {
     // Was: "the set is absent". The set landed (IT-F1, U4-EVALSET) so the premise changed; what
     // this probe guards has not — every OTHER ADR-008 precondition for claiming NFR-10 is still
     // missing, and this asserts each one rather than inferring them from an empty directory.

@@ -10,7 +10,161 @@ Companion artifact: `requirements-inventory.json` — all 14 FR + 13 NFR + 8 AB 
 acceptance criteria, now carrying per-requirement `statusAt_f7f954c`, `statusAt_bc27199` and
 `reverification` fields.
 
-**Revision 2026-08-21 rev F — WAVE 4 VERIFICATION run (this run). Verify-only, then repair, then report.**
+**Revision 2026-08-26 rev G — WAVE 6 BUILD + VERIFY (this run): the client feature screens.**
+Rev F below (wave-4 verification) and the §6.1 wave-5 plan are history — both landed and are
+pushed. **Baseline `e8a610d`** ("Ratify FR-05: a review comment is required"), clean tree, pushed,
+CI green. Gates measured on this exact tree, which no unit may regress: backend **63 suites /
+1397 tests, exit 0 under `TEST_STRICT_HANDLES=1`**; client vitest **17 files / 218 tests, exit
+0**; `npm run lint`, `npm run build`, `npm --prefix client run build` all clean;
+`npm run test:a11y` exits 1 honestly at **0 of 7** NFR-07 interfaces.
+**RUN CLOSED 2026-08-26 — measured outcome in §G.6; wave 6 sits uncommitted on `e8a610d` for the
+human team to commit.**
+
+### G.0 What wave 6 is for
+
+Wave 6 lands the seven NFR-07 interfaces as real screens over the finished waves-0–4 API, using
+the wave-5 foundation (route auto-discovery via `client/src/routes.jsx` `import.meta.glob`; the
+`api`/`ApiError` client; `useSession()`; the UI kit incl. `StatusAnnouncer`/`useAnnounce`,
+`FormField`, `Img` with required alt; `styles/tokens.css`). **Use that foundation — building a
+second kit, API layer or session store is a defect.** Wave 6 is what unblocks: the
+`npm run test:a11y` 7/7 interface gate (wave 7 flips it green), the UT-01 five-participant study
+(protocol already at `docs/ut01-usability-study-plan.md`), and a meaningful AB-06 ZAP crawl.
+Backend source (`src/`, `db/`, `tests/`) is **not** in wave-6 ownership: a missing endpoint is a
+reported deviation, never a new route.
+
+### G.1 Route contract — how the a11y harness maps screens to the seven interfaces
+
+`scripts/a11y-audit.js` discovers `path: '…'` literals in `client/src/features/*/routes.jsx` and
+maps them onto the seven interfaces with these patterns (leading `/` added if missing). Units MUST
+declare paths that hit them:
+
+| Interface | Pattern (must match) | Owner / route |
+|---|---|---|
+| Search/browse (FR-01) | `/search`, `/browse` or `/listings` | U6-DISCOVERY — `search` |
+| Listing detail (FR-02) | `/listings/…` | U6-DISCOVERY — `listings/:id` |
+| Host profile (FR-03) | `/hosts/…` | U6-DISCOVERY — `hosts/:id` |
+| Booking flow (FR-04/12) | `/bookings…` | U6-BOOKING — `bookings`, `bookings/new`, `bookings/:id` |
+| Signup/login (FR-09/10) | `/login`, `/signup` or `/register` | U6-ACCOUNT-MOD — `login`, `signup` |
+| Messaging (FR-06) | `/messages` or `/bookings/:id/messages` | U6-COMMUNITY — `bookings/:bookingId/messages` |
+| Moderator queue (FR-08) | `/moderation` or `/queue` | U6-ACCOUNT-MOD — `moderation` |
+
+Parameterized paths count as PRESENT for interface coverage but **cannot be axe-audited without
+seeded ids — they hold the audit gate red by design until wave 7**. So the honest wave-6 outcome
+is: **7/7 interfaces present, non-parameterized routes audited clean, exit still 1** listing the
+parameterized routes as unaudited. Report exactly that; do not "fix" the script to exit 0.
+
+### G.2 Backend contracts every screen respects (verified on this tree)
+
+1. **Opaque session.** HttpOnly cookie; zero `document.cookie` (grep-gated). Auth state from
+   `useSession()` / API 401s only.
+2. **Typed error codes.** `catch (e) { e.code }`: `NOT_ELIGIBLE` (+ `reasons[]`:
+   `EMAIL_UNVERIFIED`, `NAME_MISSING`, `PHONE_MISSING`, `HOST_PROFILE_INCOMPLETE`,
+   `HOST_AGREEMENT_MISSING`), `MEHKO_DAILY_LISTING_LIMIT` (409, details `{localDate, limit}`),
+   `MEHKO_DAILY_MEAL_LIMIT` / `MEHKO_WEEKLY_MEAL_LIMIT` (422, details incl.
+   `{weekStart, weekEnd, limit, alreadyScheduled}`), `NO_CAPACITY`, `REVIEW_EXISTS`,
+   `VALIDATION_FAILED`, `SEARCH_DEGRADED`, plus client-side `NETWORK_ERROR` /
+   `UNEXPECTED_RESPONSE`. Every code gets a real human message announced via `useAnnounce()`;
+   a stringified body is a defect.
+3. **FR-09 is the flagship error surface.** A 403 `NOT_ELIGIBLE` renders per-reason-code copy
+   saying WHAT is missing and HOW to fix it, linking to the fix (verify email / complete profile
+   at `/account`). UT-01 probes exactly this.
+4. **FR-11 caps come from the error payload** — 1 listing/host/day, 30 meals/day, **90**
+   meals/week over the Monday–Sunday `America/Los_Angeles` week (AB 626 as amended by AB 1325,
+   ADR-009 ratified 2026-08-18). The UI names WHICH cap and WHEN it resets **from `details`**;
+   the literals 1/30/90 never appear in client code.
+5. **FR-05: comment REQUIRED, min 1 char** (ratified 2026-08-26, `e8a610d`). The form marks it
+   required before submit; photo-only submits are blocked client-side with an explanation, and
+   the 422 still renders correctly if forced.
+6. **FR-08: born pending.** After review submit, say "pending moderation — not public until
+   approved". The moderator queue lists listings, reviews, messages AND `safety_alert` rows.
+7. **NFR-09: degraded search is a state.** `api.search()` → `ok` / `degraded` (stale results +
+   visible, announced explanation) / `unavailable` (real message). Never a bare spinner or crash.
+8. **ADR-010 shape discipline.** Public payloads carry coarsened `{lat,lng}` + `areaLabel`;
+   render the exact address ONLY when the payload itself carries it (booking-gated). Never
+   assume a precise field exists; never label coarse coordinates as exact.
+9. **Moderator gating**: nav/screen visibility from `user.roles`; the server 403 is the
+   enforcement, the client gate is UX.
+
+### G.3 Accessibility is the point (audited in wave 7; built now)
+
+Every screen ships with: semantic landmarks under the shell + sensible heading order (one `h1`
+via `usePageTitle`); every control labelled through `FormField`; visible focus everywhere;
+`Img`-enforced alt text; errors and async status announced through `StatusAnnouncer`; body-text
+contrast ≥ 4.5:1 using kit tokens only — `App.css` stays token-only, zero hex literals; 320 px
+reflow without horizontal scroll.
+
+### G.4 Run shape — 6A build ∥, 6B verify ∥, 6C repair, 6D report
+
+| Sub-wave | Units | Nature |
+|---|---|---|
+| **6A** | U6-DISCOVERY ∥ U6-BOOKING ∥ U6-COMMUNITY ∥ U6-ACCOUNT-MOD | Build; disjoint `client/src/features/*` subtrees; cross-feature navigation by URL string only — no unit imports another feature's files or edits a wave-5 file |
+| **6B** | U6V-DISCOVERY ∥ U6V-BOOKING ∥ U6V-COMMUNITY ∥ U6V-ACCOUNT-MOD ∥ U6V-GATES-A11Y | Verify-only, no source edits; one findings JSON each under `docs/_generated/wave6-verify/`; gates lane runs the full ladder + `npm run test:a11y` and records interface coverage honestly |
+| **6C** | U6R-FIX (alone) | Repairs confirmed findings across the feature subtrees; re-runs gates |
+| **6D** | U6-REPORT (alone) | `docs/verification-report.md` → waves 0–6; inventory status refresh; NFR-07 stays open (UT-01 is human) |
+
+Unit briefs, exclusive files and acceptance are in the structured plan returned to the workflow
+runner. House rules unchanged (rev F §F.4): root `npm test` stays backend-only; client tests are
+vitest under `client/`; eslint client override with `react`/`react-hooks`/`jsx-a11y` stays — never
+ignore client source; migrations append-only (0006 highest); backend test-placement rules apply to
+any backend test touched; **no `git commit` / `git push`** — the human team commits.
+
+### G.5 Open questions (stated readings; none blocking)
+
+1. **FR-13 surfacing:** no in-app notification endpoint exists (email via SendGrid is the ADR-011
+   channel). Wave 6 surfaces booking status changes and states that email notifications are sent.
+   Team may confirm or ask for an in-app feed (that would be a backend change, out of wave-6 scope).
+2. **Host-agreement acceptance UI** maps to `PATCH /api/users/me` `hostProfile` per
+   `src/schemas/auth.js`; the implementer transcribes the exact accepted fields from the schema —
+   if acceptance is not settable there, it is a reported deviation, not a new endpoint.
+3. **Stale summary caution:** any document quoting 60 meals/week is outdated — ADR-009 as amended
+   (AB 1325) sets **90**, and the client reads even that only from error payloads.
+4. **Parameterized-route audits** (listing detail, host profile, messages) need seeded fixture ids
+   — wave-7 work, already anticipated by the harness.
+
+### G.6 Measured outcome — run closed 2026-08-26
+
+All four 6A units built, five 6B verify-only lanes ran (findings JSONs under
+`docs/_generated/wave6-verify/`: `discovery`, `booking`, `community`, `account-mod`, `gates`),
+one 6C repair round (U6R-FIX, `wave6-verify/repairs.json`), and the 6D report refresh landed
+(`docs/verification-report.md` now covers waves 0–6). Everything below is measured, not planned.
+
+**Post-repair gate ladder (three consecutive backend runs — 2x U6R-FIX, 1x report author):**
+
+| Gate | Measured |
+|---|---|
+| `TEST_STRICT_HANDLES=1 npm test` | **63 suites / 1397 tests, exit 0** — 95.2 s / 97.4 s / 94.261 s. Contract unchanged: wave 6 added no backend suite; the two wave-5 scope guards it invalidated by design (W6-G1 `coverage-lane`, W6-G2 `adr-wave5-client-invariants`) were re-baselined in place keeping their invariants' direction |
+| `npm --prefix client test` | **32 files / 344 tests, exit 0** — client contract restated from 17/218 (15 screen-spec files + 7 repair specs) |
+| `npm run lint` / `npm run build` / client build | all exit 0; `client/**` react/jsx-a11y override active on every wave-6 file |
+| `npm run test:a11y` | **exactly the honest end-state §G.1 prescribed**: 7/7 interfaces present; all 11 non-parameterized routes audited clean (0 serious/critical wcag2a+wcag2aa); keyboard pass; **exit 1** naming only the 6 parameterized routes awaiting wave-7 seeded ids. Nobody "fixed" the script to exit 0 |
+| Grep gates | 0 `document.cookie` · 0 hex literals (App.css + feature css) · 0 cap literals in client code |
+
+**Findings and repairs (full record in `repairs.json`):** 1 major (AMV-W6-01 — the NFR-05 lockout
+copy was dead code behind an invented error-code string), 2 gate-blocking stale guards
+(W6-G1/W6-G2), 5 minor/low screen defects, 2 coverage gaps — **all repaired and closed by
+re-executing the original failure scenario**; 1 non-reproducible contention flake (W6-G3, watch
+item under W4-F6 discipline); 1 open observation for the coordinator (OBS-B3: FR-11 client
+surfacing is a rendering contract only — no listing-create screen was in wave-6 scope, so no UI
+path can trigger a MEHKO cap). The round's recurring defect class: client code matching error
+codes the server never emits, masked by specs stubbing the invented shapes (AMV-W6-01/-02,
+U6VC-F1) — every repair went to the server's real shape and corrected the stubs.
+
+**Requirement movement: none — 32 met / 3 partial / 0 not implemented, unchanged from waves 0–5,
+and that is the honest outcome.** Wave 6's deliverable was interface existence, which closes
+nothing by itself: **NFR-07 stays open** (wave-7 seeded-id audits of the 6 parameterized routes
++ the recorded 5-participant UT-01 study — a human activity, protocol at
+`docs/ut01-usability-study-plan.md`, schedulable NOW that its interfaces exist); **NFR-10 stays
+partial** (the one live IT-03 run with model id + `PROMPT_VERSION` + `RESULTS.md`, both rates
+< 0.05, is wave 7); **AB-06 stays partial** (the ZAP crawl over the now-rendered client is unrun).
+Also still open: a fresh k6 LT-01/LT-02 instrument run (the current number is the wave-4
+artifact), TCC-03 ratification at CDR. Per-requirement `statusAtWave6Verified` is stamped in
+`requirements-inventory.json` only where a lane re-executed the clause on this tree.
+
+**Nothing was committed** — the wave-6 working tree sits on `e8a610d` for the human team
+(house rule f). Expected CI on commit: backend 63/1397, client 32/344, both builds, lint.
+
+---
+
+**Revision 2026-08-21 rev F — WAVE 4 VERIFICATION run. Verify-only, then repair, then report.**
 Rev E below is the build plan the implementers executed; it is history now. Wave 4 landed at
 **`cca6787` ("Build wave 4 — UNVERIFIED CHECKPOINT")** — four new modules (`moderation`, `reviews`,
 `messaging`, `privacy`), the FR-07 safety finish, outbox handlers `moderationScan` /
