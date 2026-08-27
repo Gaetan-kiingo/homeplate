@@ -41,11 +41,21 @@ export default function BookingsListPage() {
     message: '',
   });
 
+  // Depend on the DECISION, not the raw session status. 'anonymous' is the only value that
+  // changes what this effect does (skip the request); 'unknown' and 'authenticated' both query.
+  // Depending on sessionStatus itself re-ran the whole effect the moment hydration resolved
+  // 'unknown' -> 'authenticated', which set phase back to 'loading' and flashed the rendered
+  // list away behind a spinner before a second, identical request repopulated it. That double
+  // fetch is invisible on a fast machine and reproduced on CI (2026-08-27, run 33027709007):
+  // the list rendered, the assertion for the first row passed, and the next synchronous
+  // assertion landed in the spinner window.
+  const sessionBlocksQuery = sessionStatus === 'anonymous';
+
   useEffect(() => {
     // 'anonymous' is definitive — render the sign-in prompt instead of a doomed request.
     // 'unknown' (still hydrating) proceeds: the cookie may be live, and a 401 both flips the
     // session store (src/api/http.js broadcast) and lands in the error branch below.
-    if (sessionStatus === 'anonymous') return undefined;
+    if (sessionBlocksQuery) return undefined;
     let cancelled = false;
     setResult((prev) => ({ ...prev, phase: 'loading', message: '' }));
     const query = { role };
@@ -77,7 +87,7 @@ export default function BookingsListPage() {
     return () => {
       cancelled = true;
     };
-  }, [role, status, page, sessionStatus, announce, announceError]);
+  }, [role, status, page, sessionBlocksQuery, announce, announceError]);
 
   const hasNextPage =
     result.phase === 'ready' &&

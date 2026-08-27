@@ -98,6 +98,14 @@ describe('BookingsListPage — /bookings (FR-12 / FR-13 / NFR-07)', () => {
     // The default query hits the documented list surface (role=any, first page).
     const list = calls.find((c) => c.pathname === '/api/bookings');
     expect(list.search).toBe('role=any&page=1');
+
+    // REGRESSION GUARD (CI run 33027709007, 2026-08-27): the fetch effect used to depend on
+    // the raw session status, so hydration resolving 'unknown' -> 'authenticated' re-ran it,
+    // set phase back to 'loading', and flashed the rendered list away behind a spinner while
+    // an identical second request repopulated it. Invisible locally, reproduced on a slower
+    // runner. Asserting the request COUNT pins the cause; asserting only the rendered rows
+    // would go green again the moment the refetch completed.
+    expect(calls.filter((c) => c.pathname === '/api/bookings')).toHaveLength(1);
   });
 
   it('has labelled filters; changing the role filter refetches with that role', async () => {
