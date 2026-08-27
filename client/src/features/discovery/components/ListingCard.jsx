@@ -21,19 +21,25 @@ export default function ListingCard({ listing }) {
   return (
     <li>
       <Card as="article" className={styles.resultCard}>
+        {/* The image slot is ALWAYS reserved. Rendering it only when a photo exists made every
+            card a different height, so a grid row sized to whichever card had one and the
+            results looked ragged. The placeholder is decorative and aria-hidden: a listing
+            without a photo is not information a screen-reader user needs announced. */}
         {image ? (
           <Img src={image.url} alt={`Photo of ${listing.title}`} className={styles.cardImage} />
-        ) : null}
+        ) : (
+          <div className={styles.cardImagePlaceholder} aria-hidden="true" />
+        )}
         <h3 className={styles.cardTitle}>
           <Link to={listingPath(listing.id)}>{listing.title}</Link>
         </h3>
-        <p className={styles.cardMeta}>Approximate area: {areaText(listing) || 'not specified'}</p>
-        <p className={styles.cardMeta}>
+        <p className={styles.cardDate}>
           <time dateTime={String(listing.scheduledStart)}>
             {formatDateTime(listing.scheduledStart)}
           </time>
         </p>
-        <p className={styles.cardMeta}>{seatsText(listing)}</p>
+        <p className={styles.cardMeta}>Approximate area: {areaText(listing) || 'not specified'}</p>
+        <p className={styles.cardSeats}>{seatsText(listing)}</p>
         {listing.cuisine ? <p className={styles.cardMeta}>Cuisine: {listing.cuisine}</p> : null}
       </Card>
     </li>

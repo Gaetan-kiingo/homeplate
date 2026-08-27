@@ -11,12 +11,19 @@
 }
 
 /* FR-01 filter form: responsive grid of labelled FormFields. */
+/* Filter bar. At minmax(14rem) with full-size helper text this stack occupied roughly a
+ * third of the viewport before a single meal appeared — the results are the product, so the
+ * controls yield to them. Narrower tracks, tighter gaps, and the browser still wraps to one
+ * column at the 320px floor. */
 .searchForm {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: var(--hp-space-4);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: var(--hp-space-3) var(--hp-space-4);
   align-items: end;
   margin-block: var(--hp-space-5);
+  padding: var(--hp-space-4);
+  background: var(--hp-color-surface-raised);
+  border-radius: var(--hp-radius-lg);
 }
 
 .formActions {
@@ -73,29 +80,69 @@
   padding: 0;
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
-  gap: var(--hp-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: var(--hp-space-5);
 }
 
+/* An event card, not a paragraph of prose: photo, title, when, where, seats. */
 .resultCard {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--hp-space-2);
+  gap: var(--hp-space-1);
+  border-radius: var(--hp-radius-lg);
+  box-shadow: var(--hp-shadow-sm);
+  transition: box-shadow var(--hp-motion-duration) ease-out;
 }
 
-.cardImage {
+.resultCard:hover {
+  box-shadow: var(--hp-shadow-md);
+}
+
+.cardImage,
+.cardImagePlaceholder {
   width: 100%;
   max-width: 100%;
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 10;
   object-fit: cover;
-  border-radius: var(--hp-radius-sm);
+  border-radius: var(--hp-radius-md);
+  margin-block-end: var(--hp-space-3);
+}
+
+.cardImagePlaceholder {
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border-subtle);
 }
 
 .cardTitle {
   font-size: var(--hp-font-size-lg);
   line-height: var(--hp-line-height-tight);
+  margin: 0 0 var(--hp-space-1);
+}
+
+/* The whole card reads as one target, so the title carries no permanent underline; it gains
+ * one on hover and keeps the global :focus-visible ring for keyboard users. */
+.cardTitle a {
+  text-decoration: none;
+}
+
+.cardTitle a:hover {
+  text-decoration: underline;
+}
+
+/* When the meal is — the single most decisive fact on the card, so it is not muted. */
+.cardDate {
   margin: 0;
+  font-weight: var(--hp-font-weight-meta);
+  letter-spacing: var(--hp-letter-spacing-meta);
+}
+
+/* Seat scarcity is this product's live state, not another line of prose. */
+.cardSeats {
+  margin: var(--hp-space-1) 0 0;
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+  color: var(--hp-color-text);
 }
 
 .cardMeta {

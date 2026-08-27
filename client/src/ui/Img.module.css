@@ -5,3 +5,12 @@
   max-width: 100%;
   height: auto;
 }
+
+/* Broken-source fallback: a neutral block instead of the browser's broken-image chrome,
+   which paints the alt string as raw overflowing text. Decorative — the surrounding card
+   still carries the title, date and seats, so no information depends on this. */
+.broken {
+  display: block;
+  background: var(--hp-color-surface-raised);
+  border: 1px solid var(--hp-color-border-subtle);
+}

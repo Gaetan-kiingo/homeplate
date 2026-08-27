@@ -29,31 +29,46 @@
   left: 0;
 }
 
+/* Sticky so navigation stays reachable down a long result list. The explicit surface
+ * background matters: without it, content scrolls visibly under a transparent header. */
 .header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--hp-color-surface);
   border-bottom: 1px solid var(--hp-color-border-subtle);
 }
 
+/* THE CONTAINER. This was max-width: 42rem — a ~672px READING MEASURE applied to the whole
+ * application, including the search results grid, so on any desktop viewport the product sat
+ * in a narrow column with two thirds of the screen empty. A measure is for running text, not
+ * for a page: prose now gets it from `main p` in App.css, and the page gets a real container. */
 .nav,
 .main,
 .footer {
-  max-width: 42rem;
+  max-width: var(--hp-container-max);
   margin: 0 auto;
-  padding: 0 var(--hp-space-4);
+  padding-inline: var(--hp-container-pad);
 }
 
 /* Session-aware nav row (5C): brand left, login-state display right; wraps at the 320 px
  * floor instead of overflowing. */
+/* brand · destinations · (spacer) · session state — the session block is pushed right by
+ * margin-inline-start:auto on .sessionStatus rather than space-between, so the destinations
+ * stay grouped with the brand instead of drifting to the far edge. */
 .nav {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  column-gap: var(--hp-space-4);
+  align-items: center;
+  column-gap: var(--hp-space-5);
+  row-gap: var(--hp-space-2);
+  padding-block: var(--hp-space-3);
 }
 
 .brand {
   display: inline-block;
-  padding: var(--hp-space-3) 0;
+  font-family: var(--hp-font-display);
+  font-size: var(--hp-font-size-lg);
   font-weight: 700;
   color: var(--hp-color-link); /* 6.66:1 on --hp-color-surface */
   text-decoration: none;
@@ -61,14 +76,13 @@
 
 /* Login-state display (5C, display only — no controls until wave 6). */
 .sessionStatus {
+  margin-inline-start: auto;
   color: var(--hp-color-text-muted); /* 8.81:1 on --hp-color-surface */
   font-size: var(--hp-font-size-sm);
-  padding-bottom: var(--hp-space-2);
 }
 
 .main {
-  padding-top: var(--hp-space-4);
-  padding-bottom: var(--hp-space-6);
+  padding-block: var(--hp-space-6) var(--hp-space-7);
 }
 
 .footer {

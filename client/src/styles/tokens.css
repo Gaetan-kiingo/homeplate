@@ -65,6 +65,21 @@
   --hp-focus-ring-offset: 2px;
   --hp-focus-ring-color: var(--hp-color-focus-ring);
 
+  /* ---- typeface pairing ----
+   * Display: a serif for headings and meal titles. Homeplate sells a seat at someone's
+   * table, and an all-sans UI reads like an admin console; the serif carries the editorial,
+   * hospitable register the product actually has. System-resident only — no webfont, so no
+   * network dependency and no CSP/CDN question (a font CDN would also be a third-party
+   * request this project has no reason to make).
+   * Body/UI: the platform sans, which users' own settings already scale.
+   * Meta: the same sans at a smaller step with tracking, for the date/seats/cuisine rows —
+   * metadata should read as data, not as prose. */
+  --hp-font-display: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
+  --hp-font-body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --hp-font-meta: var(--hp-font-body);
+  --hp-letter-spacing-meta: 0.02em;
+  --hp-font-weight-meta: 600;
+
   /* ---- responsive type scale (rem-based so user font-size settings scale everything;
    * clamp() steps fluidly between the 320 px floor and desktop — no breakpoint cliffs) ---- */
   --hp-font-size-sm: 0.875rem;
@@ -72,8 +87,12 @@
   --hp-font-size-lg: 1.125rem;
   --hp-font-size-xl: clamp(1.25rem, 1.05rem + 1vw, 1.5rem);
   --hp-font-size-2xl: clamp(1.5rem, 1.2rem + 1.5vw, 1.875rem);
+  /* Display step for the page h1 — the scale previously stopped at 2xl, so every heading
+   * landed within one step of body text and no page had a focal point. */
+  --hp-font-size-3xl: clamp(1.875rem, 1.4rem + 2.4vw, 2.75rem);
   --hp-line-height-base: 1.5;
   --hp-line-height-tight: 1.25;
+  --hp-line-height-display: 1.1;
 
   /* ---- spacing scale (rem-based, 0.25rem grid) ---- */
   --hp-space-1: 0.25rem;
@@ -84,9 +103,25 @@
   --hp-space-6: 2rem;
   --hp-space-7: 3rem;
 
+  /* ---- layout ----
+   * container: the page gutter width. Content previously ran edge-to-edge at any viewport,
+   * which is the single biggest reason the app read as unstyled.
+   * measure: running-text line length. Beyond ~70 characters the eye loses the line start. */
+  --hp-container-max: 68rem;
+  --hp-container-pad: var(--hp-space-5);
+  --hp-measure: 68ch;
+
   /* ---- shape ---- */
   --hp-radius-sm: 0.25rem;
   --hp-radius-md: 0.5rem;
+  --hp-radius-lg: 0.75rem;
+
+  /* ---- elevation ----
+   * Decorative only: shadows never carry meaning here, so they need no contrast pair (the
+   * same rule the backdrop above follows). Card grouping is conveyed by spacing and border,
+   * which is what a high-contrast or forced-colours mode falls back to. */
+  --hp-shadow-sm: 0 1px 2px rgba(31, 41, 51, 0.06), 0 1px 3px rgba(31, 41, 51, 0.08);
+  --hp-shadow-md: 0 2px 6px rgba(31, 41, 51, 0.07), 0 8px 20px rgba(31, 41, 51, 0.09);
 
   /* ---- motion (zeroed under prefers-reduced-motion below; animated components ALSO carry
    * their own reduced-motion guard so respect never depends on token adoption alone) ---- */
