@@ -118,7 +118,12 @@ describe('HostProfilePage (FR-03, ADR-010, NFR-07)', () => {
     // Example dishes ride the ADR-010 public projection: coarse area, never an address.
     const dishLink = screen.getByRole('link', { name: 'Doro Wat Sunday' });
     expect(dishLink).toHaveAttribute('href', '/listings/listing-7');
-    expect(screen.getByText(/Approximate area: North Park, San Diego, CA/)).toBeInTheDocument();
+    // Design review §3C: the card shows a CONCISE coarse locality ("North Park, San Diego")
+    // instead of the old "Approximate area: North Park, San Diego, San Diego, CA" sentence.
+    // The assertion that matters is unchanged and is made explicitly below: the card carries
+    // coarse locality ONLY — never a street address or precise coordinates (ADR-010/AB-08).
+    expect(screen.getByText(/North Park, San Diego/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approximate area:/)).toBeNull();
     // First page of reviews is the embedded preview.
     expect(screen.getByText('Review body number 1.')).toBeInTheDocument();
     expect(screen.getByText('Guest 5')).toBeInTheDocument();

@@ -28,6 +28,23 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useSession } from '../session/index.js';
 import styles from './AppLayout.module.css';
 
+/** Initials for the account avatar — first letters of the first two words of the name,
+ *  falling back to the email's first character. Purely visual: the accessible name beside it
+ *  is the real one, so nothing depends on parsing a person's name correctly. */
+function initialsFor(user) {
+  const name = (user?.fullName || '').trim();
+  if (name) {
+    return name
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase();
+  }
+  const email = (user?.email || '').trim();
+  return email ? email[0].toUpperCase() : '';
+}
+
 /** True when the signed-in user may reach the FR-08 moderator queue. */
 function isModerator(user) {
   return Array.isArray(user?.roles) && user.roles.includes('moderator');
@@ -102,11 +119,24 @@ export default function AppLayout() {
             </ul>
           )}
 
-          {label !== null && <span className={styles.sessionStatus}>{label}</span>}
-          {status === 'anonymous' && (
-            <Link className={styles.navAuth} to="/login">
-              Sign in
+          {/* Account treatment (design review §3E): initials avatar plus the person's name,
+              linking to the account page — not the prototype's "Signed in as <name>" string.
+              The avatar is decorative; the link text carries the accessible name. */}
+          {status === 'authenticated' && (
+            <Link className={styles.account} to="/account">
+              <span className={styles.avatar} aria-hidden="true">
+                {initialsFor(user)}
+              </span>
+              <span className={styles.accountName}>{user?.fullName || user?.email}</span>
             </Link>
+          )}
+          {status === 'anonymous' && (
+            <>
+              <span className={styles.sessionStatus}>{label}</span>
+              <Link className={styles.navAuth} to="/login">
+                Sign in
+              </Link>
+            </>
           )}
         </nav>
       </header>

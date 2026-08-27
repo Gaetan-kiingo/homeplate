@@ -135,7 +135,7 @@ describe('LoginPage — outcomes per typed code', () => {
     await ue.click(screen.getByRole('button', { name: 'Sign in' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/account'));
     // The session-aware nav proves state came from the RESPONSE (NFR-03/AB-05).
-    expect(screen.getByText('Signed in as Gaia Tester')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Gaia Tester/ })).toHaveAttribute('href', '/account');
     const login = calls.find((c) => c.key === 'POST /api/auth/login');
     expect(login.body).toEqual({ email: 'gaia@example.com', password: 'correct horse' });
     await waitFor(() =>
@@ -144,7 +144,7 @@ describe('LoginPage — outcomes per typed code', () => {
           .getAllByRole('status')
           .map((n) => n.textContent)
           .join(' ')
-      ).toContain('Signed in as Gaia Tester')
+      ).toContain('Gaia Tester')
     );
   });
 

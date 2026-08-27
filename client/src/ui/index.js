@@ -6,6 +6,7 @@
 // kit-contract.test.js). Design tokens live in ../styles/tokens.css, imported once by the
 // shell (5C) — never from here.
 export { default as Button } from './Button.jsx';
+export { default as Icon } from './Icon.jsx';
 export { default as FormField } from './FormField.jsx';
 export { default as TextInput } from './TextInput.jsx';
 export { default as TextArea } from './TextArea.jsx';

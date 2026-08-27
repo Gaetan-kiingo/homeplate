@@ -1,0 +1,7 @@
+/* Sized in em so an icon always matches the text it sits beside, at any user font size. */
+.icon {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  vertical-align: -0.125em;
+}

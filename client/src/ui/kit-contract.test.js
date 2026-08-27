@@ -148,7 +148,10 @@ describe('kit grep gates (build-plan §6.1 5B: token-only colour, leaf imports)'
 });
 
 describe('published export surface (build-plan §7: what wave 6 builds on)', () => {
-  it('exports exactly the 13 published names', () => {
+  // 14 since 2026-08-26: Icon joined the published surface for the design review's minimal
+  // icon set (§4). The count is pinned deliberately — a component appearing in the kit's
+  // public interface is a contract change, not an implementation detail.
+  it('exports exactly the 14 published names', () => {
     expect(Object.keys(kit).sort()).toEqual(
       [
         'Button',
@@ -156,6 +159,7 @@ describe('published export surface (build-plan §7: what wave 6 builds on)', () 
         'Dialog',
         'ErrorSummary',
         'FormField',
+        'Icon',
         'Img',
         'Select',
         'Spinner',

@@ -142,11 +142,19 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
     expect(nav).not.toHaveTextContent(/signed in as/i);
   });
 
-  it('shows "Signed in as <fullName>" once GET /api/users/me answers 200', async () => {
+  // Design review §3E: the nav shows an initials avatar plus the person's NAME linking to
+  // the account page, replacing the prototype "Signed in as <name>" string. The invariant
+  // under test is unchanged: the identity comes from the GET /api/users/me RESPONSE, never
+  // from reading a cookie (NFR-03/AB-05).
+  it('shows the account control naming the user once GET /api/users/me answers 200', async () => {
     stubMe(jsonResponse(200, { user: USER }));
     render(<App />);
     const nav = screen.getByRole('navigation', { name: 'Primary' });
-    await waitFor(() => expect(nav).toHaveTextContent('Signed in as Gaia Tester'));
+    await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
+    expect(within(nav).getByRole('link', { name: /Gaia Tester/ })).toHaveAttribute(
+      'href',
+      '/account'
+    );
   });
 
   // Until 2026-08-27 this asserted the nav carried NO links beyond the skip link and the
@@ -160,7 +168,7 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
     stubMe(jsonResponse(200, { user: USER }));
     render(<App />);
     const nav = screen.getByRole('navigation', { name: 'Primary' });
-    await waitFor(() => expect(nav).toHaveTextContent(/signed in as/i));
+    await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
 
     const navHrefs = within(nav)
       .getAllByRole('link')

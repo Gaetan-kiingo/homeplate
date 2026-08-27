@@ -15,49 +15,49 @@
  * state, exempt under WCAG 1.4.3 but held >= 4.5:1 anyway · decorative = carries no
  * information, never the sole carrier of meaning):
  *
- * contrast: --hp-color-text on --hp-color-surface = 14.75:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-text on --hp-color-surface-raised = 13.74:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-text-muted on --hp-color-surface = 8.81:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-text-muted on --hp-color-surface-raised = 8.21:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text on --hp-color-surface = 15.17:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text on --hp-color-surface-raised = 14.21:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-surface = 7.76:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-surface-raised = 7.27:1 (body; AA >= 4.5:1)
  * contrast: --hp-color-link on --hp-color-surface = 6.66:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-link on --hp-color-surface-raised = 6.21:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-on-primary on --hp-color-primary = 6.66:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-on-primary on --hp-color-primary-hover = 8.88:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-on-danger on --hp-color-danger = 6.57:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-on-danger on --hp-color-danger-hover = 9.02:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-danger-text on --hp-color-surface = 6.57:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-success-text on --hp-color-surface = 6.73:1 (body; AA >= 4.5:1)
- * contrast: --hp-color-border on --hp-color-surface = 5.42:1 (ui; AA >= 3:1)
- * contrast: --hp-color-border on --hp-color-surface-raised = 5.05:1 (ui; AA >= 3:1)
+ * contrast: --hp-color-link on --hp-color-surface-raised = 6.24:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-primary on --hp-color-primary = 6.76:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-primary on --hp-color-primary-hover = 8.97:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-danger on --hp-color-danger = 7.50:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-on-danger on --hp-color-danger-hover = 9.70:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-danger-text on --hp-color-surface = 7.39:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-success-text on --hp-color-surface = 6.47:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-border on --hp-color-surface = 6.38:1 (ui; AA >= 3:1)
+ * contrast: --hp-color-border on --hp-color-surface-raised = 5.97:1 (ui; AA >= 3:1)
  * contrast: --hp-color-focus-ring on --hp-color-surface = 6.66:1 (focus; AA >= 3:1)
- * contrast: --hp-color-focus-ring on --hp-color-surface-raised = 6.21:1 (focus; AA >= 3:1)
- * contrast: --hp-color-disabled-text on --hp-color-disabled-bg = 5.20:1 (exempt; WCAG 1.4.3 disabled exception, held >= 4.5:1 anyway)
- * contrast: --hp-color-border-subtle on --hp-color-surface = 1.46:1 (decorative; dividers/card edges only — grouping is also conveyed by spacing, never by this colour alone)
+ * contrast: --hp-color-focus-ring on --hp-color-surface-raised = 6.24:1 (focus; AA >= 3:1)
+ * contrast: --hp-color-disabled-text on --hp-color-disabled-bg = 6.19:1 (exempt; WCAG 1.4.3 disabled exception, held >= 4.5:1 anyway)
+ * contrast: --hp-color-border-subtle on --hp-color-surface = 1.31:1 (decorative; dividers/card edges only — grouping is also conveyed by spacing, never by this colour alone)
  */
 
 :root {
   /* ---- colour ---- */
-  --hp-color-surface: #ffffff;
-  --hp-color-surface-raised: #f5f7fa;
-  --hp-color-text: #1f2933;
-  --hp-color-text-muted: #3e4c59;
-  --hp-color-link: #0b5cad;
-  --hp-color-primary: #0b5cad;
-  --hp-color-primary-hover: #094a8b;
+  --hp-color-surface: #fffdfb;
+  --hp-color-surface-raised: #faf5f0;
+  --hp-color-text: #2b2320;
+  --hp-color-text-muted: #5c4f47;
+  --hp-color-link: #9c3d22;
+  --hp-color-primary: #9c3d22;
+  --hp-color-primary-hover: #7e3119;
   --hp-color-on-primary: #ffffff;
-  --hp-color-danger: #b42318;
-  --hp-color-danger-hover: #8e1c13;
+  --hp-color-danger: #a32218;
+  --hp-color-danger-hover: #851b13;
   --hp-color-on-danger: #ffffff;
-  --hp-color-danger-text: #b42318;
-  --hp-color-success-text: #17693a;
-  --hp-color-border: #5f6b7a;
-  --hp-color-border-subtle: #d2d6db;
-  --hp-color-focus-ring: #0b5cad;
-  --hp-color-disabled-bg: #e4e7eb;
-  --hp-color-disabled-text: #52606d;
+  --hp-color-danger-text: #a32218;
+  --hp-color-success-text: #146b3a;
+  --hp-color-border: #6b5b52;
+  --hp-color-border-subtle: #e7ddd4;
+  --hp-color-focus-ring: #9c3d22;
+  --hp-color-disabled-bg: #ece4dd;
+  --hp-color-disabled-text: #5c5049;
   /* Dialog backdrop: overlays --hp-color-surface; the dialog panel on top of it carries its
    * own AA-checked text/surface pairs, so the backdrop itself is decorative. */
-  --hp-color-backdrop: rgba(31, 41, 51, 0.6);
+  --hp-color-backdrop: rgba(43, 35, 32, 0.6);
 
   /* ---- visible focus indication (NFR-07: keyboard traversal has a visible indicator;
    * ring colour pairs measured above under the `focus` tag) ---- */
@@ -74,8 +74,14 @@
    * Body/UI: the platform sans, which users' own settings already scale.
    * Meta: the same sans at a smaller step with tracking, for the date/seats/cuisine rows —
    * metadata should read as data, not as prose. */
-  --hp-font-display: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
   --hp-font-body: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Product UI is sans throughout (design review, 2026-08-26: the serif headings read
+   * institutional/editorial rather than hospitable). The display face is kept as a token for
+   * LARGE MARKETING headlines only — it is deliberately not applied to product chrome.
+   * Note the review's correction: "no webfont CDN" never meant "no custom typeface" — a
+   * licensed face can be SELF-HOSTED and swapped in here with no third-party request. */
+  --hp-font-display: var(--hp-font-body);
+  --hp-font-marketing: ui-serif, Georgia, 'Iowan Old Style', 'Times New Roman', serif;
   --hp-font-meta: var(--hp-font-body);
   --hp-letter-spacing-meta: 0.02em;
   --hp-font-weight-meta: 600;
@@ -112,16 +118,16 @@
   --hp-measure: 68ch;
 
   /* ---- shape ---- */
-  --hp-radius-sm: 0.25rem;
-  --hp-radius-md: 0.5rem;
-  --hp-radius-lg: 0.75rem;
+  --hp-radius-sm: 0.375rem;
+  --hp-radius-md: 0.625rem;
+  --hp-radius-lg: 1rem;
 
   /* ---- elevation ----
    * Decorative only: shadows never carry meaning here, so they need no contrast pair (the
    * same rule the backdrop above follows). Card grouping is conveyed by spacing and border,
    * which is what a high-contrast or forced-colours mode falls back to. */
-  --hp-shadow-sm: 0 1px 2px rgba(31, 41, 51, 0.06), 0 1px 3px rgba(31, 41, 51, 0.08);
-  --hp-shadow-md: 0 2px 6px rgba(31, 41, 51, 0.07), 0 8px 20px rgba(31, 41, 51, 0.09);
+  --hp-shadow-sm: 0 1px 2px rgba(43, 35, 32, 0.07), 0 1px 3px rgba(43, 35, 32, 0.09);
+  --hp-shadow-md: 0 2px 6px rgba(43, 35, 32, 0.08), 0 8px 20px rgba(43, 35, 32, 0.1);
 
   /* ---- motion (zeroed under prefers-reduced-motion below; animated components ALSO carry
    * their own reduced-motion guard so respect never depends on token adoption alone) ---- */

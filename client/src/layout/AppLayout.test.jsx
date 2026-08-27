@@ -141,7 +141,7 @@ describe('AppLayout session-aware nav (5C: display only; NFR-03/AB-05 response-i
     renderShell(router);
     await waitFor(() =>
       expect(screen.getByRole('navigation', { name: 'Primary' })).toHaveTextContent(
-        'Signed in as gaia@example.com'
+        'gaia@example.com'
       )
     );
   });

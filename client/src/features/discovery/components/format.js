@@ -94,6 +94,45 @@ export function seatsText(listing) {
   return `${remaining} of ${capacity} ${capacity === 1 ? 'seat' : 'seats'} remaining`;
 }
 
+/**
+ * CARD variant of the coarse location: a concise display string ("North Park, San Diego").
+ * areaText joins areaLabel + city + region and only drops EXACT duplicates, so a label that
+ * already contains the city produced "North Park, San Diego, San Diego, CA" — accurate but
+ * unscannable (design review §3C: "Preserve richer data in the model, not in the visual
+ * sentence"). This drops any part already contained in what came before. The detail page
+ * keeps areaText, where the fuller context is useful.
+ */
+export function areaShort(listing) {
+  const parts = [];
+  for (const part of [listing.areaLabel, listing.city, listing.region]) {
+    if (!part) continue;
+    const seen = parts.join(', ').toLowerCase();
+    if (seen.includes(String(part).toLowerCase())) continue;
+    parts.push(part);
+  }
+  return parts.length > 0 ? parts.slice(0, 2).join(', ') : null;
+}
+
+/**
+ * Seat availability as a STATUS rather than prose (design review §3D). `tone` drives the
+ * visual emphasis; the label always carries the meaning in words, so the state is never
+ * conveyed by colour alone (NFR-07 / WCAG 1.4.1).
+ * @returns {{label: string, tone: 'gone'|'low'|'ok'|'unknown'}}
+ */
+export function seatsStatus(listing) {
+  const remaining = Number(listing.seatsRemaining);
+  const capacity = Number(listing.seatCapacity);
+  if (!Number.isFinite(remaining) || !Number.isFinite(capacity)) {
+    return { label: 'Seat availability unknown', tone: 'unknown' };
+  }
+  if (remaining <= 0) return { label: 'Sold out', tone: 'gone' };
+  if (remaining === 1) return { label: '1 seat left', tone: 'low' };
+  if (capacity > 0 && remaining / capacity <= 0.34) {
+    return { label: `${remaining} seats left`, tone: 'low' };
+  }
+  return { label: `${remaining} of ${capacity} seats`, tone: 'ok' };
+}
+
 /** FR-03/FR-05 rating aggregate as a sentence; honest when there are no reviews yet. */
 export function ratingText(averageRating, reviewCount) {
   const count = Number(reviewCount);

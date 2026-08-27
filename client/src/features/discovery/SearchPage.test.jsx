@@ -116,9 +116,15 @@ describe('SearchPage (FR-01, NFR-09, NFR-07)', () => {
     const link = await screen.findByRole('link', { name: 'Sunset Tacos' });
     expect(link).toHaveAttribute('href', '/listings/listing-1');
     expect(screen.getByAltText('Photo of Sunset Tacos')).toBeInTheDocument();
-    expect(screen.getByText(/Approximate area: North Park, San Diego, CA/)).toBeInTheDocument();
-    expect(screen.getByText('4 of 6 seats remaining')).toBeInTheDocument();
-    expect(screen.getByText('Cuisine: Mexican')).toBeInTheDocument();
+    // Design review §3C: the card shows a CONCISE coarse locality ("North Park, San Diego")
+    // instead of the old "Approximate area: North Park, San Diego, San Diego, CA" sentence.
+    // The assertion that matters is unchanged and is made explicitly below: the card carries
+    // coarse locality ONLY — never a street address or precise coordinates (ADR-010/AB-08).
+    expect(screen.getByText(/North Park, San Diego/)).toBeInTheDocument();
+    expect(screen.queryByText(/Approximate area:/)).toBeNull();
+    // Seats read as a STATUS, not a sentence (§3D) — 4 of 6 is comfortable, so no urgency.
+    expect(screen.getByText('4 of 6 seats')).toBeInTheDocument();
+    expect(screen.getByText('Mexican')).toBeInTheDocument();
     // Announced politely (aria-live status region).
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('2 meals found.'));
   });

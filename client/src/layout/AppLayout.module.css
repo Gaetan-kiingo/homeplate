@@ -123,3 +123,32 @@
 .navAuth {
   margin-inline-start: var(--hp-space-3);
 }
+
+/* Account control (design review §3E): initials avatar + name, replacing the prototype
+   "Signed in as …" string. The avatar is aria-hidden; the name is the accessible label. */
+.account {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-2);
+  color: var(--hp-color-text);
+  text-decoration: none;
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+}
+
+.account:hover .accountName {
+  text-decoration: underline;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 50%;
+  background: var(--hp-color-primary);
+  color: var(--hp-color-on-primary); /* 6.76:1 on --hp-color-primary */
+  font-size: var(--hp-font-size-sm);
+  letter-spacing: var(--hp-letter-spacing-meta);
+}

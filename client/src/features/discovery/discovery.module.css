@@ -84,18 +84,31 @@
   gap: var(--hp-space-5);
 }
 
-/* An event card, not a paragraph of prose: photo, title, when, where, seats. */
+/* An event card (design review §3B): image-dominant, soft edges, one click target, subtle
+ * elevation instead of a hard border. */
 .resultCard {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: var(--hp-space-1);
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hp-color-border-subtle);
   border-radius: var(--hp-radius-lg);
   box-shadow: var(--hp-shadow-sm);
-  transition: box-shadow var(--hp-motion-duration) ease-out;
+  transition:
+    box-shadow var(--hp-motion-duration) ease-out,
+    transform var(--hp-motion-duration) ease-out;
 }
 
 .resultCard:hover {
+  box-shadow: var(--hp-shadow-md);
+  transform: translateY(-2px);
+}
+
+/* The card follows its link's focus so keyboard users get the same affordance as pointer
+ * users; the link keeps the global :focus-visible ring as the actual indicator. */
+.resultCard:focus-within {
   box-shadow: var(--hp-shadow-md);
 }
 
@@ -105,46 +118,100 @@
   max-width: 100%;
   aspect-ratio: 16 / 10;
   object-fit: cover;
-  border-radius: var(--hp-radius-md);
-  margin-block-end: var(--hp-space-3);
+  display: block;
 }
 
 .cardImagePlaceholder {
+  display: grid;
+  place-items: center;
   background: var(--hp-color-surface-raised);
-  border: 1px solid var(--hp-color-border-subtle);
+  border-block-end: 1px solid var(--hp-color-border-subtle);
+  color: var(--hp-color-border);
+}
+
+.cardImageGlyph {
+  width: 2rem;
+  height: 2rem;
+}
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  padding: var(--hp-space-4);
 }
 
 .cardTitle {
   font-size: var(--hp-font-size-lg);
   line-height: var(--hp-line-height-tight);
-  margin: 0 0 var(--hp-space-1);
+  margin: 0;
 }
 
-/* The whole card reads as one target, so the title carries no permanent underline; it gains
- * one on hover and keeps the global :focus-visible ring for keyboard users. */
-.cardTitle a {
+/* Stretched link: the whole card is clickable, but the accessibility tree still contains
+ * exactly one link named by the dish title. */
+.cardLink {
+  color: var(--hp-color-text);
   text-decoration: none;
 }
 
-.cardTitle a:hover {
+.cardLink::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.cardLink:hover {
   text-decoration: underline;
 }
 
-/* When the meal is — the single most decisive fact on the card, so it is not muted. */
-.cardDate {
+/* Neighbourhood + cuisine: fast context, one compact row. */
+.cardContext {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-1) var(--hp-space-4);
+  margin: 0;
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+
+.cardContextItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+}
+
+/* When the meal is — the most decisive fact, so it is not muted. */
+.cardWhen {
+  display: flex;
+  align-items: center;
+  gap: var(--hp-space-2);
   margin: 0;
   font-weight: var(--hp-font-weight-meta);
-  letter-spacing: var(--hp-letter-spacing-meta);
 }
 
-/* Seat scarcity is this product's live state, not another line of prose. */
+/* Seats as STATUS (§3D). The label always carries the meaning in words, so no state is
+ * conveyed by colour alone (WCAG 1.4.1). */
 .cardSeats {
-  margin: var(--hp-space-1) 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-2);
+  margin: 0;
   font-size: var(--hp-font-size-sm);
   font-weight: var(--hp-font-weight-meta);
-  color: var(--hp-color-text);
 }
 
+.seats_low {
+  color: var(--hp-color-danger-text);
+}
+
+.seats_gone {
+  color: var(--hp-color-text-muted);
+}
+
+.seats_ok,
+.seats_unknown {
+  color: var(--hp-color-text-muted);
+}
 .cardMeta {
   margin: 0;
   color: var(--hp-color-text-muted);
