@@ -123,7 +123,12 @@ describe('QueuePage — role gating (client UX; server 403 is the enforcement)',
     });
     renderAt('/moderation');
     expect(await screen.findByRole('heading', { name: 'Sign in required' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+    // Scoped to <main>: since 2026-08-27 the layout nav also offers a "Sign in" link, so
+    // an unscoped query is ambiguous. The assertion is about THIS PAGE's prompt.
+    expect(within(screen.getByRole('main')).getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/login'
+    );
     expect(calls.filter((c) => c.key === 'GET /api/moderation/queue')).toHaveLength(0);
   });
 

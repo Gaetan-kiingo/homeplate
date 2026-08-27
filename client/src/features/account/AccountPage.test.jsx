@@ -98,7 +98,12 @@ describe('AccountPage — session states (NFR-03/AB-05)', () => {
     renderAt('/account');
     expect(screen.getByRole('heading', { level: 1, name: 'Your account' })).toBeInTheDocument();
     expect(await screen.findByText(/You are not signed in/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+    // Scoped to <main>: since 2026-08-27 the layout nav also offers a "Sign in" link, so
+    // an unscoped query is ambiguous. The assertion is about THIS PAGE's prompt.
+    expect(within(screen.getByRole('main')).getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/login'
+    );
     expect(screen.getByRole('link', { name: 'create an account' })).toHaveAttribute(
       'href',
       '/signup'

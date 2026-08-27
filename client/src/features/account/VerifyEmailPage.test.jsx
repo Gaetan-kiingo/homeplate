@@ -3,7 +3,7 @@
 // always-202 recovery form, and the no-token guidance state; single-use token redeemed
 // exactly once; NFR-07 announced states).
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import AppLayout from '../../layout/AppLayout.jsx';
@@ -83,7 +83,12 @@ describe('VerifyEmailPage — /verify-email (FR-10)', () => {
     ).toBeInTheDocument();
     const notices = await screen.findAllByText(/email address is verified/i);
     expect(notices.some((node) => node.tagName === 'P')).toBe(true);
-    expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+    // Scoped to <main>: since 2026-08-27 the layout nav also offers a "Sign in" link, so
+    // an unscoped query is ambiguous. The assertion is about THIS PAGE's prompt.
+    expect(within(screen.getByRole('main')).getByRole('link', { name: 'Sign in' })).toHaveAttribute(
+      'href',
+      '/login'
+    );
     await waitFor(() => expect(document.title).toBe('Verify your email — Homeplate'));
     // Single-use token: redeemed exactly once, with the token relayed verbatim.
     const redemptions = calls.filter((c) => c.key === 'POST /api/auth/verify-email');

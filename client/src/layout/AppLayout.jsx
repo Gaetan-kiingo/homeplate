@@ -9,6 +9,14 @@
 //       of being stranded on a stale control;
 //     - responsive to 320 px with no horizontal scroll (fluid max-width containers, wrapping
 //       flex header — AppLayout.module.css, on the UI-kit tokens since 5C).
+//   NAVIGABILITY (fixed 2026-08-27) — wave 5 shipped this nav deliberately link-free, on the
+//     note that "the auth screens and their nav links are wave 6, so no dead links ship now".
+//     Wave 6 built all seven interfaces but every one of its units was scoped to
+//     client/src/features/**, so nobody owned this file and the links were never added: the
+//     app shipped with seven screens reachable only by typing a URL. A human opening the front
+//     door found it in seconds; no lane did, because each verified its own screen AT its route
+//     and none asked "can a user GET here?". Links are now derived from the session state and
+//     only ever point at routes that exist.
 //   NFR-03 / AB-05 — the nav is session-aware through useSession() ONLY: state inferred from
 //     API responses by the ambient SessionProvider (App.jsx), never from a cookie read. This
 //     is login-state DISPLAY only ("Signed in as …" / "Not signed in"); the auth screens and
@@ -20,7 +28,12 @@ import { Link, Outlet, useLocation } from 'react-router-dom';
 import { useSession } from '../session/index.js';
 import styles from './AppLayout.module.css';
 
-/** Login-state display for the header nav (5C: display only — auth screens are wave 6). */
+/** True when the signed-in user may reach the FR-08 moderator queue. */
+function isModerator(user) {
+  return Array.isArray(user?.roles) && user.roles.includes('moderator');
+}
+
+/** Login-state display for the header nav. */
 function sessionLabel(status, user) {
   if (status === 'authenticated') {
     // SessionUser.fullName is part of the AB-08 owner-profile allowlist; the email fallback
@@ -63,7 +76,38 @@ export default function AppLayout() {
           <Link className={styles.brand} to="/">
             Homeplate
           </Link>
+
+          {/* Primary destinations. Rendered only once the session is resolved, so an
+              authenticated user never sees a sign-in link flash first (and vice versa). */}
+          {status !== 'unknown' && (
+            <ul className={styles.navList}>
+              <li>
+                <Link to="/search">Find a meal</Link>
+              </li>
+              {status === 'authenticated' && (
+                <>
+                  <li>
+                    <Link to="/bookings">Your bookings</Link>
+                  </li>
+                  <li>
+                    <Link to="/account">Account</Link>
+                  </li>
+                  {isModerator(user) && (
+                    <li>
+                      <Link to="/moderation">Moderation</Link>
+                    </li>
+                  )}
+                </>
+              )}
+            </ul>
+          )}
+
           {label !== null && <span className={styles.sessionStatus}>{label}</span>}
+          {status === 'anonymous' && (
+            <Link className={styles.navAuth} to="/login">
+              Sign in
+            </Link>
+          )}
         </nav>
       </header>
       <main id="main" tabIndex={-1} ref={mainRef} className={styles.main}>

@@ -78,3 +78,34 @@
   color: var(--hp-color-text-muted); /* 8.81:1 on --hp-color-surface */
   font-size: var(--hp-font-size-sm);
 }
+
+/* Primary destinations. Added 2026-08-27 with the nav links themselves: wave 5 shipped the
+   header link-free and wave 6's units were all scoped to features/**, so the seven screens
+   were reachable only by typing a URL. */
+.navList {
+  display: flex;
+  gap: var(--hp-space-4);
+  align-items: center;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+
+.navList a,
+.navAuth {
+  color: var(--hp-color-link);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.navList a:hover,
+.navList a:focus-visible,
+.navAuth:hover,
+.navAuth:focus-visible {
+  text-decoration: underline;
+}
+
+.navAuth {
+  margin-inline-start: var(--hp-space-3);
+}

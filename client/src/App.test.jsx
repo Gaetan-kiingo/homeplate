@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App.jsx';
 
@@ -149,15 +149,50 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
     await waitFor(() => expect(nav).toHaveTextContent('Signed in as Gaia Tester'));
   });
 
-  it('adds no links in any session state: login-state display only until wave 6', async () => {
+  // Until 2026-08-27 this asserted the nav carried NO links beyond the skip link and the
+  // brand — wave 5's deliberate "no dead links ship before wave 6" state. Wave 6 built all
+  // seven interfaces but every unit was scoped to features/**, so nobody added the links and
+  // the app shipped with its screens reachable only by typing a URL. The assertion is
+  // INVERTED rather than deleted, and it keeps the original guarantee: the nav must offer the
+  // destinations for the current session state, and must never point at a route that does
+  // not exist.
+  it('offers the signed-in destinations, and every link resolves to a real route', async () => {
     stubMe(jsonResponse(200, { user: USER }));
     render(<App />);
-    await waitFor(() =>
-      expect(screen.getByRole('navigation', { name: 'Primary' })).toHaveTextContent(/signed in as/i)
-    );
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(nav).toHaveTextContent(/signed in as/i));
+
+    const navHrefs = within(nav)
+      .getAllByRole('link')
+      .map((a) => a.getAttribute('href'));
+    expect(navHrefs).toEqual(expect.arrayContaining(['/', '/search', '/bookings', '/account']));
+
+    // NO DEAD LINKS — the guarantee the original test existed to protect. Every href is
+    // either the in-page skip target or a path the real route table can serve.
+    const known = ['/', '/search', '/bookings', '/account', '/moderation', '/login', '/signup'];
     for (const link of screen.getAllByRole('link')) {
-      expect(['#main', '/']).toContain(link.getAttribute('href'));
+      const href = link.getAttribute('href');
+      expect(href === '#main' || known.includes(href)).toBe(true);
     }
+  });
+
+  it('anonymous: offers sign-in and search, never the signed-in-only destinations', async () => {
+    stubMe(
+      jsonResponse(401, {
+        error: { code: 'AUTHENTICATION_REQUIRED', message: 'Sign in.', correlationId: 'c1' },
+      })
+    );
+    render(<App />);
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(nav).toHaveTextContent(/not signed in/i));
+
+    const navHrefs = within(nav)
+      .getAllByRole('link')
+      .map((a) => a.getAttribute('href'));
+    expect(navHrefs).toEqual(expect.arrayContaining(['/search', '/login']));
+    expect(navHrefs).not.toContain('/bookings');
+    expect(navHrefs).not.toContain('/account');
+    expect(navHrefs).not.toContain('/moderation');
   });
 });
 
