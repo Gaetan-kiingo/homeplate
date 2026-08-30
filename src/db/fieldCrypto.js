@@ -64,7 +64,7 @@ function decrypt(value) {
   const iv = raw.subarray(0, IV_LENGTH);
   const tag = raw.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
   const ciphertext = raw.subarray(IV_LENGTH + TAG_LENGTH);
-  const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv);
+  const decipher = crypto.createDecipheriv(ALGORITHM, KEY, iv, { authTagLength: TAG_LENGTH });
   decipher.setAuthTag(tag);
   // GCM auth failure throws here — tampering is detected, never returned as garbage plaintext.
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
