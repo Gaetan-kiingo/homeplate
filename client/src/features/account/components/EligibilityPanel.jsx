@@ -93,7 +93,7 @@ const GUIDANCE = {
 
 function FlagBlock({ heading, allowed, allowedText, blockedText, codes }) {
   return (
-    <div>
+    <div className={styles.flagCard}>
       <h3>{heading}</h3>
       <p className={allowed ? styles.ready : styles.blocked}>
         {allowed ? allowedText : blockedText}
@@ -131,20 +131,22 @@ export default function EligibilityPanel({ user }) {
         Homeplate checks these server-side before every reservation and every listing (FR-09). Here
         is where your account stands, and how to fix anything outstanding.
       </p>
-      <FlagBlock
-        heading="Reserving seats"
-        allowed={user.canReserveSeat === true}
-        allowedText="Ready — you can reserve seats at meals."
-        blockedText="Not yet available — the following is outstanding:"
-        codes={missingForReserve(user)}
-      />
-      <FlagBlock
-        heading="Publishing listings (hosting)"
-        allowed={user.canPublishListing === true}
-        allowedText="Ready — you can publish meal listings."
-        blockedText="Not yet available — the following is outstanding:"
-        codes={missingForPublish(user)}
-      />
+      <div className={styles.flagGrid}>
+        <FlagBlock
+          heading="Reserving seats"
+          allowed={user.canReserveSeat === true}
+          allowedText="Ready — you can reserve seats at meals."
+          blockedText="Not yet available — the following is outstanding:"
+          codes={missingForReserve(user)}
+        />
+        <FlagBlock
+          heading="Publishing listings (hosting)"
+          allowed={user.canPublishListing === true}
+          allowedText="Ready — you can publish meal listings."
+          blockedText="Not yet available — the following is outstanding:"
+          codes={missingForPublish(user)}
+        />
+      </div>
     </section>
   );
 }

@@ -9,11 +9,49 @@
   max-width: 65ch;
 }
 
+/* Sub-navigation as tabs (demo-polish pass): the current view (aria-current="page") is a
+ * filled pill; the state is also exposed to assistive tech through aria-current. */
 .subnav {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--hp-space-4);
-  margin-block: var(--hp-space-3);
+  gap: var(--hp-space-2);
+  margin-block: var(--hp-space-3) var(--hp-space-5);
+  padding: var(--hp-space-1);
+  border-radius: 999px;
+  background: var(--hp-color-surface-raised);
+  inline-size: fit-content;
+  max-inline-size: 100%;
+}
+
+.subnav a {
+  display: inline-block;
+  padding: var(--hp-space-2) var(--hp-space-4);
+  border-radius: 999px;
+  color: var(--hp-color-text-muted);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.subnav a:hover {
+  color: var(--hp-color-link);
+}
+
+.subnav a[aria-current='page'] {
+  background: var(--hp-color-surface);
+  color: var(--hp-color-primary); /* 6.66:1 on surface */
+  box-shadow: var(--hp-shadow-sm);
+}
+
+/* Queue / alert items as raised cards. */
+.itemList > * {
+  border-radius: var(--hp-radius-lg);
+  box-shadow: var(--hp-shadow-sm);
+  border-color: var(--hp-color-border-subtle);
+  padding: var(--hp-space-5);
+}
+
+.itemList h3 {
+  margin-block-end: var(--hp-space-2);
 }
 
 .filters {

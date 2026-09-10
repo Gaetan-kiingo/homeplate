@@ -11,6 +11,7 @@
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
     "seed:volume": "node scripts/seed.js --set volume",
+    "seed:demo": "node scripts/seed-demo.js",
     "build": "node scripts/check-build.js",
     "test": "jest",
     "test:unit": "jest tests/unit",

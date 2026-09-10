@@ -103,7 +103,11 @@ describe('AppLayout focus management (NFR-07)', () => {
 
     await user.click(screen.getByRole('link', { name: 'Homeplate' }));
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Homeplate' })).toBeInTheDocument();
+    // The home h1 is the product headline (2026-09-09 front-door pass); the product NAME is
+    // the document title, asserted below.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: /a seat at a real table/i })
+    ).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('main')).toHaveFocus());
     expect(document.title).toBe('Homeplate');
   });

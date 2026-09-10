@@ -95,9 +95,124 @@
   margin: var(--hp-space-5) 0;
 }
 
-.relatedList {
-  margin: var(--hp-space-2) 0 0;
-  padding-left: var(--hp-space-5);
+/* Booking cards (demo-polish pass, 2026-09-09): title, when-row with icon, and the status as
+ * a BADGE rather than a sentence. The badge text always names the state in words (WCAG
+ * 1.4.1); the tint is the measured soft pair for that tone in tokens.css. */
+.bookingCard {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--hp-space-2) var(--hp-space-4);
+  align-items: start;
+  border-radius: var(--hp-radius-lg);
+  box-shadow: var(--hp-shadow-sm);
+  border-color: var(--hp-color-border-subtle);
+  transition: box-shadow var(--hp-motion-duration) ease-out;
+}
+
+.bookingCard:hover {
+  box-shadow: var(--hp-shadow-md);
+}
+
+.bookingItemHeading a {
+  color: var(--hp-color-text);
+  text-decoration: none;
+}
+
+.bookingItemHeading a:hover {
+  text-decoration: underline;
+}
+
+.bookingWhen {
+  display: flex;
+  align-items: center;
   gap: var(--hp-space-2);
+  margin: 0;
+  color: var(--hp-color-text-muted);
+}
+
+.bookingRole {
+  margin: 0;
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border-radius: 999px;
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+  letter-spacing: var(--hp-letter-spacing-meta);
+  white-space: nowrap;
+}
+
+.badge_pending {
+  background: var(--hp-color-primary-soft);
+  color: var(--hp-color-primary); /* 5.50:1 */
+}
+
+.badge_in_progress {
+  background: var(--hp-color-success-soft);
+  color: var(--hp-color-success-text); /* 5.56:1 */
+}
+
+.badge_completed {
+  background: var(--hp-color-surface-sunken);
+  color: var(--hp-color-text-muted); /* 6.59:1 */
+}
+
+.badge_cancelled {
+  background: var(--hp-color-danger-soft);
+  color: var(--hp-color-danger-text); /* 6.11:1 */
+}
+
+@media (max-width: 30rem) {
+  .bookingCard {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Booking detail (demo-polish pass): the status sentence as a badge row, the listing card
+ * raised, and the related links as secondary buttons. */
+.statusLine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-2);
+  padding: var(--hp-space-2) var(--hp-space-4);
+  border-radius: 999px;
+  font-weight: var(--hp-font-weight-meta);
+  margin: 0 0 var(--hp-space-3);
+}
+
+.listingCard {
+  border-radius: var(--hp-radius-lg);
+  box-shadow: var(--hp-shadow-sm);
+  border-color: var(--hp-color-border-subtle);
+  padding: var(--hp-space-5);
+}
+
+.relatedList {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+}
+
+.relatedList a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: var(--hp-space-2) var(--hp-space-4);
+  border: 2px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sm);
+  color: var(--hp-color-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.relatedList a:hover {
+  background: var(--hp-color-surface-raised);
 }

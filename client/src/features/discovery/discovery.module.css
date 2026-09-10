@@ -124,14 +124,64 @@
 .cardImagePlaceholder {
   display: grid;
   place-items: center;
-  background: var(--hp-color-surface-raised);
+  /* Branded fallback (design review §4): a warm gradient plate, not an empty grey box. */
+  background:
+    radial-gradient(circle at 30% 20%, var(--hp-color-primary-soft) 0, transparent 55%),
+    linear-gradient(135deg, var(--hp-color-surface-sunken), var(--hp-color-surface-raised));
   border-block-end: 1px solid var(--hp-color-border-subtle);
-  color: var(--hp-color-border);
+  color: var(--hp-color-primary);
 }
 
 .cardImageGlyph {
-  width: 2rem;
-  height: 2rem;
+  width: 3.25rem;
+  height: 3.25rem;
+  padding: 0.75rem;
+  border-radius: 50%;
+  background: var(--hp-color-surface);
+  box-shadow: var(--hp-shadow-sm);
+}
+
+/* Image zoom on hover: the whole card is one target, so the photo answers the pointer. */
+.cardImage {
+  transition: transform var(--hp-motion-duration) ease-out;
+}
+
+.resultCard:hover .cardImage {
+  transform: scale(1.03);
+}
+
+.cardImageWrap {
+  overflow: hidden;
+  position: relative;
+}
+
+/* Seats as a badge over the image corner on cards with a photo. */
+.cardBadge {
+  position: absolute;
+  inset-inline-end: var(--hp-space-3);
+  inset-block-start: var(--hp-space-3);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border-radius: 999px;
+  background: var(--hp-color-surface);
+  box-shadow: var(--hp-shadow-sm);
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+}
+
+.cardBadge_low {
+  color: var(--hp-color-danger-text);
+}
+
+.cardBadge_gone {
+  color: var(--hp-color-text-muted);
+}
+
+.cardBadge_ok,
+.cardBadge_unknown {
+  color: var(--hp-color-success-text);
 }
 
 .cardBody {
@@ -320,4 +370,288 @@
 
 .reserveCta:hover {
   background: var(--hp-color-primary-hover);
+}
+
+/* Cuisine / dietary chips (design review §5: "present … as tags"). */
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border-radius: 999px;
+  background: var(--hp-color-primary-soft);
+  color: var(--hp-color-primary); /* 5.50:1 */
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+  text-transform: capitalize;
+}
+
+.chipMuted {
+  background: var(--hp-color-surface-sunken);
+  color: var(--hp-color-text-muted); /* 6.59:1 */
+}
+
+/* ---- FR-02 listing detail: two-column desktop layout with a sticky reservation panel
+ * (design review §5). Stacks to one column below ~56rem; the panel then sits right under
+ * the hero so the CTA is still above the fold on a phone. ---- */
+.detailHeader {
+  margin-block-end: var(--hp-space-5);
+}
+
+.detailKicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hp-space-2) var(--hp-space-4);
+  margin: 0 0 var(--hp-space-3);
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+  font-weight: var(--hp-font-weight-meta);
+  letter-spacing: var(--hp-letter-spacing-meta);
+}
+
+.detailKicker span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+}
+
+.detailHero {
+  margin: 0 0 var(--hp-space-6);
+  border-radius: var(--hp-radius-lg);
+  overflow: hidden;
+  aspect-ratio: 21 / 9;
+  max-width: 100%;
+  box-shadow: var(--hp-shadow-sm);
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 30% 20%, var(--hp-color-primary-soft) 0, transparent 55%),
+    linear-gradient(135deg, var(--hp-color-surface-sunken), var(--hp-color-surface-raised));
+  color: var(--hp-color-primary);
+}
+
+.detailHeroImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detailHeroGlyph {
+  width: 4rem;
+  height: 4rem;
+  padding: 1rem;
+  border-radius: 50%;
+  background: var(--hp-color-surface);
+  box-shadow: var(--hp-shadow-sm);
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  gap: var(--hp-space-7);
+  align-items: start;
+}
+
+@media (max-width: 56rem) {
+  .detailGrid {
+    grid-template-columns: 1fr;
+    gap: var(--hp-space-5);
+  }
+
+  .detailAside {
+    order: -1;
+  }
+}
+
+.detailMain > .section:first-child {
+  margin-block-start: 0;
+}
+
+.detailAside {
+  position: sticky;
+  top: calc(var(--hp-space-7) + var(--hp-space-4));
+}
+
+/* The reservation panel: what / when / how many / where, then the one action. */
+.reservePanel {
+  display: grid;
+  gap: var(--hp-space-4);
+  padding: var(--hp-space-5);
+  border-radius: var(--hp-radius-lg);
+  border: 1px solid var(--hp-color-border-subtle);
+  background: var(--hp-color-surface);
+  box-shadow: var(--hp-shadow-md);
+}
+
+.reserveFacts {
+  margin: 0;
+  display: grid;
+  gap: var(--hp-space-3);
+}
+
+.reserveFact {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--hp-space-3);
+  align-items: start;
+}
+
+.reserveFact svg {
+  margin-top: 0.3em;
+  color: var(--hp-color-primary);
+}
+
+.reserveFact dt {
+  grid-column: 2;
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+
+.reserveFact dd {
+  grid-column: 2;
+  margin: 0;
+  font-weight: 600;
+}
+
+.reserveSeats_low dd {
+  color: var(--hp-color-danger-text);
+}
+
+.reserveSeats_gone dd {
+  color: var(--hp-color-text-muted);
+}
+
+.reserveCtaWide {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.reserveNote {
+  margin: 0;
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+
+/* Host trust block: initials avatar + name + rating line. */
+.hostCard {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--hp-space-4);
+  align-items: start;
+}
+
+.hostAvatar {
+  display: grid;
+  place-items: center;
+  inline-size: 3.25rem;
+  block-size: 3.25rem;
+  border-radius: 50%;
+  background: var(--hp-color-primary);
+  color: var(--hp-color-on-primary);
+  font-weight: 700;
+  font-size: var(--hp-font-size-lg);
+  letter-spacing: var(--hp-letter-spacing-meta);
+}
+
+.hostName {
+  margin: 0;
+  font-size: var(--hp-font-size-lg);
+  font-weight: 700;
+}
+
+.hostName a {
+  color: var(--hp-color-text);
+  text-decoration: none;
+}
+
+.hostName a:hover {
+  text-decoration: underline;
+}
+
+.hostRating {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+  margin: var(--hp-space-1) 0 0;
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+}
+
+.hostRating svg {
+  color: var(--hp-color-accent);
+}
+
+.hostBio {
+  margin: var(--hp-space-2) 0 0;
+}
+
+.description {
+  font-size: var(--hp-font-size-lg);
+  line-height: 1.6;
+}
+
+.subheading {
+  margin-block: var(--hp-space-5) var(--hp-space-2);
+}
+
+/* FR-05 review card: it had borrowed .resultCard, whose padding is 0 for the image card, so
+ * review text sat flush against the border. A quiet raised surface of its own. */
+.reviewCard {
+  padding: var(--hp-space-4) var(--hp-space-5);
+  border-radius: var(--hp-radius-md);
+  background: var(--hp-color-surface-raised);
+  border-color: var(--hp-color-border-subtle);
+}
+
+/* FR-03 host profile header: avatar, name, member-since and rating in one block. */
+.hostHeader {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--hp-space-5);
+  align-items: center;
+  margin-block-end: var(--hp-space-5);
+}
+
+.hostHeader h1 {
+  margin-block-end: var(--hp-space-1);
+}
+
+.hostHeaderAvatar {
+  inline-size: 4.5rem;
+  block-size: 4.5rem;
+  font-size: var(--hp-font-size-xl);
+}
+
+.hostHeaderMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-2) var(--hp-space-4);
+  margin: 0;
+  color: var(--hp-color-text-muted);
+  font-size: var(--hp-font-size-sm);
+}
+
+.hostHeaderMeta > * {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-1);
+  margin: 0;
+}
+
+.hostHeaderMeta svg {
+  color: var(--hp-color-accent);
 }

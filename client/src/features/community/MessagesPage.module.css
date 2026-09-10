@@ -17,13 +17,29 @@
   gap: var(--hp-space-3);
 }
 
+/* Chat bubbles (demo-polish pass): the other participant on the left on a raised surface,
+ * your own messages on the right on the primary tint. Sender is still NAMED in the meta line,
+ * so the side/tint never carries meaning alone. */
 .message {
-  background: var(--hp-color-surface);
-  border: 1px solid var(--hp-color-border-subtle);
-  border-radius: var(--hp-radius-md);
-  padding: var(--hp-space-3);
-  max-width: 100%;
+  background: var(--hp-color-surface-raised);
+  border-radius: var(--hp-radius-lg);
+  border-end-start-radius: var(--hp-radius-sm);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  max-width: min(100%, 44rem);
+  align-self: flex-start;
   overflow-wrap: break-word;
+}
+
+.messageMine {
+  background: var(--hp-color-primary-soft); /* text 12.52:1 / muted 6.41:1 on primary-soft */
+  border-end-start-radius: var(--hp-radius-lg);
+  border-end-end-radius: var(--hp-radius-sm);
+  align-self: flex-end;
+}
+
+.messageList + *,
+.thread {
+  margin-block-end: var(--hp-space-6);
 }
 
 .messageMeta {

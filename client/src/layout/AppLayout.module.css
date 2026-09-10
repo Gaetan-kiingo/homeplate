@@ -66,12 +66,34 @@
 }
 
 .brand {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hp-space-2);
   font-family: var(--hp-font-display);
   font-size: var(--hp-font-size-lg);
   font-weight: 700;
+  letter-spacing: -0.01em;
   color: var(--hp-color-link); /* 6.66:1 on --hp-color-surface */
   text-decoration: none;
+}
+
+/* Brand mark: a plate on a primary disc. Decorative (aria-hidden in the markup). */
+.brandMark {
+  display: grid;
+  place-items: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  border-radius: 50%;
+  background: var(--hp-color-primary);
+  color: var(--hp-color-on-primary);
+}
+
+.brandMark svg {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
 }
 
 /* Login-state display (5C, display only — no controls until wave 6). */
@@ -87,10 +109,20 @@
 
 .footer {
   border-top: 1px solid var(--hp-color-border-subtle);
-  padding-top: var(--hp-space-3);
-  padding-bottom: var(--hp-space-5);
+  padding-top: var(--hp-space-5);
+  padding-bottom: var(--hp-space-6);
   color: var(--hp-color-text-muted); /* 8.81:1 on --hp-color-surface */
   font-size: var(--hp-font-size-sm);
+}
+
+.footer p {
+  margin: 0;
+}
+
+.footerBrand {
+  font-weight: 700;
+  color: var(--hp-color-text);
+  margin-block-end: var(--hp-space-1);
 }
 
 /* Primary destinations. Added 2026-08-27 with the nav links themselves: wave 5 shipped the
@@ -108,16 +140,32 @@
 
 .navList a,
 .navAuth {
-  color: var(--hp-color-link);
+  display: inline-block;
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border-radius: 999px;
+  color: var(--hp-color-text-muted);
   text-decoration: none;
   font-weight: 600;
+  transition:
+    background-color var(--hp-motion-duration) ease-in-out,
+    color var(--hp-motion-duration) ease-in-out;
 }
 
 .navList a:hover,
-.navList a:focus-visible,
-.navAuth:hover,
-.navAuth:focus-visible {
-  text-decoration: underline;
+.navAuth:hover {
+  background: var(--hp-color-surface-raised);
+  color: var(--hp-color-link);
+}
+
+/* Current section (NavLink adds .active): a soft primary pill. aria-current="page" is set by
+   NavLink as well, so the state is exposed to assistive tech, not just by colour. */
+.navList a:global(.active) {
+  background: var(--hp-color-primary-soft);
+  color: var(--hp-color-primary); /* 5.50:1 on --hp-color-primary-soft */
+}
+
+.navAuth {
+  color: var(--hp-color-link);
 }
 
 .navAuth {

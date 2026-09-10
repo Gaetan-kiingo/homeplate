@@ -19,7 +19,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/index.js';
-import { Img, Spinner, useAnnounce } from '../../ui/index.js';
+import { Icon, Img, Spinner, useAnnounce } from '../../ui/index.js';
 import usePageTitle from '../../layout/usePageTitle.js';
 import ListingCard from './components/ListingCard.jsx';
 import ReviewsSection from './components/ReviewsSection.jsx';
@@ -29,6 +29,17 @@ import styles from './discovery.module.css';
 
 function errorTitle(error) {
   return error && error.status === 404 ? 'Host not found' : 'Host profile unavailable';
+}
+
+/** Initials for the decorative avatar; the h1 beside it carries the name. */
+function initialsFor(name) {
+  return String(name || '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
 }
 
 export default function HostProfilePage() {
@@ -101,13 +112,25 @@ export default function HostProfilePage() {
 
   return (
     <article>
-      <h1>{host.displayName}</h1>
-      {memberSince ? (
-        <p className={styles.cardMeta}>
-          Member since <time dateTime={String(host.memberSince)}>{memberSince}</time>
-        </p>
-      ) : null}
-      <p>{ratingText(host.averageRating, host.reviewCount)}</p>
+      <header className={styles.hostHeader}>
+        <span className={`${styles.hostAvatar} ${styles.hostHeaderAvatar}`} aria-hidden="true">
+          {initialsFor(host.displayName)}
+        </span>
+        <div>
+          <h1>{host.displayName}</h1>
+          <div className={styles.hostHeaderMeta}>
+            <p>
+              <Icon name="star" />
+              {ratingText(host.averageRating, host.reviewCount)}
+            </p>
+            {memberSince ? (
+              <p className={styles.cardMeta}>
+                Member since <time dateTime={String(host.memberSince)}>{memberSince}</time>
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </header>
 
       <section aria-labelledby="host-about-heading" className={styles.section}>
         <h2 id="host-about-heading">About this host</h2>

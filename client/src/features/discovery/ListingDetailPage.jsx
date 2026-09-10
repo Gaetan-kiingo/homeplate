@@ -24,11 +24,18 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/index.js';
-import { Img, Spinner, useAnnounce } from '../../ui/index.js';
+import { Icon, Img, Spinner, useAnnounce } from '../../ui/index.js';
 import usePageTitle from '../../layout/usePageTitle.js';
 import ReviewsSection from './components/ReviewsSection.jsx';
 import { hostPath, loginPath, newBookingPath } from './components/paths.js';
-import { areaText, formatDateTime, ratingText, seatsText } from './components/format.js';
+import {
+  areaShort,
+  areaText,
+  formatDateTime,
+  ratingText,
+  seatsStatus,
+  seatsText,
+} from './components/format.js';
 import styles from './discovery.module.css';
 
 /** The privileged ADR-010 fields, joined for display — only called when they exist. */
@@ -46,6 +53,44 @@ function addressText(listing) {
 
 function errorTitle(error) {
   return error && error.status === 404 ? 'Listing not found' : 'Listing unavailable';
+}
+
+/** Ingredients / allergens arrive as text[] from the API (listings.ingredients is text[]);
+ *  older fixtures and the FR-02 spec pass a plain string. Render both the same way.
+ *  Before this the array was rendered raw, which React joins with NO separator
+ *  ("ricevegetablesspices"). */
+function listText(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).join(', ');
+  return value == null ? '' : String(value);
+}
+
+/** The allergen line: the host's own words, or an honest sentence when the API's array is
+ *  empty / the single marker "none". */
+function allergyText(value) {
+  const items = Array.isArray(value) ? value.filter(Boolean) : [];
+  if (Array.isArray(value)) {
+    if (items.length === 0) return 'No allergen information provided by the host.';
+    if (items.every((a) => a.toLowerCase() === 'none')) {
+      return 'No common allergens, according to the host. Ask before booking if unsure.';
+    }
+    return `Contains ${items.join(', ')}.`;
+  }
+  return listText(value) || 'No allergen information provided by the host.';
+}
+
+function listItems(value) {
+  return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+/** Initials for the host avatar (decorative; the link beside it carries the name). */
+function initialsFor(name) {
+  return String(name || '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase();
 }
 
 export default function ListingDetailPage() {
@@ -121,9 +166,32 @@ export default function ListingDetailPage() {
     listing.moderationStatus === 'approved' &&
     listing.seatsRemaining > 0;
 
+  const seats = seatsStatus(listing);
+  const hero =
+    Array.isArray(listing.images) && listing.images.length > 0 ? listing.images[0] : null;
+  // Chips only for the API's text[] shape; a free-text allergen sentence stays a sentence.
+  const allergenItems = Array.isArray(listing.allergens)
+    ? listItems(listing.allergens).filter((a) => a.toLowerCase() !== 'none')
+    : [];
+  const kicker = areaShort(listing);
+
   return (
     <article>
-      <h1>{listing.title}</h1>
+      <header className={styles.detailHeader}>
+        <p className={styles.detailKicker}>
+          {listing.cuisine ? (
+            <span>
+              <Icon name="cuisine" /> {listing.cuisine}
+            </span>
+          ) : null}
+          {kicker ? (
+            <span>
+              <Icon name="location" /> {kicker}
+            </span>
+          ) : null}
+        </p>
+        <h1>{listing.title}</h1>
+      </header>
 
       {listing.moderationStatus === 'pending' ? (
         <p className={styles.stateBox}>
@@ -139,103 +207,170 @@ export default function ListingDetailPage() {
         <p className={styles.stateBox}>This meal has been cancelled by the host.</p>
       ) : null}
 
-      {reservable ? (
-        <p>
-          <Link className={styles.reserveCta} to={newBookingPath(listing.id)}>
-            Reserve a seat
-          </Link>
-        </p>
-      ) : null}
-      {listing.status === 'active' &&
-      listing.moderationStatus === 'approved' &&
-      listing.seatsRemaining <= 0 ? (
-        <p className={styles.stateBox}>No seats remaining for this meal.</p>
-      ) : null}
+      {/* Hero: the first photo, or the branded fallback (design review §4 — never an empty
+          grey rectangle). The gallery below still lists every photo with real alt text. */}
+      <figure className={styles.detailHero}>
+        {hero ? (
+          <Img
+            src={hero.url}
+            alt={`${listing.title} — photo 1 of ${listing.images.length}`}
+            className={styles.detailHeroImage}
+          />
+        ) : (
+          <Icon name="cuisine" className={styles.detailHeroGlyph} />
+        )}
+      </figure>
 
-      <section aria-labelledby="listing-about-heading" className={styles.section}>
-        <h2 id="listing-about-heading">About this meal</h2>
-        <p>{listing.description}</p>
-        {listing.cuisine ? <p>Cuisine: {listing.cuisine}</p> : null}
-        <h3>Ingredients</h3>
-        <p>{listing.ingredients}</p>
-        <p className={styles.allergy}>
-          <strong>Allergy warning: </strong>
-          {listing.allergens || 'No allergen information provided by the host.'}
-        </p>
-      </section>
+      <div className={styles.detailGrid}>
+        <div className={styles.detailMain}>
+          <section aria-labelledby="listing-about-heading" className={styles.section}>
+            <h2 id="listing-about-heading">About this meal</h2>
+            <p className={styles.description}>{listing.description}</p>
 
-      <section aria-labelledby="listing-when-heading" className={styles.section}>
-        <h2 id="listing-when-heading">When and where</h2>
-        <dl className={styles.metaList}>
-          <div className={styles.metaGroup}>
-            <dt>Date and time</dt>
-            <dd>
-              <time dateTime={String(listing.scheduledStart)}>
-                {formatDateTime(listing.scheduledStart)}
-              </time>
-            </dd>
-          </div>
-          <div className={styles.metaGroup}>
-            <dt>Duration</dt>
-            <dd>{listing.durationMinutes} minutes</dd>
-          </div>
-          <div className={styles.metaGroup}>
-            <dt>Seats</dt>
-            <dd>{seatsText(listing)}</dd>
-          </div>
-          <div className={styles.metaGroup}>
-            <dt>Approximate area</dt>
-            <dd>{areaText(listing) || 'Not specified'}</dd>
-          </div>
-          {hasPreciseAddress ? (
-            <div className={styles.metaGroup}>
-              <dt>Address</dt>
-              <dd>{addressText(listing)}</dd>
-            </div>
+            <h3 className={styles.subheading}>Ingredients</h3>
+            <p>{listText(listing.ingredients)}</p>
+            {allergenItems.length > 0 ? (
+              <ul className={styles.chipRow} aria-label="Allergens">
+                {allergenItems.map((a) => (
+                  <li key={a} className={`${styles.chip} ${styles.chipMuted}`}>
+                    {a}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <p className={styles.allergy}>
+              <strong>Allergy warning: </strong>
+              {allergyText(listing.allergens)}
+            </p>
+          </section>
+
+          <section aria-labelledby="listing-when-heading" className={styles.section}>
+            <h2 id="listing-when-heading">Where</h2>
+            <dl className={styles.metaList}>
+              <div className={styles.metaGroup}>
+                <dt>Approximate area</dt>
+                <dd>{areaText(listing) || 'Not specified'}</dd>
+              </div>
+              {hasPreciseAddress ? (
+                <div className={styles.metaGroup}>
+                  <dt>Address</dt>
+                  <dd>{addressText(listing)}</dd>
+                </div>
+              ) : null}
+            </dl>
+            {!hasPreciseAddress ? (
+              <p className={styles.addressNote}>
+                The exact address is shared once you have reserved a seat for this meal.
+              </p>
+            ) : null}
+          </section>
+
+          {Array.isArray(listing.images) && listing.images.length > 1 ? (
+            <section aria-labelledby="listing-photos-heading" className={styles.section}>
+              <h2 id="listing-photos-heading">Photos</h2>
+              <ul className={styles.gallery}>
+                {listing.images.slice(1).map((image, index) => (
+                  <li key={image.id}>
+                    <Img
+                      src={image.url}
+                      alt={`${listing.title} — photo ${index + 2} of ${listing.images.length}`}
+                      className={styles.galleryImage}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
           ) : null}
-        </dl>
-        {!hasPreciseAddress ? (
-          <p className={styles.addressNote}>
-            The exact address is shared once you have reserved a seat for this meal.
-          </p>
-        ) : null}
-      </section>
 
-      {Array.isArray(listing.images) && listing.images.length > 0 ? (
-        <section aria-labelledby="listing-photos-heading" className={styles.section}>
-          <h2 id="listing-photos-heading">Photos</h2>
-          <ul className={styles.gallery}>
-            {listing.images.map((image, index) => (
-              <li key={image.id}>
-                <Img
-                  src={image.url}
-                  alt={`${listing.title} — photo ${index + 1} of ${listing.images.length}`}
-                  className={styles.galleryImage}
-                />
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+          <section aria-labelledby="listing-host-heading" className={styles.section}>
+            <h2 id="listing-host-heading">Your host</h2>
+            <div className={styles.hostCard}>
+              <span className={styles.hostAvatar} aria-hidden="true">
+                {initialsFor(listing.host.displayName)}
+              </span>
+              <div>
+                <p className={styles.hostName}>
+                  <Link to={hostPath(listing.hostId)}>{listing.host.displayName}</Link>
+                </p>
+                <p className={styles.hostRating}>
+                  <Icon name="star" />
+                  {ratingText(listing.host.averageRating, listing.host.reviewCount)}
+                </p>
+                {listing.host.bio ? <p className={styles.hostBio}>{listing.host.bio}</p> : null}
+              </div>
+            </div>
+          </section>
 
-      <section aria-labelledby="listing-host-heading" className={styles.section}>
-        <h2 id="listing-host-heading">Your host</h2>
-        <p>
-          <Link to={hostPath(listing.hostId)}>{listing.host.displayName}</Link>
-        </p>
-        {listing.host.bio ? <p>{listing.host.bio}</p> : null}
-        <p>{ratingText(listing.host.averageRating, listing.host.reviewCount)}</p>
-      </section>
+          <section aria-labelledby="listing-reviews-heading" className={styles.section}>
+            <h2 id="listing-reviews-heading">Reviews of this host</h2>
+            <ReviewsSection
+              hostId={listing.hostId}
+              initialReviews={listing.reviews}
+              total={listing.reviewsTotal}
+              pageSize={listing.reviewsPageSize}
+            />
+          </section>
+        </div>
 
-      <section aria-labelledby="listing-reviews-heading" className={styles.section}>
-        <h2 id="listing-reviews-heading">Reviews of this host</h2>
-        <ReviewsSection
-          hostId={listing.hostId}
-          initialReviews={listing.reviews}
-          total={listing.reviewsTotal}
-          pageSize={listing.reviewsPageSize}
-        />
-      </section>
+        {/* Sticky reservation panel (design review §5): when, how long, how many seats, where,
+            then the one action. Seat availability is stated here ONCE, in words. */}
+        <aside className={styles.detailAside} aria-labelledby="listing-reserve-heading">
+          <div className={styles.reservePanel}>
+            <h2 id="listing-reserve-heading" className={styles.cardTitle}>
+              Reserve
+            </h2>
+            <dl className={styles.reserveFacts}>
+              <div className={styles.reserveFact}>
+                <Icon name="calendar" />
+                <dt>Date and time</dt>
+                <dd>
+                  <time dateTime={String(listing.scheduledStart)}>
+                    {formatDateTime(listing.scheduledStart)}
+                  </time>
+                </dd>
+              </div>
+              <div className={styles.reserveFact}>
+                <Icon name="clock" />
+                <dt>Duration</dt>
+                <dd>{listing.durationMinutes} minutes</dd>
+              </div>
+              <div
+                className={`${styles.reserveFact} ${styles[`reserveSeats_${seats.tone}`] || ''}`}
+              >
+                <Icon name="seats" />
+                <dt>Seats</dt>
+                <dd>{seatsText(listing)}</dd>
+              </div>
+              {kicker ? (
+                <div className={styles.reserveFact}>
+                  <Icon name="location" />
+                  <dt>Neighbourhood</dt>
+                  <dd>{kicker}</dd>
+                </div>
+              ) : null}
+            </dl>
+
+            {reservable ? (
+              <Link
+                className={`${styles.reserveCta} ${styles.reserveCtaWide}`}
+                to={newBookingPath(listing.id)}
+              >
+                Reserve a seat
+              </Link>
+            ) : null}
+            {listing.status === 'active' &&
+            listing.moderationStatus === 'approved' &&
+            listing.seatsRemaining <= 0 ? (
+              <p className={styles.stateBox}>No seats remaining for this meal.</p>
+            ) : null}
+            {!hasPreciseAddress ? (
+              <p className={styles.reserveNote}>
+                Exact address shared after you reserve. Free to cancel before the meal.
+              </p>
+            ) : null}
+          </div>
+        </aside>
+      </div>
     </article>
   );
 }

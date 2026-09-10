@@ -34,13 +34,20 @@ export default function ListingCard({ listing }) {
         {/* The image slot is ALWAYS reserved: rendering it only when a photo exists made every
             card a different height and the grid ragged. The fallback is decorative — a
             listing without a photo is not information to announce. */}
-        {image ? (
-          <Img src={image.url} alt={`Photo of ${listing.title}`} className={styles.cardImage} />
-        ) : (
-          <div className={styles.cardImagePlaceholder} aria-hidden="true">
-            <Icon name="cuisine" className={styles.cardImageGlyph} />
-          </div>
-        )}
+        <div className={styles.cardImageWrap}>
+          {image ? (
+            <Img src={image.url} alt={`Photo of ${listing.title}`} className={styles.cardImage} />
+          ) : (
+            <div className={styles.cardImagePlaceholder} aria-hidden="true">
+              <Icon name="cuisine" className={styles.cardImageGlyph} />
+            </div>
+          )}
+          {/* Seats as STATUS (§3D), pinned to the image corner so availability is the first
+              thing the eye lands on. The label carries the meaning in words (WCAG 1.4.1). */}
+          <p className={`${styles.cardBadge} ${styles[`cardBadge_${seats.tone}`]}`}>
+            <Icon name="seats" /> {seats.label}
+          </p>
+        </div>
 
         <div className={styles.cardBody}>
           <h3 className={styles.cardTitle}>
@@ -67,10 +74,6 @@ export default function ListingCard({ listing }) {
             <time dateTime={String(listing.scheduledStart)}>
               {formatDateTime(listing.scheduledStart)}
             </time>
-          </p>
-
-          <p className={`${styles.cardSeats} ${styles[`seats_${seats.tone}`]}`}>
-            <Icon name="seats" /> {seats.label}
           </p>
         </div>
       </Card>

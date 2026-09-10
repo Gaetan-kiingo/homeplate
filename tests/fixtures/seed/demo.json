@@ -1,0 +1,950 @@
+{
+  "$comment": "Homeplate DEMO seed set (scripts/seed-demo.js). Dates are RELATIVE: {\"$demoOffsetDays\": N, \"hour\": H} resolves to N days from the day the set is seeded, at H:00 Pacific, so the demo listings are always upcoming. Every account's password is DemoPass123!. Photos: Unsplash (free licence), self-hosted from tests/fixtures/seed/demo-media/.",
+  "users": [
+    {
+      "id": "d0000000-0000-4000-8000-000000000001",
+      "email": "rosa@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Rosa Delgado",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000002",
+      "email": "linh@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Linh Tran",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000003",
+      "email": "alem@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Alem Tesfaye",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000004",
+      "email": "priya@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Priya Raman",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000005",
+      "email": "marco@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Marco Bellini",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000006",
+      "email": "dana@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Dana Whitfield",
+      "can_reserve_seat": true,
+      "can_publish_listing": true,
+      "roles": ["user"],
+      "created_at": "2026-06-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000050",
+      "email": "maya@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Maya Chen",
+      "can_reserve_seat": true,
+      "can_publish_listing": false,
+      "roles": ["user"],
+      "created_at": "2026-07-01T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000051",
+      "email": "jordan@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Jordan Okafor",
+      "can_reserve_seat": true,
+      "can_publish_listing": false,
+      "roles": ["user"],
+      "created_at": "2026-07-02T12:00:00Z"
+    },
+    {
+      "id": "d0000000-0000-4000-8000-000000000052",
+      "email": "sam.mod@homeplate.demo",
+      "email_verified": true,
+      "password_hash": "$argon2id$v=19$m=19456,t=2,p=1$AG5oe1ep7Uz5z3dbpxBjTQ$eaj4G1fJ4QtCRAYz4WmNbdd0kfpcBKEHd/+ZS1oW9mY",
+      "full_name": "Sam Rivera",
+      "can_reserve_seat": false,
+      "can_publish_listing": false,
+      "roles": ["user", "moderator"],
+      "created_at": "2026-06-01T12:00:00Z"
+    }
+  ],
+  "host_profiles": [
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000001",
+      "bio": "Third-generation cook from Michoac\u00e1n. My kitchen in North Park runs on slow braises, fresh masa and too much salsa verde.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    },
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000002",
+      "bio": "I grew up helping at my parents' pho stall in Hanoi. Now I simmer the broth overnight in Hillcrest and serve it the way they did.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    },
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000003",
+      "bio": "Ethiopian home cooking in City Heights: injera made from scratch, spices ground the morning of the meal, everything shared from one platter.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    },
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000004",
+      "bio": "Tamil and North Indian dishes from a La Jolla kitchen. Vegetarian-friendly by default, spice level negotiable.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    },
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000005",
+      "bio": "Handmade pasta in Little Italy, where else. Sunday supper style: a long table, bread on the board, nobody leaves early.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    },
+    {
+      "user_id": "d0000000-0000-4000-8000-000000000006",
+      "bio": "Backyard cook in Ocean Beach. Wood-fired ribs, big salads, and a fire pit for after.",
+      "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
+    }
+  ],
+  "listings": [
+    {
+      "id": "d1000000-0000-4000-8000-000000000001",
+      "host_id": "d0000000-0000-4000-8000-000000000001",
+      "title": "Carnitas Night with Fresh Tortillas",
+      "description": "Pork shoulder braised for five hours in orange, bay and lard, then crisped in the pan. Tortillas pressed at the table, three salsas, pickled onions and a pot of frijoles de la olla. We eat family style around one long table.",
+      "ingredients": [
+        "pork shoulder",
+        "corn masa",
+        "tomatillo",
+        "serrano",
+        "white onion",
+        "cilantro",
+        "lime",
+        "black beans"
+      ],
+      "allergens": ["none"],
+      "cuisine": "Mexican",
+      "scheduled_start": {
+        "$demoOffsetDays": 2,
+        "hour": 19
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": 2
+      },
+      "address_line1": "3800 30th St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92104",
+      "country": "US",
+      "lat": 32.7471,
+      "lng": -117.1296,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.13,
+      "area_label": "North Park",
+      "seat_capacity": 6,
+      "seats_remaining": 2,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000002",
+      "host_id": "d0000000-0000-4000-8000-000000000002",
+      "title": "Hanoi-Style Pho, Simmered Overnight",
+      "description": "Beef bone broth started the night before with charred ginger and onion, star anise and cinnamon. Served with rare brisket, fresh rice noodles, and a tray of herbs, sprouts and chilies so everyone builds their own bowl.",
+      "ingredients": [
+        "beef bones",
+        "brisket",
+        "rice noodles",
+        "ginger",
+        "star anise",
+        "fish sauce",
+        "thai basil",
+        "bean sprouts"
+      ],
+      "allergens": ["fish", "shellfish"],
+      "cuisine": "Vietnamese",
+      "scheduled_start": {
+        "$demoOffsetDays": 3,
+        "hour": 18
+      },
+      "duration_minutes": 120,
+      "local_date": {
+        "$demoOffsetDays": 3
+      },
+      "address_line1": "1400 University Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92103",
+      "country": "US",
+      "lat": 32.7488,
+      "lng": -117.1631,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.16,
+      "area_label": "Hillcrest",
+      "seat_capacity": 4,
+      "seats_remaining": 1,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000003",
+      "host_id": "d0000000-0000-4000-8000-000000000003",
+      "title": "Injera Feast: Doro Wat and Misir",
+      "description": "A shared platter of injera topped with doro wat (slow-cooked chicken in berbere), misir wot (red lentils), gomen (collards) and atakilt. Eaten by hand, from the same plate, with coffee roasted at the table afterwards.",
+      "ingredients": [
+        "teff flour",
+        "chicken",
+        "berbere",
+        "red lentils",
+        "collard greens",
+        "niter kibbeh",
+        "onion",
+        "garlic"
+      ],
+      "allergens": ["gluten", "dairy"],
+      "cuisine": "Ethiopian",
+      "scheduled_start": {
+        "$demoOffsetDays": 4,
+        "hour": 18
+      },
+      "duration_minutes": 180,
+      "local_date": {
+        "$demoOffsetDays": 4
+      },
+      "address_line1": "4200 University Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92105",
+      "country": "US",
+      "lat": 32.7508,
+      "lng": -117.0983,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.1,
+      "area_label": "City Heights",
+      "seat_capacity": 8,
+      "seats_remaining": 5,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000004",
+      "host_id": "d0000000-0000-4000-8000-000000000004",
+      "title": "Butter Chicken, Dal and Garlic Naan",
+      "description": "Tandoori-marinated chicken in a tomato and cashew gravy, tadka dal, jeera rice and naan straight off the skillet. A vegetarian paneer version of the main is always on the table too.",
+      "ingredients": [
+        "chicken thigh",
+        "yoghurt",
+        "tomato",
+        "cashew",
+        "garam masala",
+        "yellow lentils",
+        "basmati rice",
+        "wheat flour"
+      ],
+      "allergens": ["dairy", "tree nuts", "gluten"],
+      "cuisine": "Indian",
+      "scheduled_start": {
+        "$demoOffsetDays": 5,
+        "hour": 19
+      },
+      "duration_minutes": 120,
+      "local_date": {
+        "$demoOffsetDays": 5
+      },
+      "address_line1": "7800 Girard Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92037",
+      "country": "US",
+      "lat": 32.8328,
+      "lng": -117.2713,
+      "coarse_lat": 32.83,
+      "coarse_lng": -117.27,
+      "area_label": "La Jolla",
+      "seat_capacity": 6,
+      "seats_remaining": 4,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000005",
+      "host_id": "d0000000-0000-4000-8000-000000000005",
+      "title": "Sunday Pappardelle with Wild Mushroom Rag\u00f9",
+      "description": "Egg pasta rolled by hand that afternoon, tossed with a rag\u00f9 of chanterelles, porcini and brown butter sage. Bread, a bitter-leaf salad and a shared bottle of something from Piedmont.",
+      "ingredients": [
+        "00 flour",
+        "eggs",
+        "chanterelle",
+        "porcini",
+        "butter",
+        "sage",
+        "parmigiano",
+        "sourdough"
+      ],
+      "allergens": ["gluten", "eggs", "dairy"],
+      "cuisine": "Italian",
+      "scheduled_start": {
+        "$demoOffsetDays": 6,
+        "hour": 18
+      },
+      "duration_minutes": 180,
+      "local_date": {
+        "$demoOffsetDays": 6
+      },
+      "address_line1": "1700 India St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92101",
+      "country": "US",
+      "lat": 32.7233,
+      "lng": -117.1682,
+      "coarse_lat": 32.72,
+      "coarse_lng": -117.17,
+      "area_label": "Little Italy",
+      "seat_capacity": 8,
+      "seats_remaining": 6,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000006",
+      "host_id": "d0000000-0000-4000-8000-000000000006",
+      "title": "Backyard Ribs and Fire Pit",
+      "description": "Pork ribs smoked over oak for six hours, a vinegar slaw, cornbread and grilled corn. Bring a sweater: dessert happens around the fire pit.",
+      "ingredients": [
+        "pork ribs",
+        "brown sugar",
+        "paprika",
+        "cabbage",
+        "cornmeal",
+        "corn",
+        "butter"
+      ],
+      "allergens": ["dairy", "gluten"],
+      "cuisine": "American",
+      "scheduled_start": {
+        "$demoOffsetDays": 7,
+        "hour": 17
+      },
+      "duration_minutes": 180,
+      "local_date": {
+        "$demoOffsetDays": 7
+      },
+      "address_line1": "4900 Newport Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92107",
+      "country": "US",
+      "lat": 32.7495,
+      "lng": -117.2497,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.25,
+      "area_label": "Ocean Beach",
+      "seat_capacity": 8,
+      "seats_remaining": 8,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000007",
+      "host_id": "d0000000-0000-4000-8000-000000000004",
+      "title": "Thai Red Curry with Kabocha",
+      "description": "Red curry paste pounded from scratch, coconut milk, kabocha squash and Thai eggplant, with jasmine rice and a green papaya salad on the side. Mild by default; a jar of prik nam pla for the brave.",
+      "ingredients": [
+        "kabocha squash",
+        "coconut milk",
+        "thai eggplant",
+        "red chili",
+        "galangal",
+        "lemongrass",
+        "jasmine rice",
+        "green papaya"
+      ],
+      "allergens": ["fish", "peanuts"],
+      "cuisine": "Thai",
+      "scheduled_start": {
+        "$demoOffsetDays": 8,
+        "hour": 19
+      },
+      "duration_minutes": 120,
+      "local_date": {
+        "$demoOffsetDays": 8
+      },
+      "address_line1": "4500 Mission Blvd",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92109",
+      "country": "US",
+      "lat": 32.7978,
+      "lng": -117.2404,
+      "coarse_lat": 32.8,
+      "coarse_lng": -117.24,
+      "area_label": "Pacific Beach",
+      "seat_capacity": 4,
+      "seats_remaining": 0,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000008",
+      "host_id": "d0000000-0000-4000-8000-000000000003",
+      "title": "Mezze Table and Lamb K\u00f6fte",
+      "description": "Spiced lamb meatballs over a spread of hummus, muhammara, roasted peppers, labneh and warm flatbread. Built for lingering.",
+      "ingredients": [
+        "ground lamb",
+        "chickpeas",
+        "tahini",
+        "walnuts",
+        "red pepper",
+        "yoghurt",
+        "flatbread",
+        "parsley"
+      ],
+      "allergens": ["sesame", "tree nuts", "dairy", "gluten"],
+      "cuisine": "Mediterranean",
+      "scheduled_start": {
+        "$demoOffsetDays": 9,
+        "hour": 18
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": 9
+      },
+      "address_line1": "4100 Adams Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92116",
+      "country": "US",
+      "lat": 32.762,
+      "lng": -117.105,
+      "coarse_lat": 32.76,
+      "coarse_lng": -117.11,
+      "area_label": "Kensington",
+      "seat_capacity": 6,
+      "seats_remaining": 3,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000009",
+      "host_id": "d0000000-0000-4000-8000-000000000006",
+      "title": "Farmers' Market Brunch",
+      "description": "Whatever was best at the Saturday market: eggs from the neighbour, a grain bowl with roasted vegetables, sourdough waffles and a big fruit board. Coffee is bottomless.",
+      "ingredients": [
+        "eggs",
+        "farro",
+        "seasonal vegetables",
+        "sourdough starter",
+        "berries",
+        "maple syrup",
+        "yoghurt"
+      ],
+      "allergens": ["eggs", "gluten", "dairy"],
+      "cuisine": "Californian",
+      "scheduled_start": {
+        "$demoOffsetDays": 10,
+        "hour": 10
+      },
+      "duration_minutes": 120,
+      "local_date": {
+        "$demoOffsetDays": 10
+      },
+      "address_line1": "2200 Fern St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92104",
+      "country": "US",
+      "lat": 32.729,
+      "lng": -117.129,
+      "coarse_lat": 32.73,
+      "coarse_lng": -117.13,
+      "area_label": "South Park",
+      "seat_capacity": 6,
+      "seats_remaining": 6,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000010",
+      "host_id": "d0000000-0000-4000-8000-000000000002",
+      "title": "Persian Grill: Joojeh and Koobideh",
+      "description": "Saffron-marinated chicken and minced lamb skewers over the charcoal, with tahdig (crispy rice), grilled tomatoes and mast-o-khiar. A tea tray and dates to finish.",
+      "ingredients": [
+        "chicken thigh",
+        "ground lamb",
+        "saffron",
+        "basmati rice",
+        "tomato",
+        "yoghurt",
+        "cucumber",
+        "dates"
+      ],
+      "allergens": ["dairy"],
+      "cuisine": "Persian",
+      "scheduled_start": {
+        "$demoOffsetDays": 11,
+        "hour": 18
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": 11
+      },
+      "address_line1": "4000 Goldfinch St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92103",
+      "country": "US",
+      "lat": 32.753,
+      "lng": -117.183,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.18,
+      "area_label": "Mission Hills",
+      "seat_capacity": 8,
+      "seats_remaining": 7,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000011",
+      "host_id": "d0000000-0000-4000-8000-000000000005",
+      "title": "Neapolitan Pizza Night",
+      "description": "Dough fermented for two days, San Marzano tomatoes, fior di latte, and a wood oven in the yard. Guests pick toppings; I stretch and fire. A caprese salad and affogato round it out.",
+      "ingredients": [
+        "00 flour",
+        "san marzano tomato",
+        "fior di latte",
+        "basil",
+        "olive oil",
+        "espresso",
+        "vanilla gelato"
+      ],
+      "allergens": ["gluten", "dairy"],
+      "cuisine": "Italian",
+      "scheduled_start": {
+        "$demoOffsetDays": 12,
+        "hour": 18
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": 12
+      },
+      "address_line1": "1700 India St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92101",
+      "country": "US",
+      "lat": 32.7233,
+      "lng": -117.1682,
+      "coarse_lat": 32.72,
+      "coarse_lng": -117.17,
+      "area_label": "Little Italy",
+      "seat_capacity": 8,
+      "seats_remaining": 1,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000012",
+      "host_id": "d0000000-0000-4000-8000-000000000001",
+      "title": "Garden Salad Supper, Fully Plant-Based",
+      "description": "A summer table from the garden: heirloom tomatoes, grilled stone fruit, charred corn, a farro salad and a chickpea stew. Entirely vegan, mostly gluten-free, all shared.",
+      "ingredients": [
+        "heirloom tomato",
+        "peach",
+        "corn",
+        "farro",
+        "chickpeas",
+        "kale",
+        "lemon",
+        "olive oil"
+      ],
+      "allergens": ["gluten"],
+      "cuisine": "Vegan",
+      "scheduled_start": {
+        "$demoOffsetDays": 13,
+        "hour": 18
+      },
+      "duration_minutes": 120,
+      "local_date": {
+        "$demoOffsetDays": 13
+      },
+      "address_line1": "3800 30th St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92104",
+      "country": "US",
+      "lat": 32.7471,
+      "lng": -117.1296,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.13,
+      "area_label": "North Park",
+      "seat_capacity": 6,
+      "seats_remaining": 4,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000101",
+      "host_id": "d0000000-0000-4000-8000-000000000001",
+      "title": "Mole Negro Sunday",
+      "description": "Twenty-ingredient mole from my grandmother's recipe, over turkey, with rice and handmade tortillas.",
+      "ingredients": ["turkey", "dried chilies", "chocolate", "almonds", "sesame", "corn masa"],
+      "allergens": ["tree nuts", "sesame"],
+      "cuisine": "Mexican",
+      "scheduled_start": {
+        "$demoOffsetDays": -20,
+        "hour": 18
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": -20
+      },
+      "address_line1": "3800 30th St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92104",
+      "country": "US",
+      "lat": 32.7471,
+      "lng": -117.1296,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.13,
+      "area_label": "North Park",
+      "seat_capacity": 6,
+      "seats_remaining": 0,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000102",
+      "host_id": "d0000000-0000-4000-8000-000000000003",
+      "title": "Coffee Ceremony and Kitfo",
+      "description": "Kitfo, gomen and a full three-round coffee ceremony to finish.",
+      "ingredients": ["beef", "niter kibbeh", "mitmita", "collard greens", "coffee"],
+      "allergens": ["dairy"],
+      "cuisine": "Ethiopian",
+      "scheduled_start": {
+        "$demoOffsetDays": -14,
+        "hour": 18
+      },
+      "duration_minutes": 180,
+      "local_date": {
+        "$demoOffsetDays": -14
+      },
+      "address_line1": "4200 University Ave",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92105",
+      "country": "US",
+      "lat": 32.7508,
+      "lng": -117.0983,
+      "coarse_lat": 32.75,
+      "coarse_lng": -117.1,
+      "area_label": "City Heights",
+      "seat_capacity": 8,
+      "seats_remaining": 0,
+      "moderation_status": "approved",
+      "status": "active"
+    },
+    {
+      "id": "d1000000-0000-4000-8000-000000000103",
+      "host_id": "d0000000-0000-4000-8000-000000000005",
+      "title": "Cacio e Pepe and Tiramisu",
+      "description": "Two courses, one very long table.",
+      "ingredients": [
+        "tonnarelli",
+        "pecorino romano",
+        "black pepper",
+        "mascarpone",
+        "espresso",
+        "ladyfingers"
+      ],
+      "allergens": ["gluten", "eggs", "dairy"],
+      "cuisine": "Italian",
+      "scheduled_start": {
+        "$demoOffsetDays": -9,
+        "hour": 18
+      },
+      "duration_minutes": 150,
+      "local_date": {
+        "$demoOffsetDays": -9
+      },
+      "address_line1": "1700 India St",
+      "city": "San Diego",
+      "region": "CA",
+      "postal_code": "92101",
+      "country": "US",
+      "lat": 32.7233,
+      "lng": -117.1682,
+      "coarse_lat": 32.72,
+      "coarse_lng": -117.17,
+      "area_label": "Little Italy",
+      "seat_capacity": 8,
+      "seats_remaining": 0,
+      "moderation_status": "approved",
+      "status": "active"
+    }
+  ],
+  "media_objects": [
+    {
+      "id": "d9000000-0000-4000-8000-000000000001",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000001",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000001",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000001/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "carnitas-tacos.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000002",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000002",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000002",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000002/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "pho.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000003",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000003",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000003",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000003/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "ethiopian-stew.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000004",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000004",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000004",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000004/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "butter-chicken.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000005",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000005",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000005",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000005/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "pappardelle.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000006",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000006",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000006",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000006/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "bbq-ribs.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000007",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000004",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000007",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000007/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "thai-curry.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000008",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000003",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000008",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000008/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "meatballs.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000009",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000006",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000009",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000009/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "brunch.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000010",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000002",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000010",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000010/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "skewers.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000011",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000005",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000011",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000011/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "pizza.jpg"
+    },
+    {
+      "id": "d9000000-0000-4000-8000-000000000012",
+      "owner_user_id": "d0000000-0000-4000-8000-000000000001",
+      "entity_type": "listing",
+      "entity_id": "d1000000-0000-4000-8000-000000000012",
+      "storage_key": "demo/listings/d1000000-0000-4000-8000-000000000012/photo-1.jpg",
+      "content_type": "image/jpeg",
+      "size_bytes": 0,
+      "$demoFile": "salad.jpg"
+    }
+  ],
+  "bookings": [
+    {
+      "id": "d2000000-0000-4000-8000-000000000001",
+      "listing_id": "d1000000-0000-4000-8000-000000000101",
+      "guest_id": "d0000000-0000-4000-8000-000000000050",
+      "status": "completed",
+      "host_confirmed_completion": true,
+      "guest_confirmed_completion": true,
+      "created_at": "2026-08-10T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000002",
+      "listing_id": "d1000000-0000-4000-8000-000000000102",
+      "guest_id": "d0000000-0000-4000-8000-000000000050",
+      "status": "completed",
+      "host_confirmed_completion": true,
+      "guest_confirmed_completion": true,
+      "created_at": "2026-08-16T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000003",
+      "listing_id": "d1000000-0000-4000-8000-000000000103",
+      "guest_id": "d0000000-0000-4000-8000-000000000051",
+      "status": "completed",
+      "host_confirmed_completion": true,
+      "guest_confirmed_completion": true,
+      "created_at": "2026-08-20T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000004",
+      "listing_id": "d1000000-0000-4000-8000-000000000101",
+      "guest_id": "d0000000-0000-4000-8000-000000000051",
+      "status": "completed",
+      "host_confirmed_completion": true,
+      "guest_confirmed_completion": true,
+      "created_at": "2026-08-11T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000005",
+      "listing_id": "d1000000-0000-4000-8000-000000000001",
+      "guest_id": "d0000000-0000-4000-8000-000000000050",
+      "status": "pending",
+      "created_at": "2026-09-05T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000006",
+      "listing_id": "d1000000-0000-4000-8000-000000000005",
+      "guest_id": "d0000000-0000-4000-8000-000000000050",
+      "status": "pending",
+      "created_at": "2026-09-06T10:00:00Z"
+    },
+    {
+      "id": "d2000000-0000-4000-8000-000000000007",
+      "listing_id": "d1000000-0000-4000-8000-000000000002",
+      "guest_id": "d0000000-0000-4000-8000-000000000051",
+      "status": "pending",
+      "created_at": "2026-09-06T11:00:00Z"
+    }
+  ],
+  "reviews": [
+    {
+      "id": "d3000000-0000-4000-8000-000000000001",
+      "booking_id": "d2000000-0000-4000-8000-000000000001",
+      "author_id": "d0000000-0000-4000-8000-000000000050",
+      "target_user_id": "d0000000-0000-4000-8000-000000000001",
+      "rating": 5,
+      "body": "Rosa's mole is the real thing. Six of us who had never met left as a group chat. The tortillas alone were worth it.",
+      "moderation_status": "approved"
+    },
+    {
+      "id": "d3000000-0000-4000-8000-000000000002",
+      "booking_id": "d2000000-0000-4000-8000-000000000004",
+      "author_id": "d0000000-0000-4000-8000-000000000051",
+      "target_user_id": "d0000000-0000-4000-8000-000000000001",
+      "rating": 5,
+      "body": "Warm host, generous portions, and she sent everyone home with leftovers.",
+      "moderation_status": "approved"
+    },
+    {
+      "id": "d3000000-0000-4000-8000-000000000003",
+      "booking_id": "d2000000-0000-4000-8000-000000000002",
+      "author_id": "d0000000-0000-4000-8000-000000000050",
+      "target_user_id": "d0000000-0000-4000-8000-000000000003",
+      "rating": 5,
+      "body": "The coffee ceremony at the end turned dinner into a three-hour evening in the best way. Alem explains every dish.",
+      "moderation_status": "approved"
+    },
+    {
+      "id": "d3000000-0000-4000-8000-000000000004",
+      "booking_id": "d2000000-0000-4000-8000-000000000003",
+      "author_id": "d0000000-0000-4000-8000-000000000051",
+      "target_user_id": "d0000000-0000-4000-8000-000000000005",
+      "rating": 4,
+      "body": "Great pasta and a very long table. Ran a little late, but nobody minded.",
+      "moderation_status": "approved"
+    }
+  ],
+  "messages": [
+    {
+      "id": "d4000000-0000-4000-8000-000000000001",
+      "booking_id": "d2000000-0000-4000-8000-000000000005",
+      "sender_id": "d0000000-0000-4000-8000-000000000050",
+      "body": "Hi Rosa! So excited for Friday. One of us is vegetarian \u2014 is there a non-pork option for the tacos?",
+      "moderation_status": "approved"
+    },
+    {
+      "id": "d4000000-0000-4000-8000-000000000002",
+      "booking_id": "d2000000-0000-4000-8000-000000000005",
+      "sender_id": "d0000000-0000-4000-8000-000000000001",
+      "body": "Of course \u2014 I always do a batch of mushroom and poblano tinga. See you Friday!",
+      "moderation_status": "approved"
+    }
+  ]
+}

@@ -43,6 +43,36 @@ variable aborts start-up with the full list of problems (see `.env.example` for 
 
 MinIO console: http://localhost:9001 (local credentials in `docker-compose.yml`).
 
+## Demo data (class demo / screenshots)
+
+The `base` fixture is a test set: four listings, all now in the past (FR-01 search hides them),
+and `seed:volume` adds 1,000 synthetic "Volume Dinner N" rows for the NFR-02 load tests. Neither
+looks like a marketplace. The **demo set** does — 12 upcoming meals with photos, 6 hosts with
+bios, reviews, bookings and a message thread — and its dates are *relative*, so it is always
+"this week" no matter when you seed it:
+
+```sh
+npm run seed:demo                # tests/fixtures/seed/demo.json + demo-media/*.jpg → Postgres + MinIO
+```
+
+For a clean demo database (no Volume Dinners between the demo meals), reset the stack first:
+
+```sh
+docker compose down -v && docker compose up -d --wait && npm run migrate && npm run seed && npm run seed:demo
+```
+
+Every demo account uses the password **`DemoPass123!`** (local development only):
+
+| Account | Email | What to show |
+| --- | --- | --- |
+| Guest | `maya@homeplate.demo` | Search, listing detail, reserve, bookings (2 upcoming, 2 completed) |
+| Guest | `jordan@homeplate.demo` | A second guest with reviews |
+| Host | `rosa@homeplate.demo` | Host profile with 2 reviews; bookings as host |
+| Moderator | `sam.mod@homeplate.demo` | Moderation queue and alerts |
+
+Photos are Unsplash (free licence), resized and committed under `tests/fixtures/seed/demo-media/`
+and `client/public/`, so the demo needs no network access.
+
 ## Tests (SRS §4.1 protocol)
 
 ```sh

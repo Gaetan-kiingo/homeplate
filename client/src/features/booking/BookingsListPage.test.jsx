@@ -1,7 +1,7 @@
 // client/src/features/booking/BookingsListPage.test.jsx — U6-BOOKING specs for /bookings
 // (FR-12 list surface, FR-13 status surfacing, NFR-07). Real wave-5 stack over a stubbed
 // fetch — see components/testHarness.jsx.
-import { screen, waitFor } from '@testing-library/react';
+import { screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -91,8 +91,14 @@ describe('BookingsListPage — /bookings (FR-12 / FR-13 / NFR-07)', () => {
       '/bookings/b2'
     );
     // FR-13: lifecycle status surfaced as text, never colour alone; role named per row.
-    expect(screen.getByText(/Reserved — upcoming · you are the guest/)).toBeVisible();
-    expect(screen.getByText(/Completed · you are the host/)).toBeVisible();
+    // (Since the 2026-09-09 polish pass the status is a badge and the role its own line —
+    // two elements, both words.)
+    const rows = screen.getAllByRole('listitem');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[0]).getByText('Reserved — upcoming')).toBeVisible();
+    expect(within(rows[0]).getByText('You are the guest')).toBeVisible();
+    expect(within(rows[1]).getByText('Completed')).toBeVisible();
+    expect(within(rows[1]).getByText('You are the host')).toBeVisible();
     await expectAnnounced('status', /2 bookings shown/);
 
     // The default query hits the documented list surface (role=any, first page).

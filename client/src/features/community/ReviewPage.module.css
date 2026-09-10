@@ -13,3 +13,21 @@
   font-weight: 600;
   color: var(--hp-color-danger-text);
 }
+
+/* Review form on a raised card, with a reading-width cap (demo-polish pass). */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 40rem;
+  padding: var(--hp-space-5);
+  border-radius: var(--hp-radius-lg);
+  background: var(--hp-color-surface-raised);
+  box-shadow: var(--hp-shadow-sm);
+}
+
+.form :global(input),
+.form :global(select),
+.form :global(textarea) {
+  background: var(--hp-color-surface);
+}

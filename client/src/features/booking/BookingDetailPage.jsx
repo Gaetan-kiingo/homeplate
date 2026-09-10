@@ -135,7 +135,11 @@ export default function BookingDetailPage() {
               : 'You reserved a seat at this meal.'}
           </p>
 
-          <Card as="section" aria-labelledby="booking-listing-title" className={styles.section}>
+          <Card
+            as="section"
+            aria-labelledby="booking-listing-title"
+            className={`${styles.section} ${styles.listingCard}`}
+          >
             <h2 id="booking-listing-title">{listing.title}</h2>
             <ListingSummary listing={listing} />
             <p>
@@ -145,7 +149,9 @@ export default function BookingDetailPage() {
 
           <section aria-labelledby="booking-status-heading" className={styles.section}>
             <h2 id="booking-status-heading">Status</h2>
-            <p>Status: {statusLabel(booking.status)}.</p>
+            <p className={`${styles.statusLine} ${styles[`badge_${booking.status}`] || ''}`}>
+              Status: {statusLabel(booking.status)}.
+            </p>
             <p>Reserved on {formatWhen(booking.createdAt)}.</p>
             {booking.cancelledAt ? <p>Cancelled on {formatWhen(booking.cancelledAt)}.</p> : null}
             {booking.completedAt ? <p>Completed on {formatWhen(booking.completedAt)}.</p> : null}

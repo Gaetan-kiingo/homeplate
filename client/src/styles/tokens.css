@@ -33,6 +33,15 @@
  * contrast: --hp-color-focus-ring on --hp-color-surface-raised = 6.24:1 (focus; AA >= 3:1)
  * contrast: --hp-color-disabled-text on --hp-color-disabled-bg = 6.19:1 (exempt; WCAG 1.4.3 disabled exception, held >= 4.5:1 anyway)
  * contrast: --hp-color-border-subtle on --hp-color-surface = 1.31:1 (decorative; dividers/card edges only — grouping is also conveyed by spacing, never by this colour alone)
+ * contrast: --hp-color-primary on --hp-color-primary-soft = 5.50:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text on --hp-color-primary-soft = 12.52:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-primary-soft = 6.41:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-success-text on --hp-color-success-soft = 5.56:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-danger-text on --hp-color-danger-soft = 6.11:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text on --hp-color-surface-sunken = 12.87:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-text-muted on --hp-color-surface-sunken = 6.59:1 (body; AA >= 4.5:1)
+ * contrast: --hp-color-accent on --hp-color-surface = 3.01:1 (decorative; gradient/illustration fill only — never text, never the sole carrier of meaning)
+ * contrast: --hp-color-surface on --hp-color-text = 15.17:1 (body; AA >= 4.5:1 — inverted footer / skip link)
  */
 
 :root {
@@ -55,6 +64,14 @@
   --hp-color-focus-ring: #9c3d22;
   --hp-color-disabled-bg: #ece4dd;
   --hp-color-disabled-text: #5c5049;
+  /* Soft tints (demo-polish pass, 2026-09-09): chip / badge / hero backgrounds. Each carries
+   * a measured text pair above; the badge text always says the state in words. */
+  --hp-color-primary-soft: #f7e4dc;
+  --hp-color-success-soft: #e0f0e6;
+  --hp-color-danger-soft: #fae3e0;
+  --hp-color-surface-sunken: #f3e9e2;
+  /* Decorative warm accent for gradients and the brand mark — never used for text. */
+  --hp-color-accent: #d97b3f;
   /* Dialog backdrop: overlays --hp-color-surface; the dialog panel on top of it carries its
    * own AA-checked text/surface pairs, so the backdrop itself is decorative. */
   --hp-color-backdrop: rgba(43, 35, 32, 0.6);

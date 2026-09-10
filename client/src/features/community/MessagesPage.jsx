@@ -175,7 +175,7 @@ export default function MessagesPage() {
 
       {thread.phase === 'ready' && (
         <>
-          <section aria-labelledby="thread-heading">
+          <section aria-labelledby="thread-heading" className={styles.thread}>
             <h2 id="thread-heading">Messages</h2>
             {thread.truncated && (
               <p className={styles.truncationNote}>
@@ -187,7 +187,12 @@ export default function MessagesPage() {
             ) : (
               <ul className={styles.messageList}>
                 {thread.items.map((message) => (
-                  <li key={message.id} className={styles.message}>
+                  <li
+                    key={message.id}
+                    className={`${styles.message} ${
+                      user && message.senderId === user.id ? styles.messageMine : ''
+                    }`}
+                  >
                     <p className={styles.messageMeta}>
                       <span className={styles.messageSender}>{senderLabel(message)}</span>{' '}
                       <time dateTime={message.createdAt}>{formatWhen(message.createdAt)}</time>

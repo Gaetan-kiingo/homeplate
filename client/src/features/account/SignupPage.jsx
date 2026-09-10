@@ -163,7 +163,7 @@ export default function SignupPage() {
       </p>
       <ErrorSummary errors={fieldErrors} />
       {serverError !== null && <p className={styles.errorBox}>{serverError}</p>}
-      <form className={styles.form} onSubmit={handleSubmit} noValidate>
+      <form className={`${styles.form} ${styles.authForm}`} onSubmit={handleSubmit} noValidate>
         <FormField
           id="signup-email"
           label="Email address"

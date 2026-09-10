@@ -24,7 +24,7 @@
 //     hydrating (status 'unknown') the nav shows NOTHING about the session — never a wrong
 //     guess flashed at an authenticated user (and nothing to mis-announce, NFR-07).
 import { useEffect, useRef } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useSession } from '../session/index.js';
 import styles from './AppLayout.module.css';
 
@@ -91,6 +91,15 @@ export default function AppLayout() {
       <header className={styles.header}>
         <nav aria-label="Primary" className={styles.nav}>
           <Link className={styles.brand} to="/">
+            {/* Brand mark: a plate, drawn inline so it ships with the app (design review §4:
+                "a small self-hosted icon set … without introducing a heavy framework"). It is
+                decorative; the word beside it is the accessible name. */}
+            <span className={styles.brandMark} aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <circle cx="12" cy="12" r="10" />
+                <circle cx="12" cy="12" r="5" />
+              </svg>
+            </span>
             Homeplate
           </Link>
 
@@ -99,19 +108,19 @@ export default function AppLayout() {
           {status !== 'unknown' && (
             <ul className={styles.navList}>
               <li>
-                <Link to="/search">Find a meal</Link>
+                <NavLink to="/search">Find a meal</NavLink>
               </li>
               {status === 'authenticated' && (
                 <>
                   <li>
-                    <Link to="/bookings">Your bookings</Link>
+                    <NavLink to="/bookings">Your bookings</NavLink>
                   </li>
                   <li>
-                    <Link to="/account">Account</Link>
+                    <NavLink to="/account">Account</NavLink>
                   </li>
                   {isModerator(user) && (
                     <li>
-                      <Link to="/moderation">Moderation</Link>
+                      <NavLink to="/moderation">Moderation</NavLink>
                     </li>
                   )}
                 </>
@@ -144,7 +153,8 @@ export default function AppLayout() {
         <Outlet />
       </main>
       <footer className={styles.footer}>
-        <p>Homeplate v1.0 — MSCS 2101 Group 6 prototype.</p>
+        <p className={styles.footerBrand}>Homeplate</p>
+        <p>Home-cooked meals, shared locally. v1.0 — MSCS 2101, Group 6.</p>
       </footer>
     </>
   );

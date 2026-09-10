@@ -161,7 +161,7 @@ export default function ReviewPage() {
           would never render or be announced. The custom validation in handleSubmit owns the
           refusal via the focused ErrorSummary (GDS pattern); the native `required` semantics
           stay on the controls for assistive technology. */}
-      <form onSubmit={handleSubmit} noValidate>
+      <form onSubmit={handleSubmit} noValidate className={styles.form}>
         <FormField id={RATING_FIELD_ID} label="Rating" required error={fieldError(RATING_FIELD_ID)}>
           <Select value={rating} onChange={(event) => setRating(event.target.value)}>
             <option value="">Choose a rating</option>

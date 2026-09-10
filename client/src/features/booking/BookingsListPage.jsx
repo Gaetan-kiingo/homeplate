@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/index.js';
 import { useSession } from '../../session/index.js';
-import { Button, Card, FormField, Select, Spinner, useAnnounce } from '../../ui/index.js';
+import { Button, Card, FormField, Icon, Select, Spinner, useAnnounce } from '../../ui/index.js';
 import usePageTitle from '../../layout/usePageTitle.js';
 import SignInPrompt from './components/SignInPrompt.jsx';
 import { bookingErrorMessage } from './components/bookingErrors.js';
@@ -151,14 +151,21 @@ export default function BookingsListPage() {
           {result.phase === 'ready' && result.bookings.length > 0 ? (
             <ul className={styles.bookingList}>
               {result.bookings.map((booking) => (
-                <Card as="li" key={booking.id}>
-                  <h2 className={styles.bookingItemHeading}>
-                    <Link to={`/bookings/${booking.id}`}>{booking.listing.title}</Link>
-                  </h2>
-                  <p>{formatWhen(booking.listing.scheduledStart)}</p>
-                  <p>
-                    {statusLabel(booking.status)} ·{' '}
-                    {booking.role === 'host' ? 'you are the host' : 'you are the guest'}
+                <Card as="li" key={booking.id} className={styles.bookingCard}>
+                  <div>
+                    <h2 className={styles.bookingItemHeading}>
+                      <Link to={`/bookings/${booking.id}`}>{booking.listing.title}</Link>
+                    </h2>
+                    <p className={styles.bookingWhen}>
+                      <Icon name="calendar" /> {formatWhen(booking.listing.scheduledStart)}
+                    </p>
+                    <p className={styles.bookingRole}>
+                      {booking.role === 'host' ? 'You are the host' : 'You are the guest'}
+                    </p>
+                  </div>
+                  {/* Status as a badge; the words carry the meaning, the tint only echoes it. */}
+                  <p className={`${styles.badge} ${styles[`badge_${booking.status}`] || ''}`}>
+                    {statusLabel(booking.status)}
                   </p>
                 </Card>
               ))}

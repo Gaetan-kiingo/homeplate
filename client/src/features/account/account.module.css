@@ -117,3 +117,66 @@
   margin: 0;
   color: var(--hp-color-text-muted);
 }
+
+/* Sign-in / sign-up form card (demo-polish pass, 2026-09-09): the form sits on a raised
+ * surface with soft edges so the auth screens read as a deliberate entry point instead of
+ * bare fields on the page. Same measured pairs (text/muted on surface-raised). */
+.authForm {
+  padding: var(--hp-space-5);
+  border-radius: var(--hp-radius-lg);
+  background: var(--hp-color-surface-raised);
+  box-shadow: var(--hp-shadow-sm);
+}
+
+.authForm :global(input) {
+  background: var(--hp-color-surface);
+}
+
+.authForm button[type='submit'] {
+  width: 100%;
+}
+
+/* Eligibility (FR-09) as two status cards side by side (demo-polish pass, 2026-09-09):
+ * one per capability, each with a READY / NOT YET badge. The words carry the state. */
+.flagGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--hp-space-4);
+}
+
+.flagCard {
+  padding: var(--hp-space-4) var(--hp-space-5);
+  border-radius: var(--hp-radius-lg);
+  background: var(--hp-color-surface-raised);
+}
+
+.flagCard h3 {
+  margin-block-end: var(--hp-space-2);
+}
+
+.flagCard .ready,
+.flagCard .blocked {
+  display: inline-block;
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border-radius: 999px;
+  font-size: var(--hp-font-size-sm);
+  margin: 0;
+}
+
+.flagCard .ready {
+  background: var(--hp-color-success-soft); /* success-text on success-soft = 5.56:1 */
+}
+
+.flagCard .blocked {
+  background: var(--hp-color-danger-soft); /* danger-text on danger-soft = 6.11:1 */
+}
+
+.flagCard .reasonList {
+  margin-block-start: var(--hp-space-3);
+}
+
+/* Account sections read as one long form; a hairline between them gives each a start. */
+.section + .section {
+  border-block-start: 1px solid var(--hp-color-border-subtle);
+  padding-block-start: var(--hp-space-5);
+}

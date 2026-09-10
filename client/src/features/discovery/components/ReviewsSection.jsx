@@ -59,7 +59,7 @@ export default function ReviewsSection({ hostId, initialReviews, total, pageSize
       <ul className={styles.reviewList}>
         {reviews.map((review) => (
           <li key={review.id}>
-            <Card as="article" className={styles.resultCard}>
+            <Card as="article" className={styles.reviewCard}>
               <p className={styles.reviewHead}>
                 <strong>{review.authorDisplayName}</strong> rated this host {review.rating} out of 5
               </p>
