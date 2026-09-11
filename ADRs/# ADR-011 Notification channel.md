@@ -1,7 +1,7 @@
 # ADR-011: Notification channel — email is the v1.0 delivery channel; push ships behind a disabled flag
 
-- **Status:** Accepted
-- **Date:** 2026-08-12
+- **Status:** Accepted — amended 2026-09-11 (live SendGrid rehearsal; the emailed verification link now lands on the client)
+- **Date:** 2026-08-12 (amended 2026-09-11)
 - **Deciders:** Gaetan Rieben (decided 2026-08-12; pending team ratification at the next stand-up)
 - **Related requirements:** FR-13 (booking notifications), FR-07 (safety alerts), FR-14 (cancellation), NFR-09 (degradation), SRS §2.1.4
 
@@ -28,3 +28,10 @@ In development and in the entire automated test suite, both adapters resolve to 
 
 ## AI assistance & provenance
 The unspecified FR-13 channel was surfaced by the AI-assisted build-planning run on 2026-08-11 (`docs/_generated/build-plan.md`, open question 4), which proposed email-first with push behind a flag. The team confirmed that reading on 2026-08-12, on the grounds that the demo is built against a mock and email is the simpler path. This record was drafted by Claude Code from that decision and is subject to team review.
+
+## Amendment log
+
+### 2026-09-11 — live email for the demo, and where the verification link lands
+- **SendGrid was switched on locally for the demo rehearsal** (`NOTIFICATIONS_TRANSPORT=sendgrid` in the git-ignored `.env`; the mock stays the committed default and the suite still pins it). Registration → verification email → click → verified was exercised end to end with a real inbox. SendGrid has since **discontinued its free plan**; the demo runs on a trial account, so the "low daily send cap" consequence above now reads "trial", and the demo should still be rehearsed within it.
+- **The emailed link now targets the client**, not the API: `<PUBLIC_BASE_URL>/verify-email?token=…`, the SPA page that relays the token to `POST /api/auth/verify-email` exactly once. Before, the link opened `GET /api/auth/verify-email` and a real recipient saw a bare JSON body. **Consequently `PUBLIC_BASE_URL` means the origin that serves the client** (the Vite dev server locally, the edge that serves `client/dist/` in production) — the env template says so. The API's GET form stays for scripted use.
+- **A defect the mock could never show:** the verify page span forever after a successful redemption under React StrictMode's double effect (code-review log finding 31). Found by a human clicking a real email; fixed with a regression spec that renders under StrictMode. The lesson for this ADR: a mock transport proves delivery mechanics, never the recipient's experience — rehearse the live channel at least once before a demo.

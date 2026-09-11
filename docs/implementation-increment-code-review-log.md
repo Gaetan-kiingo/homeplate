@@ -22,7 +22,7 @@ the state of the final tree. The wave-3 material is kept, and the waves 0–2 pl
 | **Post-wave-6 fixes and design pass** | 2026-08-26 → 08-27 | Session-aware navigation (the seven screens had no links), a double-fetch fix caught by CI, brand tokens, inline SVG icons, event cards, applied from the product design review. | NFR-07 (contrast, WCAG 1.4.1 colour-independence) | Frontend only; contrast pairs recomputed by the kit-contract test; no new dependency, no webfont CDN. |
 | **Security hardening** | 2026-08-30 | Semgrep SAST first pass and OWASP review (Nam); AES-GCM decryption now declares the auth tag length explicitly. | NFR-13, AB-05 | One-line change in `src/db/fieldCrypto.js`; CI green. |
 | **Wave 7 (partial) — NFR-10 live measurement** | 2026-09-11 | The one live IT-03 run ADR-007 sanctions: all 224 synthetic items through the real pre-filter → classifier pipeline against Gemini, rates recorded in `tests/fixtures/moderation-eval/v1/RESULTS.md`. The other two wave-7 items (seeded-route accessibility audits, UT-01 study) are **not done**. | NFR-10: measured, **not met** (FP 7.14 % vs < 5 %; FN 1.19 %) | No production code changed. Four guard tests that asserted "no results file" inverted to check the record's fields and internal consistency; 63 suites / 1400 tests green. |
-| **Wave 7 (continued) — host listing UI, live email, demo fixes** | 2026-09-11 | Host screens that wave 6 never owned (verification finding OBS-B3, closed by team decision): **Host a meal** (create), owner **edit** and inline **cancel** on the listing page, nav and account links, with the MEHKO refusals rendered from the payload. SendGrid switched on for the demo; the emailed link now lands on the client's verify page. Demo accounts given phone numbers so hosts pass the publish gate. Later the same evening: **price per seat** (whole cents, migration 0007, required in the host form, on the search sticker and the meal page, with the note that v1.0 takes no payments) and a **Your meals** dashboard over a new owner-only `GET /api/listings/mine`. | FR-11 (client surfacing now an exercised flow), FR-10 (real email delivery), FR-08/FR-09 copy | New `client/src/features/host` tree (sixth, pinned by the scope guard); ADR-010 guard admits the owner edit page as a second presence-guarded reader; no backend production change except the verification-link path. Client 389 tests, backend 63 / 1404, lint and both builds clean; scripted browser runs: publish → auto-approve → guest finds it → host cancels; price sticker, detail row and dashboard rendered against the dev stack. |
+| **Wave 7 (continued) — host listing UI, live email, demo fixes** | 2026-09-11 | Host screens that wave 6 never owned (verification finding OBS-B3, closed by team decision): **Host a meal** (create), owner **edit** and inline **cancel** on the listing page, nav and account links, with the MEHKO refusals rendered from the payload. SendGrid switched on for the demo; the emailed link now lands on the client's verify page. Demo accounts given phone numbers so hosts pass the publish gate. Later the same evening: **price per seat** (whole cents, migration 0007, required in the host form, on the search sticker and the meal page, with the note that v1.0 takes no payments — ADR-012), a **Your meals** dashboard over a new owner-only `GET /api/listings/mine`, and a **Sign out** button the header never had. Decisions recorded: ADR-012 (price), ADR-013 (host UI and seam ownership, closes OBS-B3); ADR-004, ADR-007 and ADR-011 amended with what the evening measured. | FR-11 (client surfacing now an exercised flow), FR-10 (real email delivery), FR-08/FR-09 copy | New `client/src/features/host` tree (sixth, pinned by the scope guard); ADR-010 guard admits the owner edit page as a second presence-guarded reader; no backend production change except the verification-link path. Client 390 tests, backend 63 / 1404, lint and both builds clean; accessibility audit 13 of 13 non-parameterized routes clean (both new host routes included); scripted browser runs: publish → auto-approve → guest finds it → host cancels; price sticker, detail row, dashboard and sign-out exercised against the dev stack. |
 | **Demo build** | 2026-09-10 | Design pass on every screen (home hero, sticky reservation panel, status badges, chat bubbles, allergen chips); `npm run seed:demo` loads 12 upcoming meals with photos, 6 hosts, reviews, bookings and a thread, with relative dates so the set never goes stale. | Demo readiness; fixes an FR-02 rendering defect | No new dependency; two client tests updated; demo accounts documented in the README, local only. |
 
 **Requirement movement across the period:** waves 0–2 laid the platform with no marketplace requirement met end-to-end → 23 met / 5 partial / 7 not implemented after wave 3
@@ -43,7 +43,7 @@ pushed until the verification round had run the next day.
 
 We reviewed the AI-generated code against the SRS using the Code Review Checklist. The table lists
 the findings we consider worth defending in a review; the verification rounds recorded many more
-(2 plus 3 clean-checkout defects in waves 0–2, 40 in wave 3, 23 in wave 4, 5 in wave 5, 22 in wave 6, 3 in the wave-7 measurement, 4 in the 2026-09-11 demo rehearsal), all in `docs/verification-report.md` and
+(2 plus 3 clean-checkout defects in waves 0–2, 40 in wave 3, 23 in wave 4, 5 in wave 5, 22 in wave 6, 3 in the wave-7 measurement, 6 in the 2026-09-11 demo rehearsal), all in `docs/verification-report.md` and
 `docs/_generated/wave6-verify/`.
 
 ### 2.1 Waves 0–2 (built 2026-08-14, findings F-1/F-2 and the first CI run)
@@ -120,6 +120,9 @@ the findings we consider worth defending in a review; the verification rounds re
 | 33 | **Correctness** — data that asserts what the policy does not grant | The demo seed set `can_publish_listing=true` on the six hosts but gave nobody a phone number; the FR-09 policy reads the encrypted phone live, so **every demo host was refused** with PHONE_MISSING the moment a real create was attempted. Invisible until the host UI existed, because nothing had exercised the gate with demo data. | Medium | Demo fixture carries a plaintext phone per user that `seed-demo.js` encrypts at load time with the environment's key (NFR-13), so the stored flag and the live policy agree. |
 | 34 | **Fit** — the emailed link pointed at the API | The FR-10 link targeted `GET /api/auth/verify-email`, so a recipient clicking it in an inbox saw a bare JSON body. Harmless with the mock transport, wrong the moment mail was real. | Low | Link now targets the client's `/verify-email` page under `PUBLIC_BASE_URL`, which must therefore be the client origin (template and comment updated); the API GET stays for scripted use; two suites that pinned the path adapted, invariants kept. |
 
+| 35 | **Correctness** — capability with no affordance | The session store had a `logout()` and the API a `POST /api/auth/logout` since wave 5, but no screen ever offered them: a signed-in visitor could only leave by clearing cookies. Same shape as the missing navigation links and OBS-B3 — a seam no unit owned. | Medium | A "Sign out" **button** (an action, never a link) in the header: posts the logout, announces it, lands on home. Spec covers the request, the nav flip and the announcement. ADR-013 now names the shell as the owner of such seams. |
+| 36 | **Fit** — a dependency moved under us | CI failed before a single test ran: Docker Hub stopped serving `minio/minio` ("pull access denied"), and a re-run failed identically. Not pullable from a developer machine either. | Medium (blocked CI) | Compose now pulls the same image and tag from the vendor's registry, `quay.io/minio/minio`; stack healthy locally, CI green on the next run. Recorded in ADR-004's amendment log. |
+
 **Also observed, not a defect:** in development the ADR-002 pipeline auto-approves a new
 listing within about a second (the mock classifier scores unseen text benign at 0.99, above the
 0.8 routing threshold), so a freshly hosted meal never reaches the human queue. A demo that wants
@@ -172,7 +175,7 @@ Our team's gates (SPMP §7.4, SQAP) and the final tree's result against each:
 | **Linter** | `eslint` + `prettier --check`, zero errors; client linted with `react`, `react-hooks`, `jsx-a11y` | ✔ 0 errors, 0 warnings. |
 | **Build gates** | Migrations ordered and append-only; every module loads; app boots against `.env.example`; Vite production build | ✔ 6 migrations valid, 112 modules parse, `createApp()` boots; client build clean. |
 | **Security scan** | OWASP ZAP baseline, no High; Semgrep SAST triaged | ✔ ZAP 2.17.0 over the rendered client and API: **High 0 · Medium 2 · Low 2** across 30 URLs, gate exit 0 (the Medium/Low are missing static headers on the `vite preview` scaffold, none on `/api/*`). Semgrep: 24 flagged, 16 false positives, 1 patched, 2 open (§2.6 #25). |
-| **Accessibility** | axe-core wcag2a + wcag2aa, 0 serious/critical | ✔ on the 11 non-parameterized routes; harness still **exits 1 by design** for the 6 parameterized routes it cannot audit without seeded ids. |
+| **Accessibility** | axe-core wcag2a + wcag2aa, 0 serious/critical | ✔ on all **13** non-parameterized routes (re-run 2026-09-11; the two new host routes included); harness still **exits 1 by design** for the 7 parameterized routes it cannot audit without seeded ids. |
 | **CI** | Green on a clean checkout | ✔ Run `34498081525` green in 3m18s on a cold runner. One red run in the period on a docs-only commit (finding 27), re-run green. |
 
 **Result: every increment merged to `main`.** ✅
@@ -189,7 +192,7 @@ UT-01 five-participant study, declared missed on 2026-08-18, has still not run. 
 figure. The ZAP result is a scaffold measurement, not a production header posture. Latency numbers
 are developer-machine measurements. The 30-day erasure is proven by clock injection, not by 30
 elapsed days. Two intermittents (findings 16 and 27) are open with identities preserved. Two Semgrep
-items are open, as are the adapter timeout (finding 29), the ADR-007 tier assumption (finding 30) and the search-cache invalidation (finding 32). One spec correction (TCC-03, FR-01 degraded flag) awaits ratification.
+items are open, as are the adapter timeout (finding 29), the ADR-007 tier assumption (finding 30) and the search-cache invalidation (finding 32). The **price per seat is a field the frozen SRS v3.2 does not specify**; it is recorded as a scope addition in ADR-012 and must be listed as such in the final report. One spec correction (TCC-03, FR-01 degraded flag) awaits ratification.
 
 ---
 
@@ -225,7 +228,10 @@ and legal questions rather than resolve them, and they did:
   was unavailable and the flagship one capped out (finding 30). It is stated in the record rather
   than smoothed over.
 - **OBS-B3 — a host listing screen in v1.0** (2026-09-11): the team chose to ship it rather than
-  document host flows as API-driven; the agent built it that evening under the existing guards.
+  document host flows as API-driven; the agent built it that evening under the existing guards (ADR-013).
+- **Price per seat** (2026-09-11): a team product decision beyond the frozen SRS; the agent implemented it
+  and framed it as a scope addition needing a record (ADR-012) — that framing is offered for the team
+  to confirm at the final review, not assumed.
 
 **Honesty about the artefacts.** Wave 4 was committed with "UNVERIFIED CHECKPOINT" in its title
 until a verifier lane had seen it. Sign-off blocks are left `_unsigned_` until a human fills them,

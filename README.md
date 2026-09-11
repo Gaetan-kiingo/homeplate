@@ -1,7 +1,7 @@
 # Homeplate v1.0
 
 Two-sided home-cooked-meal marketplace (MSCS 2101, Group 6). Modular Node.js/Express monolith
-per **SRS v3.2** (frozen baseline), **SPMP v1.0**, and **ADR-001…011** (`ADRs/`). The build plan
+per **SRS v3.2** (frozen baseline), **SPMP v1.0**, and **ADR-001…013** (`ADRs/`; 012 price per seat and 013 host listing UI were added 2026-09-11). The build plan
 and requirement inventory live in `docs/_generated/`.
 
 Traceability (SRS Appendix B): the wave-0 toolchain in this repository (U0-BOOTSTRAP — npm

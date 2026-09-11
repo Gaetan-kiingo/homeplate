@@ -22,3 +22,8 @@ Listing and review media are stored in dedicated object storage, referenced from
 
 ## AI assistance & provenance
 Per SRS Appendix A, AI assisted with drafting the data-lifecycle and privacy sections of the SRS; the team reviewed and approved the content. This specific storage decision — object storage with per-object deletion — was made and verified by the team against NFR-12's exact wording.
+
+## Amendment log
+
+### 2026-09-11 — the MinIO image is pulled from the vendor registry
+Docker Hub stopped serving `minio/minio` ("pull access denied", CI run 34640669411, and not pullable from a developer machine either). `docker-compose.yml` now pulls **`quay.io/minio/minio:latest`** — same image, same tag, the vendor's own registry. Nothing about this decision changes; the floating tag remains acceptable for the academic setup, and a release tag should be pinned the first time an image change bites.

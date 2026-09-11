@@ -22,7 +22,13 @@ rendered client** (**0 High** across 30 URLs, gate exit 0 — `docs/results/zap-
 (2/168)**, so the FN bound is met and the FP bound is **not**; NFR-10 stays Partial, now with a measured
 number (`tests/fixtures/moderation-eval/v1/RESULTS.md`, §7). The wave-7 seeded-id accessibility
 audits and the UT-01 five-participant study are still **not run**, and this report never reports an
-unrun activity as a pass.
+unrun activity as a pass. **Same-day addendum (evening):** the team closed **OBS-B3** by shipping host
+listing management in the client (ADR-013: create, edit, cancel, "Your meals" over a new owner-only
+`GET /api/listings/mine`), added a **price per seat** beyond the frozen SRS (ADR-012, migration 0007),
+and a header **Sign out** control; the accessibility harness now audits **13 of 13** non-parameterized
+routes clean with **7** parameterized routes still unaudited (the owner edit page joined the list). The
+FR-11 client column is now an exercised flow: the daily listing cap was triggered through the UI during
+the rehearsal. Details and the six rehearsal findings: `docs/implementation-increment-code-review-log.md` §2.8.
 
 ---
 
@@ -426,9 +432,10 @@ cause, fix and re-execution: `docs/_generated/wave6-verify/repairs.json`.
   **U6VC-O1 — hardened:** one observed timing flake in `BookingsListPage.test.jsx` under
   full-suite contention; first content assertion's wait budget widened to 5 s (no assertion
   changed); green in 4 consecutive full client runs.
-- **OBS-B3 — OPEN (recorded for the coordinator, out of wave-6 scope by design):** no live UI
-  path can trigger a MEHKO cap because no wave-6 unit owned a listing-create screen — see the
-  disclosure in §3.6. **Recorded, deliberately not acted on:** D-OBS-1 (retry pushes a duplicate
+- **OBS-B3 — CLOSED 2026-09-11 by team decision (ADR-013):** host listing management now ships in
+  the client (`client/src/features/host`); the daily listing cap was triggered through the UI during
+  the demo rehearsal. As recorded at the time: no wave-6 unit owned a listing-create screen — see the
+  disclosure in §3.6, kept for the record. **Recorded, deliberately not acted on:** D-OBS-1 (retry pushes a duplicate
   history entry — cosmetic, pinned specs, wave-7 UX pass), D-OBS-2 (host-review page size derived
   from preview length — exposing `pageSize` is a backend payload change outside wave-6
   ownership), U6VC-O2 (review upload-before-POST ordering is schema-forced; orphan-media
@@ -697,7 +704,7 @@ Stated plainly, because an overstated CDR document is worse than none:
    including this round's three consecutive full-suite runs on the wave-6 tree — were green with
    complete captured output. The one wave-6 contention flake (W6-G3) is on the watch list with
    its identity and evidenced cause preserved.
-10. **FR-11's client surfacing is a rendering contract, not an exercised flow** (OBS-B3, §3.6):
+10. **(Resolved 2026-09-11 — ADR-013.)** As stated at wave 6: **FR-11's client surfacing is a rendering contract, not an exercised flow** (OBS-B3, §3.6):
     no wave-6 unit owned a listing-create screen, so no UI path can yet trigger a MEHKO cap. The
     server-side single enforcement point remains the proof (TC-11, re-executed green).
 
