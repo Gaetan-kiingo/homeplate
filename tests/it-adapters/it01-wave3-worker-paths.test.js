@@ -795,19 +795,19 @@ describe('IT-03 substrate (FR-08/ADR-002) — the safe direction holds through t
     expect(page.results).toHaveLength(0);
   });
 
-  test('the eval set exists AND the pipeline to score it through now exists; only the live run is missing', () => {
+  test('the eval set, the pipeline to score it through, AND the recorded live run all exist', () => {
     // NFR-10/ADR-008: a versioned ≥200-item labelled set under tests/fixtures/moderation-eval/vN/
     // scored through the REAL pipeline, with a recorded human sign-off. The SET landed first
     // (U4-EVALSET — ADR-008 requires it before the classifier prompt exists), and U4-MODERATION
     // landed the pipeline + scoring harness (scripts/it03-eval.js; mechanics proven in
     // tests/it-adapters/it03-moderation-eval.test.js). What still keeps NFR-10 open is the
-    // LIVE IT-03 run (wave 7, U7-MODERATION-MEASURE): no measurement has been recorded, so no
-    // FP/FN rate exists anywhere in this tree and none may be quoted from the mock.
+    // LIVE IT-03 run (wave 7, U7-MODERATION-MEASURE) was made on 2026-09-11 and is recorded in
+    // tests/fixtures/moderation-eval/v1/RESULTS.md; the mock still never yields a rate.
     const evalDir = path.join(__dirname, '..', 'fixtures', 'moderation-eval');
     expect(fs.existsSync(evalDir)).toBe(true);
     const set = require(evalDir).loadSet('v1');
     expect(set.items.length).toBeGreaterThanOrEqual(200);
-    expect(set.hasResults).toBe(false); // no measurement has been recorded against it
+    expect(set.hasResults).toBe(true); // the wave-7 live run is recorded (2026-09-11; RESULTS.md)
     expect(registry.has('moderation.scan')).toBe(true); // the pipeline is scoreable now
     expect(fs.existsSync(path.join(__dirname, '..', '..', 'scripts', 'it03-eval.js'))).toBe(true);
   });

@@ -17,9 +17,12 @@ report stamp, two previously-outstanding instruments were executed and recorded 
 a fresh **k6 LT-01/LT-02 run** (steady p95 **120.07 ms**, 0.00 % errors —
 `docs/results/lt01-k6-summary-wave6.json`, §7) and the **AB-06 OWASP ZAP baseline over the
 rendered client** (**0 High** across 30 URLs, gate exit 0 — `docs/results/zap-baseline-RUN.md`,
-§3.3/§4), so AB-06 moves to Met. The wave-7 seeded-id accessibility audits, the UT-01
-five-participant study and the live NFR-10 measurement are **not run**, and this report never
-reports an unrun activity as a pass.
+§3.3/§4), so AB-06 moves to Met. **Wave-7 addendum (2026-09-11):** the live NFR-10 measurement **was run** — one IT-03 pass of the
+224-item set through `gemini-3.5-flash-lite` with `moderation-prompt-v1`: **FP 7.14 % (4/56), FN 1.19 %
+(2/168)**, so the FN bound is met and the FP bound is **not**; NFR-10 stays Partial, now with a measured
+number (`tests/fixtures/moderation-eval/v1/RESULTS.md`, §7). The wave-7 seeded-id accessibility
+audits and the UT-01 five-participant study are still **not run**, and this report never reports an
+unrun activity as a pass.
 
 ---
 
@@ -151,7 +154,7 @@ rows below remain the server-side truth the screens consume.
 | **NFR-07** | Web UI (React) | `client/`: wave-5 foundation (`src/{main,App,routes}.jsx`, `src/layout/**`, `src/api/**`, `src/session/**`, `src/ui/**`, `src/styles/**`) **+ wave-6 screens** (`src/features/{discovery,booking,community,account,moderation}/**`) | UT-01 | client vitest suite (32 files / 344 tests) + `npm run test:a11y` (axe-core harness, exit 1 by design) + the four wave-6 lane JSONs (§3.6) | **Partial** (progressed: all seven interfaces now exist) | **Wave 6 landed all seven NFR-07 interfaces as real screens** — search/browse `/search`, listing detail `/listings/:id`, host profile `/hosts/:id`, booking flow `/bookings`(+`/new`,`/:bookingId`), signup/login `/login`+`/signup`, messaging `/bookings/:bookingId/messages`, moderator queue `/moderation` — on the wave-5 kit (landmarks + one `h1` per screen via `usePageTitle`, `FormField`-labelled controls, `Img`-enforced alt, `StatusAnnouncer` aria-live announcements, token-only contrast, visible focus). Executed evidence: **all 11 non-parameterized routes audit CLEAN** at wcag2a+wcag2aa (0 serious, 0 critical — §1 ladder) and the keyboard checks pass; each lane re-verified the checkable clauses per screen (landmarks/heading order, labels, focus, alt, aria-live wiring, token-only styling — `wave6-verify/{discovery,booking,community,account-mod}.json`). **NFR-07 stays OPEN, deliberately:** (1) the 6 parameterized routes are PRESENT but unaudited until wave 7 seeds fixture ids — the harness exits 1 naming exactly those, so partial coverage can never read as closure; (2) the recorded **5-participant UT-01 study is a human activity that has not run** (protocol ready at `docs/ut01-usability-study-plan.md`; the interfaces it needs now exist). A 7/7-clean harness alone does not close this row. |
 | **NFR-08** | Logging & Monitoring Service | `src/lib/logger.js`, `src/middleware/{requestContext,errorHandler}.js`, audit sites across `src/modules/*` and `src/outbox/handlers/*` | MT-01 | `tests/mt-ut-quality/mt01-log-completeness.test.js`, `mt01-wave3-booking-audit.test.js` | **Met** (was Partial) | All four named actions now audit-verified by execution: registration, booking create, cancellation, and — newly performable in wave 4 — the **human moderation decision** (one `moderation.decision` record with decider/entity/decision id; `moderation_decisions` row `decided_by='human'`; queue item resolved; non-moderator attempt 403 with failure record). Correlation IDs proven on both sides of every wave-0–4 outbox handler incl. `moderationScan`/`dataExport`; error records structured with stack server-side only; two full captured log corpora show **zero** PII (no email-shaped bytes, no §3.4 field, no message/review content, no street address). Wave-4 events `review.created`, `message.sent`, `privacy.export_requested/_completed`, `privacy.deletion_requested`, `safety.alert_raised/_delivered` all executed. |
 | **NFR-09** | External Service Adapters, Deferred-Work Mechanism | `src/lib/resilience.js`, `src/adapters/*`, `src/outbox/worker.js` | RT-01, RT-02 | `tests/rt-lt-resilience/rt01-degradation.test.js`, `rt01-provider-outage-drill.test.js`, `rt02-outbox.test.js` | **Met** (mechanisms) | Ten per-service outage drills incl. the **new drill 10** on wave-4 surfaces: under LLM outage a review stays pending and invisible while the message still delivers; recovery completes the *same* jobs. Crash-recovery/exactly-once/backoff/dead-letter/concurrent-workers all executed; operator recovery via `scripts/requeue-dead-letters.js` proven end to end. The 99 % availability *figure* needs a deployment (§5). |
-| **NFR-10** | Moderation accuracy (FP and FN < 5 %) | pipeline: FR-08 files; eval set `tests/fixtures/moderation-eval/v1/`; harness `scripts/it03-eval.js` | IT-03 | `tests/it-adapters/it03-moderation-eval.test.js` (mechanics only) | **Partial — NOT MEASURED** | **No number exists and none is quoted, provisional or otherwise.** Change since the last report: the pipeline and scoring harness now exist and are exercised (mock-scored runs are labelled NOT-A-MEASUREMENT and carry no rate fields — asserted key-by-key), and the ADR-008 **label** sign-off is recorded (Gaetan Rieben, 2026-08-21, set v1, 224 items: 56 offensive / 56 spam / 56 fraudulent / 56 benign, balanced, ≥200). Still missing for any claim: the live IT-03 run (wave 7) with model id + prompt version recorded and a `RESULTS.md` with both rates < 0.05. No `RESULTS.md` exists anywhere in the tree (executed `find`), and no live provider call was made in this run — ADR-007/ADR-011 pin the mock under `NODE_ENV=test`, re-verified by executed tripwires. `claimability()===true` means **preconditions only**. |
+| **NFR-10** | Moderation accuracy (FP and FN < 5 %) | pipeline: FR-08 files; eval set `tests/fixtures/moderation-eval/v1/`; harness `scripts/it03-eval.js` | IT-03 | `tests/it-adapters/it03-moderation-eval.test.js` (mechanics only) | **Partial — MEASURED 2026-09-11, NOT MET** | **FP 7.14 % (4/56 benign) — fails the < 5 % bound; FN 1.19 % (2/168 violating) — meets it.** One live IT-03 run, off-suite, through the real pipeline order (pre-filter answered 2 items, the model 222), `gemini-3.5-flash-lite`, `moderation-prompt-v1`, claimability preconditions all satisfied (label sign-off Gaetan Rieben 2026-08-21, live model id, prompt version). Record: `tests/fixtures/moderation-eval/v1/RESULTS.md` + `it03-live-run.json`. A second model measured in parallel (`gemini-3.1-flash-lite`) gave FP 5.36 % / FN 0.60 % — same verdict, same failing items. All false positives are benign items that mention cash payment; see §7 for why that is a prompt/label boundary question for the team, not model noise. The suite still pins the mock (`NODE_ENV=test`, re-verified); no rate is ever computed from it. |
 | **NFR-11** | Input Validation Module | `src/middleware/validate.js`, `src/schemas/*.js` (12 schemas incl. `reviews`, `messaging`, `moderation`, `privacy`), `src/lib/sanitize.js` | ST-04 | `tests/st-security/st-security.test.js`, `st-security-wave3.test.js` | **Met** (was Partial) | The previously-missing surfaces exist and are boundary-verified: every malformed input at review/messaging/moderation/privacy routes returns a typed 422 envelope with no row written and never a 500; SQLi/XSS payload sweeps at all boundaries incl. the new moderation decision-note ($-parameterized, DROP inert, HTML-escaped); route-enumeration test asserts **every** mounted route declares a schema; static grep proves no concatenated SQL. |
 | **NFR-12** | Data Lifecycle Service (deletion, retention, media) | `src/modules/privacy/{routes,service,repo}.js`, `src/outbox/handlers/accountErasure.js`, `src/modules/media/service.js`, `scripts/backup.js` | ST-05, RT-02 | `tests/st-security/st05-st06-privacy.test.js`, `tests/rt-lt-resilience/rt02-outbox.test.js`, `tests/adr-conformance/adr-wave4-invariants.test.js` (first verification) | **Met** (was Not implemented) | `DELETE /api/users/me` → 202 + `data_requests` row + `account.erasure` job **due at exactly `now()+30 days`** (timestamp equality, same transaction — xmin). Real handler run at the simulated due instant via clock injection: §3.4 columns emptied/anonymized, media deleted **by key** from real MinIO (subsequent GET 404s), whole-database scan finds zero PII rows; reviews retained anonymized; session dead immediately (401). Idempotent redelivery leaves rows byte-identical. Backup pruning covered in-process (`scripts/backup.js main()`, both branches — finding W4-F5 repaired). See §7 for the window-coverage argument. |
 | **NFR-13** | Data Protection (encryption, access control, export) | `src/db/fieldCrypto.js`, `src/modules/users/{repo,service}.js`, `src/modules/privacy/*`, `src/outbox/handlers/dataExport.js` | ST-06, RT-02 | `tests/st-security/st05-st06-privacy.test.js`, `tests/rt-lt-resilience/rt02-outbox.test.js` (first verification of export) | **Met** (was Partial) | AES-256-GCM field encryption verified in the DB (phone, emergency contact ciphertext); users table carries exactly the §3.4 register; `GET /api/users/me` is an allowlist; moderator precise-location read role-gated and access-logged only with an FR-07 alert; **export now exists**: `POST /api/users/me/export` → 202, worker-assembled copy contains every §3.4 class from 9 real tables, owner-only (foreign id → 404), IDs-only job payload (content never rides the outbox), idempotent redelivery serves the stored copy unchanged; production refuses the committed sample key. |
@@ -174,7 +177,7 @@ rows below remain the server-side truth the screens consume.
 | Status | FR | NFR | AB | Total |
 |---|---|---|---|---|
 | **Met** | **14** | 11 | **8** | **33 / 35** |
-| **Partial** | 0 | 2 (NFR-10 — pipeline built, accuracy **not measured**; NFR-07 — all seven interfaces built and audited clean where auditable, seeded-id audits + UT-01 study outstanding) | 0 | **2 / 35** |
+| **Partial** | 0 | 2 (NFR-10 — **measured 2026-09-11, not met**: FP 7.14 % against the 5 % bound, FN 1.19 % within it; NFR-07 — all seven interfaces built and audited clean where auditable, seeded-id audits + UT-01 study outstanding) | 0 | **2 / 35** |
 | **Not implemented** | 0 | 0 | 0 | **0 / 35** |
 
 Movement since the `e8a610d` waves-0–5 baseline (32 / 3 / 0): **one status changed — AB-06
@@ -481,7 +484,7 @@ Not failures — checks whose evidence this repository cannot produce, with what
 |---|---|---|
 | **UT-01 — 5-participant moderated usability study** (SRS §4.5) | A human activity. **Its blocker is gone: wave 6 shipped every task interface the protocol needs.** | Declared missed at CDR, on the record (team decision 2026-08-18). Protocol ready in `docs/ut01-usability-study-plan.md`; the study can be scheduled **now** — name participants and dates, run it against the wave-6 screens (the FR-09 eligibility surface is a designed probe), and a human fills in its §6 record block. |
 | **NFR-07 — the seeded-id half of the seven-interface audit** | The harness audited everything it can render without data: 11 routes clean at 7/7 interfaces present (§1). The six parameterized routes (`/listings/:id`, `/hosts/:id`, `/bookings/:bookingId{,/messages,/review,/safety-alert}`) need seeded fixture ids and a running backend to render real states — wave-7 harness work. | Wave 7: seed fixtures, audit the six parameterized routes, and record the 7/7-clean result. Then run UT-01 (above). Both are required before NFR-07 can move to Met. |
-| **NFR-10 — live FP/FN measurement** | ADR-007/ADR-011 forbid the automated suite from calling a live provider (`NODE_ENV=test` force-pins the mock — re-verified by executed tripwires); the measurement is a deliberate, human-initiated wave-7 run. | Run `scripts/it03-eval.js` **once, live**, off-suite: record the model id and `PROMPT_VERSION`, write `RESULTS.md` with both rates and the set version, claim a pass only if both < 0.05. The label sign-off (2026-08-21) already satisfies ADR-008's human-label gate. |
+| **NFR-10 — live FP/FN measurement** | **DONE 2026-09-11** (human-initiated, off-suite, as ADR-007 requires; the suite still pins the mock). Recorded in `tests/fixtures/moderation-eval/v1/RESULTS.md` + `it03-live-run.json`. | Result: FP 7.14 %, FN 1.19 % — the FP bound is not met, so NFR-10 is **not** claimable as a pass. Closing it needs a prompt or threshold change (a new `PROMPT_VERSION`) and a fresh run; the four false positives are named in §7. |
 | **NFR-09 — "99 % availability during the demo period"** | A deployment measurement over calendar time. | Record uptime during the demo window. The ten RT-01 drills are the *design* evidence, not the figure. |
 | **NFR-12 — a real 30-day wall-clock erasure + backup expiry against a real backup target** | A 30-day window cannot elapse inside a test run; backup expiry needs a deployment's backup store. | The scheduling arithmetic, the due-instant execution and the prune logic are all proven by clock injection (§7); operationally, confirm the lifecycle cron (`scripts/backup.js`) is scheduled on the deployment and spot-check one real expiry. |
 | **ST-01 — external TLS/certificate scan** | Protocol enforcement is fully executed here against a real `https.Server` with the dev certificate; certificate *validity* (chain, CA, expiry, hostname) needs a deployed host. | Run `testssl.sh`/SSL Labs against the deployed host once a real certificate is issued. |
@@ -574,19 +577,58 @@ invented code string — finding AMV-W6-01, the wave-6 round's one major (§4).
 
 ### NFR-10 — moderation false-positive / false-negative rates
 
-**Not measured. No number exists, and this report quotes none — not even provisionally.**
+**Measured on 2026-09-11 — one live IT-03 run, as ADR-007 sanctions. NFR-10 is NOT met: the
+false-positive rate fails the bound; the false-negative rate meets it.**
 
-What exists, verified by execution this run: the full ADR-002 pipeline (pre-filter → LLM adapter →
-human queue) and the scoring harness `scripts/it03-eval.js`, which scores all items exactly once in
-the real pipeline order, records model id + `PROMPT_VERSION`, labels mock-scored reports
-NOT-A-MEASUREMENT and refuses to emit rate fields for them (asserted key-by-key). The evaluation
-set is `tests/fixtures/moderation-eval/v1/`: **224 items, 56 per category** (offensive / spam /
-fraudulent / benign — balanced, ≥ 200, synthetic per ADR-008), with the human label sign-off
-recorded in its manifest (**Gaetan Rieben, 2026-08-21, set v1**) — the ADR-008 label gate is
-closed. Still missing for any claim: the wave-7 **live** IT-03 run with model id and prompt version
-recorded and a `RESULTS.md` with both rates < 0.05. No `RESULTS.md` exists anywhere in the tree
-(executed `find`), and no live provider call was made in this verification (ADR-007/ADR-011;
-`NODE_ENV=test` force-pins the mock — re-verified by executed tripwires in three lanes).
+| Metric | `gemini-3.5-flash-lite` (the recorded run) | Bound |
+|---|---|---|
+| False-positive rate (benign → violating) | **7.14 %** (4 of 56) | < 5 % — **not met** |
+| False-negative rate (violating → benign) | **1.19 %** (2 of 168) | < 5 % — met |
+| Misrouted (violating, wrong violating class) | 4 | informational |
+| Exact-class accuracy | 95.54 % | informational |
+| Answered by pre-filter / by the model | 2 / 222 | — |
+
+Run facts: set v1 (224 items, 56 per class, label sign-off Gaetan Rieben 2026-08-21), prompt
+`moderation-prompt-v1`, temperature 0, JSON response mode — the production adapter's own request,
+built by `createLiveLlmModerationAdapter` and scored by `scripts/it03-eval.js` `runEval` in the
+real pre-filter → classifier order. Started 15:03 UTC, finished 16:40 UTC. The record with every
+required field is `tests/fixtures/moderation-eval/v1/RESULTS.md`; the raw report is
+`it03-live-run.json` beside it. `claimable: true` — every precondition holds — and
+`withinBound: false`, so the number is recorded and **no pass is claimed**. Four guard tests that
+asserted "no results file exists" were inverted, not deleted (`set-integrity`, `it01c`, `it01`):
+they now require the record to exist, to carry every field the manifest names, to name a live
+model, and to state a `withinBound` that its own rates support.
+
+**What the false positives are.** All four benign items the model called *fraudulent* or
+*offensive* sit on one boundary:
+
+- `ben-004` "Please bring $15 cash per seat … The app does not handle payments." → fraudulent 0.95
+- `ben-021` "Bring cash if you can, $18 a seat covers ingredients …" → fraudulent 0.89
+- `ben-052` a guest *warning others* about a scam they suffered → fraudulent 0.95
+- `ben-055` a review *describing* insults from another guest → offensive 0.95
+
+The prompt defines *fraudulent* as including "attempts to move payment off the platform" — but
+Homeplate v1.0 has **no** payment feature (payments are out of scope, pinned by the wave-6
+feature-tree guard), so a host asking for cash is ordinary marketplace content, exactly as the
+label set says. The prompt clause and the ADR-008 boundary rules disagree, and the model sided
+with the prompt. Two of the four are the same disagreement; the other two are the classic
+"reporting abuse is not abuse" boundary. A second model measured in parallel
+(`gemini-3.1-flash-lite`, FP 5.36 % = 3/56, FN 0.60 % = 1/168, `withinBound: false`) failed on the
+**same** cash-payment items, which is why this reads as a prompt/label decision rather than model
+noise. **This is a team decision, not an agent's:** either the prompt's fraud clause is rewritten
+for a platform without payments (a new `PROMPT_VERSION`, then a fresh run), or the benign labels
+are revised into a set `v2/` — ADR-008 forbids editing v1 after a recorded run.
+
+The two false negatives (`fraud-015`, a request for someone else's emergency-contact number;
+`fraud-041`, an admission that the kitchen photos are a hotel's) were scored *benign* at 0.85 —
+above the 0.8 routing threshold, so they would have published without human review.
+
+*Operational findings from making the run, recorded for the team (§8, §9):* the worker's
+per-attempt adapter budget is `ADAPTER_TIMEOUT_MS=3000`, while the two current models answered in
+4–47 s under the provider's load — a live worker with the shipped setting would time out every
+scan and dead-letter it; and the provider's free tier caps the flagship model at **20 requests per
+day** (a first attempt on `gemini-3.5-flash` stopped at item 13 on that cap), so ADR-007's
+free-tier assumption holds only for the lite models.
 
 ### NFR-12 — erasure window coverage
 
@@ -619,9 +661,10 @@ target still needs a deployment (§5).
 
 Stated plainly, because an overstated CDR document is worse than none:
 
-1. **No NFR-10 accuracy number**, in any form. The pipeline exists; the measurement does not.
-   `claimability()===true` in the harness answers "*if* a live run were made, could its numbers be
-   claimed" — preconditions only, never a pass.
+1. **No NFR-10 pass.** The live measurement now exists (§7: FP 7.14 %, FN 1.19 %) and its
+   false-positive rate fails the 5 % bound. The number is on record, valid for exactly the model
+   and prompt version named in `RESULTS.md`; the fix is a team decision on the prompt's fraud
+   clause versus the label boundary, followed by a fresh run — not a re-reading of this one.
 2. **No NFR-07 pass and no UT-01 study.** All seven interfaces now exist and the 11 auditable
    routes audit clean — that is still not the complete seven-interface audit (six parameterized
    routes await wave-7 seeded-id audits) and the 5-participant study has not run. A harness at
@@ -677,9 +720,10 @@ Stated plainly, because an overstated CDR document is worse than none:
    documented as API-driven).
 4. **Wave 7 — the closure wave, the remaining instruments:** seed fixture ids and audit the six
    parameterized routes (`npm run test:a11y` to 7/7 **clean**, gate flips green — record it); run
-   the UT-01 study (a human fills the record block); make the one **live** IT-03 run off-suite
-   (record model id + `PROMPT_VERSION`, write `RESULTS.md`; NFR-10 claimable only if both rates
-   < 0.05). The ZAP baseline and the wave-6 k6 instrument run are **done and recorded** this
+   the UT-01 study (a human fills the record block). The **live IT-03 run is done** (2026-09-11,
+   §7) and NFR-10 is not met; the team decides between a prompt revision (new `PROMPT_VERSION`)
+   and a label set `v2/`, then re-runs once. Before any live deployment, raise
+   `ADAPTER_TIMEOUT_MS` for the moderation adapter to fit the measured 4–47 s latency (§7). The ZAP baseline and the wave-6 k6 instrument run are **done and recorded** this
    round (§1, §7); what remains from them is the deployment follow-up — the production edge that
    serves `client/dist/` must send the four standard security headers (§8 item 4).
 5. **Housekeeping (non-blocking):** consolidate the pre-filter knobs into `src/config` (W4-F7) in

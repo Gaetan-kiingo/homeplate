@@ -167,7 +167,7 @@ describe('NFR-10 metric definitions — score()', () => {
   });
 });
 
-describe('ADR-007 / ADR-008 claim gates — why no NFR-10 number may be quoted yet', () => {
+describe('ADR-007 / ADR-008 claim gates — what an NFR-10 number may and may not be quoted from', () => {
   const set = evalSet.loadSet(SET_VERSION);
 
   // Until 2026-08-21 this test asserted the OPPOSITE — that the labels were unreviewed — so a
@@ -186,16 +186,28 @@ describe('ADR-007 / ADR-008 claim gates — why no NFR-10 number may be quoted y
     expect(review.setVersion).toBe(set.version);
   });
 
-  test('sign-off satisfies the PRECONDITIONS only — there is still no run and no results file', () => {
+  test('sign-off satisfies the PRECONDITIONS only — the recorded run decides, and its record cannot claim more than its numbers', () => {
     // Read claimability()'s contract carefully: it answers "IF a run were made with this model
     // and prompt, could its numbers be claimed?" — it gates on set validity, the label sign-off,
     // a non-mock model id and a recorded prompt version. It does NOT assert that a run happened,
     // because the rates come from the run itself (score() → withinBound). So after the 2026-08-21
     // sign-off, a hypothetical LIVE model legitimately returns claimable: true, and that is not an
-    // NFR-10 pass. What still makes NFR-10 unclaimable in reality is asserted here: no pipeline,
-    // no recorded run, no results file.
-    expect(set.hasResults).toBe(false);
-    expect(fs.existsSync(set.resultsPath)).toBe(false);
+    // NFR-10 pass.
+    //
+    // INVERTED 2026-09-11, not deleted: the wave-7 live run (U7-MODERATION-MEASURE) is recorded
+    // in RESULTS.md. The guard now runs the other way — the record must exist, and its own
+    // `withinBound` must equal what its own rates say against MAX_RATE, so the file can never
+    // announce an NFR-10 pass that its numbers do not support (nor hide one they do).
+    expect(set.hasResults).toBe(true);
+    expect(fs.existsSync(set.resultsPath)).toBe(true);
+    const recordMatch = fs.readFileSync(set.resultsPath, 'utf8').match(/```json\s*([\s\S]*?)```/);
+    expect(recordMatch).not.toBeNull();
+    const record = JSON.parse(recordMatch[1]);
+    expect(record.maxRate).toBe(evalSet.MAX_RATE);
+    expect(record.withinBound).toBe(
+      record.falsePositiveRate < evalSet.MAX_RATE && record.falseNegativeRate < evalSet.MAX_RATE
+    );
+    expect(evalSet.isMockModelId(record.modelId)).toBe(false);
 
     const preconditions = evalSet.claimability({
       set,

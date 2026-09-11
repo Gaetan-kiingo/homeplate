@@ -12,8 +12,8 @@
 //             classifier whose numbers are never asserted, printed or persisted.
 //   REFUSES — any NFR-10 claim. The live IT-03 run is wave 7 (U7-MODERATION-MEASURE): it
 //             needs the live provider, the recorded model id + prompt version, RESULTS.md
-//             and the ADR-008 sign-off. Nothing here reads or writes a results file, and
-//             tests/it-adapters/it01c-adapter-depth.test.js separately asserts none exists.
+//             and the ADR-008 sign-off. Nothing here reads or writes a results file;
+//             tests/it-adapters/it01c-adapter-depth.test.js checks the recorded one.
 //
 // Requirement traceability (SRS Appendix B): NFR-10 (IT-03 harness), FR-08 (the scored
 // pipeline path), NFR-13/ADR-008 (synthetic set only), ADR-007 (mock in the suite — this

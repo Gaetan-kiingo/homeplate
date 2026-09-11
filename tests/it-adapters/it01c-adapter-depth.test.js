@@ -697,7 +697,7 @@ describe('IT-01 · booking.promote early-delivery depth (IT3-F1 regression, FR-0
 
 // ==============================================================================================
 describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measurable in this tree', () => {
-  test('ADR-008 evaluation set EXISTS, conforms and is label-signed-off; only the live run/results file is missing', () => {
+  test('ADR-008 evaluation set EXISTS, conforms, is label-signed-off, and the live IT-03 run is RECORDED', () => {
     // Was: "the set is absent". The set landed (IT-F1, U4-EVALSET) so the premise changed; what
     // this probe guards has not — every OTHER ADR-008 precondition for claiming NFR-10 is still
     // missing, and this asserts each one rather than inferring them from an empty directory.
@@ -709,9 +709,29 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
     expect(evalSet.validateSet(set)).toEqual([]); // >= 200 items, balanced, synthetic, never scraped
     expect(set.items.length).toBeGreaterThanOrEqual(200);
 
-    // No results file anywhere: no reviewer, no date, no model id, no measured rate.
-    expect(set.hasResults).toBe(false);
-    expect(fs.existsSync(path.join(set.dir, 'RESULTS.md'))).toBe(false);
+    // INVERTED 2026-09-11, not deleted: the wave-7 live IT-03 run was made and recorded
+    // (U7-MODERATION-MEASURE), so the guard now runs in the other direction — the results file
+    // must exist, be well formed, carry every field manifest.resultsFileRequiredFields names,
+    // record a LIVE model id and the current prompt version, and repeat the label sign-off.
+    expect(set.hasResults).toBe(true);
+    expect(fs.existsSync(path.join(set.dir, 'RESULTS.md'))).toBe(true);
+    const resultsMd = fs.readFileSync(path.join(set.dir, 'RESULTS.md'), 'utf8');
+    const recordMatch = resultsMd.match(/```json\s*([\s\S]*?)```/);
+    expect(recordMatch).not.toBeNull();
+    const record = JSON.parse(recordMatch[1]);
+    for (const field of set.manifest.resultsFileRequiredFields) {
+      const value = field.split('.').reduce((acc, key) => (acc == null ? acc : acc[key]), record);
+      expect([field, value]).toEqual([field, expect.anything()]);
+    }
+    expect(record.setVersion).toBe(set.version);
+    expect(evalSet.isMockModelId(record.modelId)).toBe(false); // ADR-007: measured live
+    expect(record.promptVersion).toBe('moderation-prompt-v1');
+    expect(record.runDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(record.itemCount).toBe(set.items.length);
+    expect(record.falsePositiveRate).toBeGreaterThanOrEqual(0);
+    expect(record.falseNegativeRate).toBeGreaterThanOrEqual(0);
+    expect(record.labelReview.reviewer).toBe(set.manifest.labelReview.reviewer);
+    expect(record.labelReview.date).toBe(set.manifest.labelReview.date);
     // DETERMINISM (findings MTUT-RV-02 / COV-11, verification round 2): this used to assert that
     // the *directories* docs/results and docs/_generated/results did not exist at all. That is an
     // assertion over global repository state this test does not own, and it is false the moment
@@ -758,14 +778,14 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
     // What actually keeps NFR-10 unmeasurable is now the MISSING RUN, not the missing sign-off,
     // and that is the point of this probe: a signed-off label set is a precondition, never a
     // measurement. claimability() answers "if a run were made, could it be claimed?" — so with a
-    // live model id it legitimately says yes, while `hasResults` above says no run exists.
+    // live model id it legitimately says yes; the recorded run is checked separately above.
     const verdict = evalSet.claimability({
       set,
       modelId: 'a-live-model-id',
       promptVersion: 'moderation-prompt-v1',
     });
     expect(verdict.claimable).toBe(true); // preconditions only
-    expect(set.hasResults).toBe(false); // …and still no measurement to claim from
+    expect(set.hasResults).toBe(true); // …and the measurement now exists (asserted above)
 
     // The ADR-007 gate is untouched by the sign-off: a mock-scored run stays unclaimable.
     const viaMock = evalSet.claimability({
@@ -793,8 +813,8 @@ describe('IT-03 · NFR-10 measurement readiness (ADR-007, ADR-008) — NOT measu
     });
     expect(prefilter.check('a friendly homemade dinner')).toEqual({ verdict: 'pass' });
     expect(fs.existsSync(path.join(REPO_ROOT, 'scripts', 'it03-eval.js'))).toBe(true);
-    // What still keeps NFR-10 open is the missing LIVE RUN (wave 7) — asserted by the
-    // hasResults/no-results-file checks in the first test of this describe, which stand.
+    // The LIVE RUN (wave 7) is now recorded — its results file is checked field by field in
+    // the first test of this describe.
   });
 
   test('the ADR-007 MOCK classifier cannot stand in for the measurement: it is a fixture matcher, not a classifier', async () => {

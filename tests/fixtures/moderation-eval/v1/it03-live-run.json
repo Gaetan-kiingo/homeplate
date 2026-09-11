@@ -1,0 +1,78 @@
+{
+  "measurement": true,
+  "label": "IT-03 live-run report",
+  "note": "NFR-10 may be claimed ONLY per the claimability verdict below, and only once this report is recorded in tests/fixtures/moderation-eval/v1/RESULTS.md with the ADR-008 human sign-off (reviewer, date, set version).",
+  "testId": "IT-03",
+  "requirement": "NFR-10",
+  "setVersion": "v1",
+  "itemCount": 224,
+  "prefilterBlocked": 2,
+  "classified": 222,
+  "modelId": "gemini-3.5-flash-lite",
+  "promptVersion": "moderation-prompt-v1",
+  "labelReview": {
+    "status": "signed-off",
+    "reviewer": "Gaetan Rieben",
+    "date": "2026-08-21",
+    "setVersion": "v1",
+    "note": "ADR-008 label sign-off: a human team member reviewed the 224 AI-proposed labels against the boundary rules in MANIFEST.md and signed off, reported by the reviewer and transcribed by the build agent at their instruction (an agent may not perform this review). The sign-off unlocks CLAIMABILITY only: an NFR-10 pass still additionally requires a real IT-03 run through a LIVE classifier (never the mock, ADR-007) with the model id and prompt version recorded in RESULTS.md, and both measured rates below 0.05. Correcting a label after a recorded IT-03 run requires a new set version v2/, not an edit here."
+  },
+  "claimable": true,
+  "claimabilityReasons": [],
+  "falsePositives": 4,
+  "falsePositiveRate": 0.07142857142857142,
+  "falseNegatives": 2,
+  "falseNegativeRate": 0.011904761904761904,
+  "misrouted": 4,
+  "accuracy": 0.9553571428571429,
+  "perClass": {
+    "offensive": {
+      "items": 56,
+      "correct": 56,
+      "recall": 1
+    },
+    "spam": {
+      "items": 56,
+      "correct": 56,
+      "recall": 1
+    },
+    "fraudulent": {
+      "items": 56,
+      "correct": 50,
+      "recall": 0.8928571428571429
+    },
+    "benign": {
+      "items": 56,
+      "correct": 52,
+      "recall": 0.9285714285714286
+    }
+  },
+  "confusion": {
+    "offensive": {
+      "offensive": 56,
+      "spam": 0,
+      "fraudulent": 0,
+      "benign": 0
+    },
+    "spam": {
+      "offensive": 0,
+      "spam": 56,
+      "fraudulent": 0,
+      "benign": 0
+    },
+    "fraudulent": {
+      "offensive": 1,
+      "spam": 3,
+      "fraudulent": 50,
+      "benign": 2
+    },
+    "benign": {
+      "offensive": 1,
+      "spam": 0,
+      "fraudulent": 3,
+      "benign": 52
+    }
+  },
+  "withinBound": false,
+  "maxRate": 0.05
+}
