@@ -655,3 +655,11 @@
 .hostHeaderMeta svg {
   color: var(--hp-color-accent);
 }
+
+/* FR-11 price sticker: same pill as the seats badge, pinned to the opposite (start) corner. */
+.cardPrice {
+  inset-inline-end: auto;
+  inset-inline-start: var(--hp-space-3);
+  font-weight: 600;
+  color: var(--hp-color-text);
+}

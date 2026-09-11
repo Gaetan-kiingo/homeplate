@@ -64,3 +64,54 @@
   color: var(--hp-color-text-muted);
   margin: 0;
 }
+.cta {
+  display: inline-block;
+  background: var(--hp-color-primary);
+  color: var(--hp-color-on-primary);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-2) var(--hp-space-4);
+  font-weight: 600;
+  text-decoration: none;
+}
+.cta:hover {
+  background: var(--hp-color-primary-hover);
+}
+.mealList {
+  list-style: none;
+  margin: var(--hp-space-4) 0 0;
+  padding: 0;
+  display: grid;
+  gap: var(--hp-space-3);
+}
+.mealCard {
+  border: 1px solid var(--hp-color-border-subtle);
+  border-radius: var(--hp-radius-md);
+  background: var(--hp-color-surface-raised);
+  padding: var(--hp-space-4);
+}
+.mealTitle {
+  margin: 0 0 var(--hp-space-1);
+  font-size: var(--hp-font-size-lg);
+}
+.mealStatus {
+  margin: 0 0 var(--hp-space-2);
+  color: var(--hp-color-text-muted);
+}
+.mealFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-4);
+  margin: 0;
+}
+.mealFacts dt {
+  font-family: var(--hp-font-meta);
+  font-size: var(--hp-font-size-sm);
+  color: var(--hp-color-text-muted);
+}
+.mealFacts dd {
+  margin: 0;
+  font-weight: 600;
+}
+.mealActions {
+  margin: var(--hp-space-3) 0 0;
+}

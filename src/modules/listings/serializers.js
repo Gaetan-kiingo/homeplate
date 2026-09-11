@@ -47,6 +47,7 @@ const PUBLIC_KEYS = Object.freeze([
   'areaLabel',
   'seatCapacity',
   'seatsRemaining',
+  'pricePerSeatCents',
   'status',
   'moderationStatus',
   'createdAt',
@@ -167,6 +168,8 @@ function publicListing(row, media = []) {
     areaLabel: field(row, 'area_label', 'areaLabel') ?? null,
     seatCapacity: field(row, 'seat_capacity', 'seatCapacity'),
     seatsRemaining: field(row, 'seats_remaining', 'seatsRemaining'),
+    // FR-11 (2026-09-11): whole cents, published by the host; 0 = free. Coarse public data.
+    pricePerSeatCents: field(row, 'price_per_seat_cents', 'pricePerSeatCents') ?? 0,
     status: row.status,
     moderationStatus: field(row, 'moderation_status', 'moderationStatus'),
     createdAt: field(row, 'created_at', 'createdAt'),

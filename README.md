@@ -67,7 +67,7 @@ Every demo account uses the password **`DemoPass123!`** (local development only)
 | --- | --- | --- |
 | Guest | `maya@homeplate.demo` | Search, listing detail, reserve, bookings (2 upcoming, 2 completed) |
 | Guest | `jordan@homeplate.demo` | A second guest with reviews |
-| Host | `rosa@homeplate.demo` | Host profile with 2 reviews; bookings as host; **Host a meal** (FR-11 create/edit/cancel) |
+| Host | `rosa@homeplate.demo` | Host profile with 2 reviews; bookings as host; **Your meals** dashboard and **Host a meal** (FR-11 create/edit/cancel, price per seat) |
 | Moderator | `sam.mod@homeplate.demo` | Moderation queue and alerts — approves a newly hosted meal |
 
 Every demo account has a verified email and a phone number (encrypted at load time by

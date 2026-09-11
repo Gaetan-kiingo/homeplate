@@ -44,6 +44,7 @@
  * @property {?string} areaLabel      neighbourhood/city label for display
  * @property {number} seatCapacity
  * @property {number} seatsRemaining
+ * @property {number} pricePerSeatCents  whole cents per seat, settled with the host directly (v1.0 has no payments); 0 = free
  * @property {string} status
  * @property {string} moderationStatus
  * @property {string} createdAt

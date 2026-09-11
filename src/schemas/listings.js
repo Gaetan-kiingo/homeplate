@@ -61,6 +61,10 @@ const create = z.object({
   // Lower bound only — the AB 626 upper bounds live in src/config (ADR-009) and are
   // enforced by mehko.assertWithinCaps with 422 MEHKO_DAILY_MEAL_LIMIT.
   seatCapacity: z.coerce.number().int('must be an integer').min(1),
+  // FR-11 (2026-09-11): price per seat in whole cents — information the host publishes and
+  // settles directly with the guest (v1.0 has no payments, SRS §1.2). The client form makes it
+  // required; the API defaults to 0 ("Free") so scripted and legacy callers stay valid.
+  pricePerSeatCents: z.coerce.number().int('must be whole cents').min(0).max(100000).default(0),
   addressLine1: addressFields.addressLine1,
   addressLine2: addressFields.addressLine2.optional(),
   city: addressFields.city,
@@ -82,6 +86,7 @@ const update = z
     scheduledStart: scheduledStart.optional(),
     durationMinutes: z.coerce.number().int('must be an integer').min(1).max(1440).optional(),
     seatCapacity: z.coerce.number().int('must be an integer').min(1).optional(),
+    pricePerSeatCents: z.coerce.number().int('must be whole cents').min(0).max(100000).optional(),
     addressLine1: addressFields.addressLine1.optional(),
     addressLine2: addressFields.addressLine2.nullable().optional(),
     city: addressFields.city.optional(),

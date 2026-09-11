@@ -181,7 +181,8 @@
       "seat_capacity": 6,
       "seats_remaining": 2,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1800
     },
     {
       "id": "d1000000-0000-4000-8000-000000000002",
@@ -221,7 +222,8 @@
       "seat_capacity": 4,
       "seats_remaining": 1,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2200
     },
     {
       "id": "d1000000-0000-4000-8000-000000000003",
@@ -261,7 +263,8 @@
       "seat_capacity": 8,
       "seats_remaining": 5,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1500
     },
     {
       "id": "d1000000-0000-4000-8000-000000000004",
@@ -301,7 +304,8 @@
       "seat_capacity": 6,
       "seats_remaining": 4,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2500
     },
     {
       "id": "d1000000-0000-4000-8000-000000000005",
@@ -341,7 +345,8 @@
       "seat_capacity": 8,
       "seats_remaining": 6,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1200
     },
     {
       "id": "d1000000-0000-4000-8000-000000000006",
@@ -380,7 +385,8 @@
       "seat_capacity": 8,
       "seats_remaining": 8,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2000
     },
     {
       "id": "d1000000-0000-4000-8000-000000000007",
@@ -420,7 +426,8 @@
       "seat_capacity": 4,
       "seats_remaining": 0,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2800
     },
     {
       "id": "d1000000-0000-4000-8000-000000000008",
@@ -460,7 +467,8 @@
       "seat_capacity": 6,
       "seats_remaining": 3,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1600
     },
     {
       "id": "d1000000-0000-4000-8000-000000000009",
@@ -499,7 +507,8 @@
       "seat_capacity": 6,
       "seats_remaining": 6,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1900
     },
     {
       "id": "d1000000-0000-4000-8000-000000000010",
@@ -539,7 +548,8 @@
       "seat_capacity": 8,
       "seats_remaining": 7,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2400
     },
     {
       "id": "d1000000-0000-4000-8000-000000000011",
@@ -578,7 +588,8 @@
       "seat_capacity": 8,
       "seats_remaining": 1,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1400
     },
     {
       "id": "d1000000-0000-4000-8000-000000000012",
@@ -618,7 +629,8 @@
       "seat_capacity": 6,
       "seats_remaining": 4,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2100
     },
     {
       "id": "d1000000-0000-4000-8000-000000000101",
@@ -649,7 +661,8 @@
       "seat_capacity": 6,
       "seats_remaining": 0,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 0
     },
     {
       "id": "d1000000-0000-4000-8000-000000000102",
@@ -680,7 +693,8 @@
       "seat_capacity": 8,
       "seats_remaining": 0,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 1700
     },
     {
       "id": "d1000000-0000-4000-8000-000000000103",
@@ -718,7 +732,8 @@
       "seat_capacity": 8,
       "seats_remaining": 0,
       "moderation_status": "approved",
-      "status": "active"
+      "status": "active",
+      "price_per_seat_cents": 2300
     }
   ],
   "media_objects": [

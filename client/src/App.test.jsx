@@ -182,6 +182,7 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
       '/search',
       '/bookings',
       '/account',
+      '/host/meals',
       '/host/meals/new',
       '/moderation',
       '/login',
@@ -193,23 +194,23 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
     }
   });
 
-  it('offers "Host a meal" only to a session that may publish listings (FR-09 flag, FR-11 screen)', async () => {
+  it('offers "Your meals" only to a session that may publish listings (FR-09 flag, FR-11 screens)', async () => {
     stubMe(jsonResponse(200, { user: { ...USER, canPublishListing: true } }));
     render(<App />);
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
-    expect(within(nav).getByRole('link', { name: 'Host a meal' })).toHaveAttribute(
+    expect(within(nav).getByRole('link', { name: 'Your meals' })).toHaveAttribute(
       'href',
-      '/host/meals/new'
+      '/host/meals'
     );
   });
 
-  it('never offers "Host a meal" to a session that may not publish listings', async () => {
+  it('never offers "Your meals" to a session that may not publish listings', async () => {
     stubMe(jsonResponse(200, { user: { ...USER, canPublishListing: false } }));
     render(<App />);
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
-    expect(within(nav).queryByRole('link', { name: 'Host a meal' })).toBeNull();
+    expect(within(nav).queryByRole('link', { name: 'Your meals' })).toBeNull();
   });
 
   it('anonymous: offers sign-in and search, never the signed-in-only destinations', async () => {

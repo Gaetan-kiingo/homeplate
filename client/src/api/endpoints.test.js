@@ -114,6 +114,11 @@ const surface = [
     expected: 'POST /api/listings',
   },
   {
+    name: 'listings.mine',
+    call: () => api.listings.mine(),
+    expected: 'GET /api/listings/mine',
+  },
+  {
     name: 'listings.getListing',
     call: () => api.listings.getListing(UUID),
     expected: 'GET /api/listings/:id',

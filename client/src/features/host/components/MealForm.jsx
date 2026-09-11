@@ -27,6 +27,7 @@ export const FIELD_IDS = Object.freeze({
   when: 'meal-when',
   duration: 'meal-duration',
   seats: 'meal-seats',
+  price: 'meal-price',
   street: 'meal-street',
   street2: 'meal-street2',
   city: 'meal-city',
@@ -46,6 +47,7 @@ export const BODY_FIELD_IDS = Object.freeze({
   scheduledStart: FIELD_IDS.when,
   durationMinutes: FIELD_IDS.duration,
   seatCapacity: FIELD_IDS.seats,
+  pricePerSeatCents: FIELD_IDS.price,
   addressLine1: FIELD_IDS.street,
   addressLine2: FIELD_IDS.street2,
   city: FIELD_IDS.city,
@@ -64,6 +66,7 @@ export const EMPTY_VALUES = Object.freeze({
   when: '',
   duration: '120',
   seats: '4',
+  price: '', // dollars as typed, e.g. "18" or "18.50"; sent as whole cents
   street: '',
   street2: '',
   city: '',
@@ -84,6 +87,23 @@ export function toLabels(text) {
     }
   }
   return out;
+}
+
+/** "18", "18.50", "$18" → whole cents; null when not a non-negative amount with ≤ 2 decimals. */
+export function dollarsToCents(text) {
+  const cleaned = String(text || '')
+    .trim()
+    .replace(/^\$/, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  const [whole, frac = ''] = cleaned.split('.');
+  return Number(whole) * 100 + Number((frac + '00').slice(0, 2));
+}
+
+/** Whole cents → the dollars text the input shows ("18" or "18.50"). */
+export function centsToDollars(cents) {
+  const n = Number(cents);
+  if (!Number.isFinite(n) || n < 0) return '';
+  return n % 100 === 0 ? String(n / 100) : (n / 100).toFixed(2);
 }
 
 /** Client-side checks mirroring the schema's cheap rules, so obvious mistakes never leave. */
@@ -108,6 +128,12 @@ export function validate(values, { requireFuture = true } = {}) {
   const seats = Number(values.seats);
   if (!Number.isInteger(seats) || seats < 1) {
     add('seats', 'Seat capacity must be a whole number of at least 1.');
+  }
+  const cents = dollarsToCents(values.price);
+  if (cents === null) {
+    add('price', 'Enter the price per seat in dollars, e.g. 18 or 18.50 (0 for a free meal).');
+  } else if (cents > 100000) {
+    add('price', 'Price per seat must be at most $1000.');
   }
   if (values.street.trim() === '') add('street', 'Enter the street address.');
   if (values.city.trim() === '') add('city', 'Enter the city.');
@@ -135,6 +161,7 @@ export function toBody(values) {
     scheduledStart: laWallClockToIso(values.when),
     durationMinutes: Number(values.duration),
     seatCapacity: Number(values.seats),
+    pricePerSeatCents: dollarsToCents(values.price) ?? 0,
     addressLine1: values.street.trim(),
     ...(street2 !== '' ? { addressLine2: street2 } : {}),
     city: values.city.trim(),
@@ -268,6 +295,21 @@ export default function MealForm({
               />
             </FormField>
           </div>
+          <FormField
+            id={FIELD_IDS.price}
+            label="Price per seat (USD)"
+            required
+            hint="What a guest pays you for one seat, settled directly with you — Homeplate v1.0 takes no payments. Enter 0 for a free meal."
+            error={fieldError('price')}
+          >
+            <TextInput
+              inputMode="decimal"
+              placeholder="18 or 18.50"
+              value={values.price}
+              onChange={set('price')}
+              maxLength={8}
+            />
+          </FormField>
         </fieldset>
 
         <fieldset className={styles.fieldset}>

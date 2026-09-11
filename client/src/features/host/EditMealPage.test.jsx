@@ -37,6 +37,7 @@ const OWNED = Object.freeze({
   durationMinutes: 90,
   seatCapacity: 6,
   seatsRemaining: 6,
+  pricePerSeatCents: 1850,
   status: 'active',
   moderationStatus: 'approved',
   city: 'San Diego',
@@ -111,6 +112,7 @@ describe('valuesFromListing / changedFields (pure)', () => {
     expect(values.street).toBe('742 Evergreen Terrace');
     expect(values.zip).toBe('92104');
     expect(values.seats).toBe('6');
+    expect(values.price).toBe('18.50');
   });
 
   it('leaves the address blank when the payload does not carry it (public projection)', () => {
@@ -155,6 +157,7 @@ describe('EditMealPage — /host/meals/:id/edit (FR-11 update)', () => {
     const seats = await screen.findByLabelText(/^Seats/);
     expect(seats).toHaveValue(6);
     expect(screen.getByLabelText(/^Street address/)).toHaveValue('742 Evergreen Terrace');
+    expect(screen.getByLabelText(/^Price per seat/)).toHaveValue('18.50');
     await user.clear(seats);
     await user.type(seats, '8');
     await user.click(screen.getByRole('button', { name: 'Save changes' }));

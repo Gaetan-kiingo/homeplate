@@ -444,6 +444,15 @@ async function updateListing(auth, listingId, patch, opts = {}) {
 
       // Capacity: seats_remaining re-derived from live bookings (FR-12 consistency; the
       // 0001 CHECK seats_remaining BETWEEN 0 AND seat_capacity remains the DB backstop).
+      // Price is not a moderation-material field: a change publishes immediately (FR-11).
+      if (
+        patch.pricePerSeatCents !== undefined &&
+        patch.pricePerSeatCents !== current.price_per_seat_cents
+      ) {
+        columnPatch.pricePerSeatCents = patch.pricePerSeatCents;
+        changedFields.push('pricePerSeatCents');
+      }
+
       if (patch.seatCapacity !== undefined && patch.seatCapacity !== current.seat_capacity) {
         const active = await repo.countActiveBookings(client, listingId);
         if (patch.seatCapacity < active) {
@@ -597,9 +606,22 @@ async function cancelListing(auth, listingId, opts = {}) {
   };
 }
 
+/**
+ * FR-11 host dashboard (2026-09-11): the signed-in host's upcoming listings in every state,
+ * public projection with images (no address — the owner edits through the detail read).
+ * @param {{userId: string}} auth
+ * @returns {Promise<object[]>}
+ */
+async function listMyUpcoming(auth) {
+  const rows = await repo.findUpcomingByHost(auth.userId);
+  const media = await Promise.all(rows.map((row) => repo.listMediaForListing(row.id)));
+  return rows.map((row, i) => serializers.publicListing(row, media[i]));
+}
+
 module.exports = {
   createListing,
   getListing,
+  listMyUpcoming,
   updateListing,
   cancelListing,
   JOB_LISTING_GEOCODE,

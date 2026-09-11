@@ -89,6 +89,7 @@ function toListing(row) {
     areaLabel: row.area_label,
     seatCapacity: row.seat_capacity,
     seatsRemaining: row.seats_remaining,
+    pricePerSeatCents: row.price_per_seat_cents,
     moderationStatus: row.moderation_status,
     status: row.status,
     createdAt: row.created_at,
@@ -111,8 +112,8 @@ async function insertListing(client, fields) {
        (host_id, title, description, ingredients, allergens, cuisine,
         scheduled_start, duration_minutes, local_date,
         address_line1, address_line2, city, region, postal_code, country,
-        seat_capacity, seats_remaining)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
+        seat_capacity, seats_remaining, price_per_seat_cents)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16, $17)
      RETURNING *`,
     [
       fields.hostId,
@@ -131,6 +132,7 @@ async function insertListing(client, fields) {
       fields.postalCode ?? null,
       fields.country ?? 'US',
       fields.seatCapacity,
+      fields.pricePerSeatCents ?? 0,
     ],
     client
   );
@@ -201,6 +203,24 @@ async function findApprovedByHost(hostId, { limit = 20 } = {}, client = null) {
   return rows.map(toListing);
 }
 
+/**
+ * The host's own UPCOMING listings in EVERY state (FR-11 host dashboard, 2026-09-11): pending,
+ * approved and rejected moderation; active and cancelled status. Only the owner may call the
+ * route that uses this (requireSession + host_id = auth.userId), so no moderation filter here.
+ */
+async function findUpcomingByHost(hostId, { limit = 100 } = {}, client = null) {
+  const { rows } = await run(
+    `SELECT * FROM listings
+     WHERE host_id = $1
+       AND scheduled_start > now()
+     ORDER BY scheduled_start, id
+     LIMIT $2`,
+    [hostId, limit],
+    client
+  );
+  return rows.map(toListing);
+}
+
 // Fixed patch-key → column allowlist (NFR-11: identifiers never come from the caller).
 const UPDATE_COLUMNS = Object.freeze({
   title: 'title',
@@ -224,6 +244,7 @@ const UPDATE_COLUMNS = Object.freeze({
   areaLabel: 'area_label',
   seatCapacity: 'seat_capacity',
   seatsRemaining: 'seats_remaining',
+  pricePerSeatCents: 'price_per_seat_cents',
   moderationStatus: 'moderation_status',
 });
 
@@ -327,6 +348,7 @@ module.exports = {
   findById,
   findByIdForUpdate,
   findApprovedByHost,
+  findUpcomingByHost,
   updateListing,
   cancelListing,
   cancelActiveBookings,

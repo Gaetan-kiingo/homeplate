@@ -453,6 +453,92 @@ describe('POST /api/listings — FR-11 create', () => {
 // =============================================================================================
 // FR-02 / TC-02 — detail read with ADR-010 progressive disclosure
 // =============================================================================================
+describe('FR-11 price per seat and the host dashboard (2026-09-11)', () => {
+  test('pricePerSeatCents is stored as whole cents, echoed on create, detail and search projections; defaults to 0', async () => {
+    const host = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    const priced = await createVia(cookie, { pricePerSeatCents: 1850 });
+    expect(priced.status).toBe(201);
+    expect(priced.body.listing.pricePerSeatCents).toBe(1850);
+    const free = await createVia(cookie, { scheduledStart: uniqueFutureStart() });
+    expect(free.status).toBe(201);
+    expect(free.body.listing.pricePerSeatCents).toBe(0);
+    // Public projection carries it (PUBLIC_KEYS); the serializer allowlist is the contract.
+    expect(serializers.PUBLIC_KEYS).toContain('pricePerSeatCents');
+    const detail = await request(app)
+      .get(`/api/listings/${priced.body.listing.id}`)
+      .set('Cookie', cookie);
+    expect(detail.status).toBe(200);
+    expect(detail.body.listing.pricePerSeatCents).toBe(1850);
+  });
+
+  test('rejects a negative, fractional-cent or absurd price with 422 (NFR-11)', async () => {
+    const host = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    for (const bad of [-1, 12.5, 100001, 'eighteen']) {
+      const res = await createVia(cookie, { pricePerSeatCents: bad });
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('VALIDATION_FAILED');
+    }
+  });
+
+  test('PATCH changes the price without resetting moderation (not a material field)', async () => {
+    const host = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    const created = await createVia(cookie, { pricePerSeatCents: 1000 });
+    await approve(created.body.listing.id);
+    const res = await request(app)
+      .patch(`/api/listings/${created.body.listing.id}`)
+      .set('Cookie', cookie)
+      .send({ pricePerSeatCents: 1500 });
+    expect(res.status).toBe(200);
+    expect(res.body.listing.pricePerSeatCents).toBe(1500);
+    expect(res.body.listing.moderationStatus).toBe('approved');
+  });
+
+  test("GET /api/listings/mine: the host sees every upcoming listing of theirs in every state, nobody else's, never past ones; 401 anonymous", async () => {
+    const host = await makeEligibleHost();
+    const other = await makeEligibleHost();
+    const cookie = await cookieFor(host);
+    const otherCookie = await cookieFor(other);
+    const pending = (await createVia(cookie, { title: 'Mine pending' })).body.listing;
+    const approvedRes = await createVia(cookie, {
+      title: 'Mine approved',
+      scheduledStart: uniqueFutureStart(),
+    });
+    await approve(approvedRes.body.listing.id);
+    const cancelledRes = await createVia(cookie, {
+      title: 'Mine cancelled',
+      scheduledStart: uniqueFutureStart(),
+    });
+    await request(app)
+      .post(`/api/listings/${cancelledRes.body.listing.id}/cancel`)
+      .set('Cookie', cookie);
+    await createVia(otherCookie, { title: 'Not mine' });
+    // A past meal of the host's (inserted directly — the API refuses past starts).
+    await dbh.makeListing({
+      host_id: host.id,
+      title: 'Mine past',
+      scheduled_start: new Date(Date.now() - 86400000),
+    });
+
+    const res = await request(app).get('/api/listings/mine').set('Cookie', cookie);
+    expect(res.status).toBe(200);
+    const titles = res.body.listings.map((l) => l.title).sort();
+    expect(titles).toEqual(['Mine approved', 'Mine cancelled', 'Mine pending']);
+    const byTitle = Object.fromEntries(res.body.listings.map((l) => [l.title, l]));
+    expect(byTitle['Mine pending'].moderationStatus).toBe('pending');
+    expect(byTitle['Mine cancelled'].status).toBe('cancelled');
+    expect(byTitle['Mine pending'].id).toBe(pending.id);
+    // Public projection only: no precise address on the dashboard payload (ADR-010).
+    for (const l of res.body.listings) {
+      expect(Object.keys(l).sort()).toEqual([...serializers.PUBLIC_KEYS].sort());
+    }
+    const anon = await request(app).get('/api/listings/mine');
+    expect(anon.status).toBe(401);
+  });
+});
+
 describe('GET /api/listings/:id — FR-02 detail, ADR-010 disclosure', () => {
   async function approvedListingFixture() {
     const host = await makeEligibleHost();

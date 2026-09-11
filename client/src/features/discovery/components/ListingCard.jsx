@@ -18,15 +18,17 @@
 // screen-reader or keyboard user, while a pointer user can hit anywhere on the card.
 import { Link } from 'react-router-dom';
 import { Card, Icon, Img } from '../../../ui/index.js';
-import { areaShort, formatDateTime, seatsStatus } from './format.js';
+import { areaShort, formatDateTime, priceBadge, seatsStatus } from './format.js';
 import { listingPath } from './paths.js';
 import styles from '../discovery.module.css';
+import vhStyles from '../../../ui/VisuallyHidden.module.css';
 
 export default function ListingCard({ listing }) {
   const image =
     Array.isArray(listing.images) && listing.images.length > 0 ? listing.images[0] : null;
   const area = areaShort(listing);
   const seats = seatsStatus(listing);
+  const price = priceBadge(listing);
 
   return (
     <li>
@@ -47,6 +49,14 @@ export default function ListingCard({ listing }) {
           <p className={`${styles.cardBadge} ${styles[`cardBadge_${seats.tone}`]}`}>
             <Icon name="seats" /> {seats.label}
           </p>
+          {/* FR-11 price per seat (2026-09-11) on the opposite corner: money is the second
+              decisive fact after availability. Text carries the meaning; "Free" for 0. */}
+          {price !== null ? (
+            <p className={`${styles.cardBadge} ${styles.cardPrice}`}>
+              <span className={vhStyles.visuallyHidden}>Price per seat: </span>
+              {price}
+            </p>
+          ) : null}
         </div>
 
         <div className={styles.cardBody}>

@@ -50,3 +50,12 @@ export function update(id, body) {
 export function cancel(id) {
   return post(`/api/listings/${pathParam(id, 'id')}/cancel`);
 }
+
+/**
+ * GET /api/listings/mine — the signed-in host's UPCOMING listings in every state (pending /
+ * approved / rejected, active / cancelled), newest meal last. Public projection (no address).
+ * @returns {Promise<{listings: import('./types.js').Listing[]}>}
+ */
+export function mine() {
+  return get('/api/listings/mine');
+}

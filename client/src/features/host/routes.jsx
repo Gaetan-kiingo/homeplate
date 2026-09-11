@@ -17,8 +17,10 @@
 //     outcomes; the non-parameterized route is picked up by scripts/a11y-audit.js.
 import CreateMealPage from './CreateMealPage.jsx';
 import EditMealPage from './EditMealPage.jsx';
+import MyMealsPage from './MyMealsPage.jsx';
 
 export default [
+  { path: 'host/meals', element: <MyMealsPage /> },
   { path: 'host/meals/new', element: <CreateMealPage /> },
   { path: 'host/meals/:id/edit', element: <EditMealPage /> },
 ];

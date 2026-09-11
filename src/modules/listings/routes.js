@@ -49,6 +49,24 @@ router.post(
   }
 );
 
+// GET /api/listings/mine — FR-11 host dashboard (2026-09-11): the signed-in host's upcoming
+// listings in every moderation/status state. Declared BEFORE the UUID-constrained routes; the
+// literal segment never matches UUID_PARAM anyway, and never falls through to U3-SEARCH.
+// Input-less (NFR-11: the validator is still declared so the route enumeration sees one).
+router.get(
+  '/mine',
+  requireSession,
+  validate({ query: listingSchemas.noInput }),
+  async (req, res, next) => {
+    try {
+      const listings = await service.listMyUpcoming(req.auth);
+      res.status(200).json({ listings });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // GET /api/listings/:id — FR-02 detail with ADR-010 progressive disclosure (AB-08: session
 // required — personal/location data is never served unauthenticated). The response carries
 // the listing projection PLUS — in the same payload (FR-02/TC-02 acceptance) — the host

@@ -93,6 +93,7 @@ async function fillValidForm(user) {
   fireEvent.change(main.getByLabelText(/^Date and time/), {
     target: { value: '2099-09-13T18:30' },
   });
+  await user.type(main.getByLabelText(/^Price per seat/), '18.50');
   await user.type(main.getByLabelText(/^Street address/), '742 Evergreen Terrace');
   await user.clear(main.getByLabelText(/^City/));
   await user.type(main.getByLabelText(/^City/), 'San Diego');
@@ -140,6 +141,7 @@ describe('CreateMealPage — /host/meals/new (FR-11)', () => {
     expect(alert).toHaveTextContent(/title of at least 3 characters/i);
     expect(alert).toHaveTextContent(/date and time/i);
     expect(alert).toHaveTextContent(/street address/i);
+    expect(alert).toHaveTextContent(/price per seat/i);
     expect(calls.filter((c) => c.key === 'POST /api/listings')).toHaveLength(0);
   });
 
@@ -168,6 +170,7 @@ describe('CreateMealPage — /host/meals/new (FR-11)', () => {
       scheduledStart: '2099-09-14T01:30:00.000Z', // 18:30 America/Los_Angeles (PDT)
       durationMinutes: 120,
       seatCapacity: 4,
+      pricePerSeatCents: 1850,
       addressLine1: '742 Evergreen Terrace',
       city: 'San Diego',
       region: 'CA',

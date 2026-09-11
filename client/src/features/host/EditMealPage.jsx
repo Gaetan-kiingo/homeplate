@@ -13,7 +13,12 @@ import { api } from '../../api/index.js';
 import { useSession } from '../../session/index.js';
 import { Spinner, useAnnounce } from '../../ui/index.js';
 import usePageTitle from '../../layout/usePageTitle.js';
-import MealForm, { BODY_FIELD_IDS, EMPTY_VALUES, toBody } from './components/MealForm.jsx';
+import MealForm, {
+  BODY_FIELD_IDS,
+  EMPTY_VALUES,
+  centsToDollars,
+  toBody,
+} from './components/MealForm.jsx';
 import { hostErrorMessage, validationIssues } from './components/hostErrors.js';
 import { isoToLaWallClock } from './components/mealTime.js';
 import styles from './host.module.css';
@@ -36,6 +41,7 @@ export function valuesFromListing(listing) {
     when: isoToLaWallClock(listing.scheduledStart),
     duration: String(listing.durationMinutes ?? EMPTY_VALUES.duration),
     seats: String(listing.seatCapacity ?? EMPTY_VALUES.seats),
+    price: centsToDollars(listing.pricePerSeatCents ?? 0),
     // ADR-010: precise address only when the payload carries it (owner/privileged read).
     street:
       listing.addressLine1 !== undefined && listing.addressLine1 !== null

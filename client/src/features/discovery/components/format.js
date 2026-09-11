@@ -142,3 +142,24 @@ export function ratingText(averageRating, reviewCount) {
   if (!Number.isFinite(average)) return reviews;
   return `Rated ${average} out of 5 from ${reviews}`;
 }
+
+/**
+ * FR-11 price per seat, from whole cents. 0 is "Free"; a missing value is never invented.
+ * Money is information here — v1.0 has no payment feature; the guest settles with the host.
+ * @param {{pricePerSeatCents?: number}} listing
+ * @returns {?string} e.g. "$18 per seat", "$18.50 per seat", "Free", or null when unknown
+ */
+export function priceText(listing) {
+  const cents = Number(listing && listing.pricePerSeatCents);
+  if (!Number.isFinite(cents) || cents < 0) return null;
+  if (cents === 0) return 'Free';
+  const dollars = cents / 100;
+  const amount = cents % 100 === 0 ? `$${dollars.toFixed(0)}` : `$${dollars.toFixed(2)}`;
+  return `${amount} per seat`;
+}
+
+/** The short form for the card sticker: "$18", "$18.50" or "Free". */
+export function priceBadge(listing) {
+  const text = priceText(listing);
+  return text === null ? null : text.replace(' per seat', '');
+}

@@ -33,6 +33,7 @@ import {
   areaShort,
   areaText,
   formatDateTime,
+  priceText,
   ratingText,
   seatsStatus,
   seatsText,
@@ -412,6 +413,13 @@ export default function ListingDetailPage() {
                 <dt>Duration</dt>
                 <dd>{listing.durationMinutes} minutes</dd>
               </div>
+              {priceText(listing) !== null ? (
+                <div className={styles.reserveFact}>
+                  <Icon name="seats" />
+                  <dt>Price</dt>
+                  <dd>{priceText(listing)}</dd>
+                </div>
+              ) : null}
               <div
                 className={`${styles.reserveFact} ${styles[`reserveSeats_${seats.tone}`] || ''}`}
               >
@@ -444,6 +452,11 @@ export default function ListingDetailPage() {
             {!hasPreciseAddress ? (
               <p className={styles.reserveNote}>
                 Exact address shared after you reserve. Free to cancel before the meal.
+              </p>
+            ) : null}
+            {priceText(listing) !== null && listing.pricePerSeatCents > 0 ? (
+              <p className={styles.reserveNote}>
+                Paid to the host directly at the meal — Homeplate takes no payments.
               </p>
             ) : null}
           </div>

@@ -120,7 +120,7 @@ export default function AppLayout() {
                   </li>
                   {user && user.canPublishListing === true && (
                     <li>
-                      <NavLink to="/host/meals/new">Host a meal</NavLink>
+                      <NavLink to="/host/meals">Your meals</NavLink>
                     </li>
                   )}
                   {isModerator(user) && (
