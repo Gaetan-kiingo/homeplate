@@ -37,8 +37,10 @@ services:
 
   minio:
     # Floating tag is acceptable for the academic free-tier setup; pin a RELEASE tag if a
-    # breaking image change ever bites (ADR-004).
-    image: minio/minio:latest
+    # breaking image change ever bites (ADR-004). 2026-09-11: pulled from the vendor's
+    # registry (quay.io) — Docker Hub stopped serving minio/minio ("pull access denied",
+    # CI run 34640669411, and not pullable from a developer machine either).
+    image: quay.io/minio/minio:latest
     command: server /data --console-address ':9001'
     environment:
       MINIO_ROOT_USER: minioadmin
