@@ -23,9 +23,10 @@
 //     their nav links are wave 6, so no dead links ship now. While the session is still
 //     hydrating (status 'unknown') the nav shows NOTHING about the session — never a wrong
 //     guess flashed at an authenticated user (and nothing to mis-announce, NFR-07).
-import { useEffect, useRef } from 'react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSession } from '../session/index.js';
+import { useAnnounce } from '../ui/index.js';
 import styles from './AppLayout.module.css';
 
 /** Initials for the account avatar — first letters of the first two words of the name,
@@ -65,7 +66,10 @@ function sessionLabel(status, user) {
 
 export default function AppLayout() {
   const location = useLocation();
-  const { user, status } = useSession();
+  const { user, status, logout } = useSession();
+  const navigate = useNavigate();
+  const { announce, announceError } = useAnnounce();
+  const [signingOut, setSigningOut] = useState(false);
   const mainRef = useRef(null);
   // The history key of the entry the app LOADED on. Comparing keys (instead of a boolean
   // first-render flag) keeps the effect idempotent under React 18 StrictMode's double
@@ -82,6 +86,22 @@ export default function AppLayout() {
   }, [location.key]);
 
   const label = sessionLabel(status, user);
+
+  // Sign out (2026-09-11): POST /api/auth/logout through the session store, which always
+  // leaves the store anonymous (a 401 means the session was already gone). Land on the home
+  // page so a signed-in-only screen never stays on screen for an anonymous visitor.
+  async function onSignOut() {
+    setSigningOut(true);
+    try {
+      await logout();
+      announce('You are signed out.');
+      navigate('/');
+    } catch (err) {
+      announceError((err && err.message) || 'Signing out failed. Please try again.');
+    } finally {
+      setSigningOut(false);
+    }
+  }
 
   return (
     <>
@@ -143,6 +163,17 @@ export default function AppLayout() {
               </span>
               <span className={styles.accountName}>{user?.fullName || user?.email}</span>
             </Link>
+          )}
+          {status === 'authenticated' && (
+            <button
+              type="button"
+              className={styles.signOut}
+              onClick={onSignOut}
+              disabled={signingOut}
+              aria-busy={signingOut || undefined}
+            >
+              {signingOut ? 'Signing out…' : 'Sign out'}
+            </button>
           )}
           {status === 'anonymous' && (
             <>

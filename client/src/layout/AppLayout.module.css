@@ -200,3 +200,26 @@
   font-size: var(--hp-font-size-sm);
   letter-spacing: var(--hp-letter-spacing-meta);
 }
+
+/* Sign out: a button styled like the sign-in pill (same colours, same focus ring), never a
+   link — it performs an action (POST /api/auth/logout), so it must be a button for AT. */
+.signOut {
+  margin-inline-start: var(--hp-space-2);
+  padding: var(--hp-space-1) var(--hp-space-3);
+  border: 1px solid var(--hp-color-border);
+  border-radius: 999px;
+  background: var(--hp-color-surface);
+  color: var(--hp-color-text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.signOut:hover {
+  color: var(--hp-color-link);
+  background: var(--hp-color-surface-sunken);
+}
+.signOut:disabled {
+  cursor: default;
+  color: var(--hp-color-disabled-text);
+  background: var(--hp-color-disabled-bg);
+}

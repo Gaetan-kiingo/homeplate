@@ -213,6 +213,36 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
     expect(within(nav).queryByRole('link', { name: 'Your meals' })).toBeNull();
   });
 
+  it('signed in: a "Sign out" BUTTON posts the logout, lands on home and the nav turns anonymous', async () => {
+    const calls = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url, init = {}) => {
+        const key = `${init.method || 'GET'} ${String(url).split('?')[0]}`;
+        calls.push(key);
+        if (key === 'GET /api/users/me') {
+          return calls.includes('POST /api/auth/logout')
+            ? jsonResponse(401, {
+                error: { code: 'NO_SESSION', message: 'Sign in.', correlationId: 'c1' },
+              })
+            : jsonResponse(200, { user: USER });
+        }
+        if (key === 'POST /api/auth/logout') return jsonResponse(204);
+        throw new Error(`App.test: unexpected fetch ${key}`);
+      })
+    );
+    render(<App />);
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
+    const button = within(nav).getByRole('button', { name: 'Sign out' });
+    await userEvent.click(button);
+    await waitFor(() => expect(calls).toContain('POST /api/auth/logout'));
+    await waitFor(() => expect(nav).toHaveTextContent(/not signed in/i));
+    expect(within(nav).getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
+    expect(within(nav).queryByRole('button', { name: 'Sign out' })).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent('You are signed out.');
+  });
+
   it('anonymous: offers sign-in and search, never the signed-in-only destinations', async () => {
     stubMe(
       jsonResponse(401, {
