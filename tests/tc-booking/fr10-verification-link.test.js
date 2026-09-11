@@ -91,12 +91,11 @@ describe('FR-10 / TCB-W3-01 — the emailed verification link closes the loop', 
     expect(result.status).toBe('sent');
     expect(received).toHaveLength(1);
 
-    // What the recipient receives: an absolute, single-use link on this deployment's origin.
+    // What the recipient receives: an absolute, single-use link on this deployment's origin,
+    // landing on the CLIENT's /verify-email page (which relays the token to the API).
     const verificationUrl = received[0].renderContext.verificationUrl;
     expect(typeof verificationUrl).toBe('string');
-    expect(
-      verificationUrl.startsWith(`${config.server.publicBaseUrl}/api/auth/verify-email?`)
-    ).toBe(true);
+    expect(verificationUrl.startsWith(`${config.server.publicBaseUrl}/verify-email?`)).toBe(true);
     const token = new URL(verificationUrl).searchParams.get('token');
     expect(token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
     // It is NOT the digest the payload carries — that was the whole defect.
@@ -120,10 +119,14 @@ describe('FR-10 / TCB-W3-01 — the emailed verification link closes the loop', 
     expect(replay.status).toBe(400);
   });
 
-  test('the emailed link is a GET link too, and the digest still verifies nothing', async () => {
+  test('the emailed token also verifies over the API GET route, and the digest still verifies nothing', async () => {
+    // Since 2026-09-11 the emailed link points at the client page (/verify-email?token=…), so
+    // what a mail client opens is the SPA, which POSTs the token. The API's GET route is kept
+    // for scripted use; this test drives it with the same token the link carries.
     const { user, job } = await registerAndQueue();
     const { received } = await drainCapturingDelivery(job);
     const url = new URL(received[0].renderContext.verificationUrl);
+    expect(url.pathname).toBe('/verify-email');
 
     // The digest a recipient used to receive: still (correctly) worthless.
     const digestAttempt = await request(app)
@@ -135,8 +138,8 @@ describe('FR-10 / TCB-W3-01 — the emailed verification link closes the loop', 
         .email_verified
     ).toBe(false);
 
-    // Clicking the link out of a mail client (GET, FR-10 "GET/POST") works.
-    const clicked = await request(app).get(`${url.pathname}${url.search}`);
+    // The API's GET form (FR-10 "GET/POST") with the token the link carries works.
+    const clicked = await request(app).get(`/api/auth/verify-email${url.search}`);
     expect(clicked.status).toBe(200);
     expect(
       (await query('SELECT email_verified FROM users WHERE id = $1', [user.id])).rows[0]

@@ -24,7 +24,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../../api/index.js';
-import { Icon, Img, Spinner, useAnnounce } from '../../ui/index.js';
+import { Button, Icon, Img, Spinner, useAnnounce } from '../../ui/index.js';
+import { useOptionalSession } from '../../session/index.js';
 import usePageTitle from '../../layout/usePageTitle.js';
 import ReviewsSection from './components/ReviewsSection.jsx';
 import { hostPath, loginPath, newBookingPath } from './components/paths.js';
@@ -97,11 +98,38 @@ export default function ListingDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const { announceError } = useAnnounce();
+  const { announce, announceError } = useAnnounce();
+  // Owner affordances (FR-11 manage: edit / cancel) appear only when the viewer IS the host.
+  // Optional on purpose: the page's main job needs no session store (see useOptionalSession).
+  const session = useOptionalSession();
+  const viewer = session && session.status === 'authenticated' ? session.user : null;
 
   const [phase, setPhase] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [listing, setListing] = useState(null);
   const [error, setError] = useState(null);
+  const [cancelState, setCancelState] = useState('idle'); // 'idle' | 'confirm' | 'busy'
+  const [cancelMessage, setCancelMessage] = useState('');
+
+  async function onConfirmCancel() {
+    setCancelState('busy');
+    setCancelMessage('');
+    try {
+      await api.listings.cancel(listing.id);
+      setListing((current) => ({ ...current, status: 'cancelled' }));
+      setCancelState('idle');
+      announce(
+        'Meal cancelled. Guests with a reservation are being notified by email and their seats released.'
+      );
+    } catch (err) {
+      setCancelState('idle');
+      const message =
+        err && err.code === 'LISTING_CANCELLED'
+          ? 'This meal was already cancelled.'
+          : (err && err.message) || 'The meal could not be cancelled. Please try again.';
+      setCancelMessage(message);
+      announceError(message);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -205,6 +233,56 @@ export default function ListingDetailPage() {
       ) : null}
       {listing.status === 'cancelled' ? (
         <p className={styles.stateBox}>This meal has been cancelled by the host.</p>
+      ) : null}
+
+      {/* FR-11 manage actions — the host's own listing (2026-09-11, closes OBS-B3). The server
+          is the authority (owner-only PATCH/cancel, 403 otherwise); this block only appears
+          when the session user is the listing's host. Cancelling asks once, inline, and never
+          uses a browser dialog (NFR-07: the confirmation is real, focusable page content). */}
+      {viewer && listing.hostId === viewer.id ? (
+        <section aria-labelledby="manage-heading" className={styles.stateBox}>
+          <h2 id="manage-heading" className={styles.subheading}>
+            You host this meal
+          </h2>
+          {listing.status === 'cancelled' ? (
+            <p>It is cancelled; its seats were released and guests were notified.</p>
+          ) : (
+            <>
+              <p>
+                <Link to={`/host/meals/${encodeURIComponent(listing.id)}/edit`}>
+                  Edit this meal
+                </Link>
+                {listing.moderationStatus === 'pending'
+                  ? ' — it is waiting for moderation review before guests can see it.'
+                  : null}
+              </p>
+              {cancelState === 'idle' ? (
+                <Button variant="secondary" onClick={() => setCancelState('confirm')}>
+                  Cancel this meal
+                </Button>
+              ) : null}
+              {cancelState !== 'idle' ? (
+                <div role="group" aria-labelledby="cancel-confirm-label">
+                  <p id="cancel-confirm-label">
+                    Cancel this meal? Every reservation is released and each guest is emailed. This
+                    cannot be undone.
+                  </p>
+                  <Button busy={cancelState === 'busy'} onClick={onConfirmCancel}>
+                    {cancelState === 'busy' ? 'Cancelling…' : 'Yes, cancel the meal'}
+                  </Button>{' '}
+                  <Button
+                    variant="secondary"
+                    onClick={() => setCancelState('idle')}
+                    disabled={cancelState === 'busy'}
+                  >
+                    Keep the meal
+                  </Button>
+                </div>
+              ) : null}
+              {cancelMessage !== '' ? <p className={styles.errorBox}>{cancelMessage}</p> : null}
+            </>
+          )}
+        </section>
       ) : null}
 
       {/* Hero: the first photo, or the branded fallback (design review §4 — never an empty

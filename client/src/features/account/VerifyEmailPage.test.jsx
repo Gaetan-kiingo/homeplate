@@ -2,6 +2,7 @@
 // /verify-email (FR-10 token redemption from the mailed link: success, failure with the
 // always-202 recovery form, and the no-token guidance state; single-use token redeemed
 // exactly once; NFR-07 announced states).
+import { StrictMode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -44,7 +45,7 @@ function stubFetch(handlers) {
   return calls;
 }
 
-function renderAt(path) {
+function renderAt(path, { strict = false } = {}) {
   const router = createMemoryRouter(
     [
       {
@@ -55,12 +56,16 @@ function renderAt(path) {
     ],
     { initialEntries: [path] }
   );
-  render(
+  const tree = (
     <SessionProvider>
       <StatusAnnouncer />
       <RouterProvider router={router} />
     </SessionProvider>
   );
+  // `strict` mirrors client/src/main.jsx, which mounts the app under React.StrictMode: effects
+  // run → clean up → run again in development, which is exactly the path that hid the
+  // orphaned-response defect below.
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   return router;
 }
 
@@ -94,6 +99,31 @@ describe('VerifyEmailPage — /verify-email (FR-10)', () => {
     const redemptions = calls.filter((c) => c.key === 'POST /api/auth/verify-email');
     expect(redemptions).toHaveLength(1);
     expect(redemptions[0].body).toEqual({ token: TOKEN });
+  });
+
+  it('under StrictMode, a response that arrives AFTER the double effect still reaches the page (regression, 2026-09-11)', async () => {
+    // Reproduction of the real defect: the app runs under React.StrictMode (main.jsx), the
+    // verify POST resolves only after the effect has run, cleaned up and run again, and the
+    // page stayed on the spinner forever although the server had verified the account.
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const calls = stubFetch({
+      'GET /api/users/me': anonMe,
+      'POST /api/auth/verify-email': async () => {
+        await gate;
+        return jsonResponse(200, { emailVerified: true });
+      },
+    });
+    renderAt(`/verify-email?token=${TOKEN}`, { strict: true });
+    expect(screen.getByText('Verifying your email address')).toBeInTheDocument();
+    // Both StrictMode effect runs have happened by now; only then does the server answer.
+    release();
+    const notices = await screen.findAllByText(/email address is verified/i);
+    expect(notices.some((node) => node.tagName === 'P')).toBe(true);
+    // Still exactly one redemption: StrictMode must not burn the single-use token either.
+    expect(calls.filter((c) => c.key === 'POST /api/auth/verify-email')).toHaveLength(1);
   });
 
   it('renders the 400 INVALID_VERIFICATION_TOKEN honestly and offers the resend recovery form', async () => {

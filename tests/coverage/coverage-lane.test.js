@@ -110,11 +110,15 @@ describe('coverage lane — no stubs or placeholders in the wave 0-3 surface', (
       .filter((e) => e.isDirectory() && fs.existsSync(path.join(featuresDir, e.name, 'routes.jsx')))
       .map((e) => e.name)
       .sort();
+    // 2026-09-11: 'host' added — the FR-11 host listing screens (verification finding OBS-B3,
+    // closed by team decision). Still an exact list: an out-of-scope tree (payments, GPS, AI
+    // listing generation) fails here.
     expect(featureRouteFiles).toEqual([
       'account',
       'booking',
       'community',
       'discovery',
+      'host',
       'moderation',
     ]);
   });

@@ -56,8 +56,16 @@ const rateLimit = require('./rateLimit');
 /** Outbox job type consumed by src/outbox/handlers/emailVerification.js (FR-10). */
 const EMAIL_VERIFICATION_JOB_TYPE = 'email.verification';
 
-/** Route that consumes the emailed token (src/modules/auth/routes.js — GET/POST). */
-const VERIFY_EMAIL_PATH = '/api/auth/verify-email';
+/**
+ * Path the emailed link points at, under PUBLIC_BASE_URL. Since 2026-09-11 this is the CLIENT's
+ * verify page (client/src/features/account/VerifyEmailPage.jsx), which relays the token to
+ * POST /api/auth/verify-email exactly once and renders the outcome — so a recipient who clicks
+ * the link in a real inbox lands in the product, not on a bare JSON response. The API's own
+ * GET /api/auth/verify-email?token=… stays as it was (src/modules/auth/routes.js) for
+ * scripted verification. PUBLIC_BASE_URL must therefore be the origin that serves the client
+ * (the Vite dev server locally; the production edge that serves client/dist).
+ */
+const VERIFY_EMAIL_PATH = '/verify-email';
 
 /**
  * Register a new account (FR-10). One transaction commits the USER row, the verification

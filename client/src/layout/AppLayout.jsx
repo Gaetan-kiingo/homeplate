@@ -118,6 +118,11 @@ export default function AppLayout() {
                   <li>
                     <NavLink to="/account">Account</NavLink>
                   </li>
+                  {user && user.canPublishListing === true && (
+                    <li>
+                      <NavLink to="/host/meals/new">Host a meal</NavLink>
+                    </li>
+                  )}
                   {isModerator(user) && (
                     <li>
                       <NavLink to="/moderation">Moderation</NavLink>

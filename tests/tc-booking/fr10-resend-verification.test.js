@@ -143,7 +143,9 @@ describe('FR-10 / TCBV2-03 — a dead-lettered verification email no longer stra
     expect(result.status).toBe('sent');
     expect(received).toHaveLength(1);
     const url = received[0].renderContext.verificationUrl;
-    expect(url.startsWith(`${config.server.publicBaseUrl}/api/auth/verify-email?`)).toBe(true);
+    // The link lands on the client's /verify-email page (which relays the token to the API);
+    // the token itself is what the API consumes below.
+    expect(url.startsWith(`${config.server.publicBaseUrl}/verify-email?`)).toBe(true);
     const token = new URL(url).searchParams.get('token');
 
     const verified = await request(app).post('/api/auth/verify-email').send({ token });

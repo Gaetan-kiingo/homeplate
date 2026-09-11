@@ -67,8 +67,17 @@ Every demo account uses the password **`DemoPass123!`** (local development only)
 | --- | --- | --- |
 | Guest | `maya@homeplate.demo` | Search, listing detail, reserve, bookings (2 upcoming, 2 completed) |
 | Guest | `jordan@homeplate.demo` | A second guest with reviews |
-| Host | `rosa@homeplate.demo` | Host profile with 2 reviews; bookings as host |
-| Moderator | `sam.mod@homeplate.demo` | Moderation queue and alerts |
+| Host | `rosa@homeplate.demo` | Host profile with 2 reviews; bookings as host; **Host a meal** (FR-11 create/edit/cancel) |
+| Moderator | `sam.mod@homeplate.demo` | Moderation queue and alerts — approves a newly hosted meal |
+
+Every demo account has a verified email and a phone number (encrypted at load time by
+`seed-demo.js`), so the hosts pass the FR-09 publish gate and the guests the reserve gate.
+
+**The full loop, in the UI (added 2026-09-11):** sign in as `rosa` → **Host a meal** in the nav →
+publish → the listing page shows *pending moderation* with the host's edit/cancel block → sign in
+as `sam.mod` → Moderation → approve → sign in as `maya` → Find a meal (results are cached for
+`SEARCH_CACHE_TTL_SECONDS`; the demo `.env` uses 5 s) → reserve. Cancelling the meal as the host
+releases every seat and emails each guest.
 
 Photos are Unsplash (free licence), resized and committed under `tests/fixtures/seed/demo-media/`
 and `client/public/`, so the demo needs no network access.

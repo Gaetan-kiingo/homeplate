@@ -1,4 +1,4 @@
-# Implementation Increment + Code-Review Log — cumulative, waves 0–7 and the demo build
+# Implementation Increment + Code-Review Log — cumulative, waves 0–7 and the demo builds
 
 **Project:** Homeplate · **Increments:** Waves 0–2 (platform) through the demo build ·
 **Team:** Group 6 (Lucya, Gaetan, Nam) · **Date:** 2026-09-11 · MSCS 2101, Module 6 (updated for the
@@ -22,6 +22,7 @@ the state of the final tree. The wave-3 material is kept, and the waves 0–2 pl
 | **Post-wave-6 fixes and design pass** | 2026-08-26 → 08-27 | Session-aware navigation (the seven screens had no links), a double-fetch fix caught by CI, brand tokens, inline SVG icons, event cards, applied from the product design review. | NFR-07 (contrast, WCAG 1.4.1 colour-independence) | Frontend only; contrast pairs recomputed by the kit-contract test; no new dependency, no webfont CDN. |
 | **Security hardening** | 2026-08-30 | Semgrep SAST first pass and OWASP review (Nam); AES-GCM decryption now declares the auth tag length explicitly. | NFR-13, AB-05 | One-line change in `src/db/fieldCrypto.js`; CI green. |
 | **Wave 7 (partial) — NFR-10 live measurement** | 2026-09-11 | The one live IT-03 run ADR-007 sanctions: all 224 synthetic items through the real pre-filter → classifier pipeline against Gemini, rates recorded in `tests/fixtures/moderation-eval/v1/RESULTS.md`. The other two wave-7 items (seeded-route accessibility audits, UT-01 study) are **not done**. | NFR-10: measured, **not met** (FP 7.14 % vs < 5 %; FN 1.19 %) | No production code changed. Four guard tests that asserted "no results file" inverted to check the record's fields and internal consistency; 63 suites / 1400 tests green. |
+| **Wave 7 (continued) — host listing UI, live email, demo fixes** | 2026-09-11 | Host screens that wave 6 never owned (verification finding OBS-B3, closed by team decision): **Host a meal** (create), owner **edit** and inline **cancel** on the listing page, nav and account links, with the MEHKO refusals rendered from the payload. SendGrid switched on for the demo; the emailed link now lands on the client's verify page. Demo accounts given phone numbers so hosts pass the publish gate. | FR-11 (client surfacing now an exercised flow), FR-10 (real email delivery), FR-08/FR-09 copy | New `client/src/features/host` tree (sixth, pinned by the scope guard); ADR-010 guard admits the owner edit page as a second presence-guarded reader; no backend production change except the verification-link path. Client 383 tests, backend 63 / 1400, lint and both builds clean; scripted browser run: publish → auto-approve → guest finds it → host cancels. |
 | **Demo build** | 2026-09-10 | Design pass on every screen (home hero, sticky reservation panel, status badges, chat bubbles, allergen chips); `npm run seed:demo` loads 12 upcoming meals with photos, 6 hosts, reviews, bookings and a thread, with relative dates so the set never goes stale. | Demo readiness; fixes an FR-02 rendering defect | No new dependency; two client tests updated; demo accounts documented in the README, local only. |
 
 **Requirement movement across the period:** waves 0–2 laid the platform with no marketplace requirement met end-to-end → 23 met / 5 partial / 7 not implemented after wave 3
@@ -42,7 +43,7 @@ pushed until the verification round had run the next day.
 
 We reviewed the AI-generated code against the SRS using the Code Review Checklist. The table lists
 the findings we consider worth defending in a review; the verification rounds recorded many more
-(2 plus 3 clean-checkout defects in waves 0–2, 40 in wave 3, 23 in wave 4, 5 in wave 5, 22 in wave 6, 3 in the wave-7 measurement), all in `docs/verification-report.md` and
+(2 plus 3 clean-checkout defects in waves 0–2, 40 in wave 3, 23 in wave 4, 5 in wave 5, 22 in wave 6, 3 in the wave-7 measurement, 4 in the 2026-09-11 demo rehearsal), all in `docs/verification-report.md` and
 `docs/_generated/wave6-verify/`.
 
 ### 2.1 Waves 0–2 (built 2026-08-14, findings F-1/F-2 and the first CI run)
@@ -110,6 +111,20 @@ the findings we consider worth defending in a review; the verification rounds re
 | 29 | **Reality check** — a config value nobody had exercised live | The worker's per-attempt adapter budget, `ADAPTER_TIMEOUT_MS=3000`, was tuned against the mock. The live provider took **4 to 47 s** per answer under load; the first live attempt failed on that timeout within five items. A live worker with the shipped value would time out and dead-letter every scan. | High (deployment blocker) | Measurement made with a 90 s per-attempt budget in the off-suite runner, pipeline and prompt unchanged. The production value is **open** for the team to raise before any live deployment; named in the verification report §9. |
 | 30 | **Fit** — an ADR assumption the provider no longer honours | ADR-007 assumes the Gemini **free tier**. The planned model is retired for new keys, and the flagship model's free tier allows **20 requests per day**: a first run stopped at item 13. Only the lite models could complete 224 items. | Medium | Model chosen during the run and disclosed as an agent decision in `RESULTS.md`; the number is valid for that exact model id. ADR-007's tier assumption needs a team update: either the lite models are the sanctioned production models, or the key moves to a paid tier. |
 
+### 2.8 Demo rehearsal with real email and the host UI (2026-09-11)
+
+| # | Checklist area | Finding (failure mode) | Severity | Resolution |
+|---|---|---|---|---|
+| 31 | **Correctness** — found by a human clicking a real email | With SendGrid live, the verification link opened the client page and **the spinner never stopped**, although the server had already verified the account (200 logged). Cause: React StrictMode runs effects twice in development; the page guarded the single-use token against a second POST but its first cleanup had marked the response "cancelled", and the second run returned early without subscribing. The spec suite never rendered under StrictMode. | High (dev only; production build has no StrictMode) | The one in-flight request lives in a ref and every effect run re-attaches to it: exactly one POST, response always delivered. Regression test renders under StrictMode with a delayed answer; it fails on the old page, passes on the new. |
+| 32 | **Correctness** — one write, two readers | After reserving a seat, the meal page said "1 of 6 seats remaining" while the search card still said "2 seats left": search pages are cached in Redis for 60 s (NFR-01) and a booking never invalidates them. | Medium, **open** | Demo mitigation: cache lifetime set to 5 s in the local env. Proper fix named, not made the night before the demo: a cache generation counter in the search key that booking and listing writes increment. |
+| 33 | **Correctness** — data that asserts what the policy does not grant | The demo seed set `can_publish_listing=true` on the six hosts but gave nobody a phone number; the FR-09 policy reads the encrypted phone live, so **every demo host was refused** with PHONE_MISSING the moment a real create was attempted. Invisible until the host UI existed, because nothing had exercised the gate with demo data. | Medium | Demo fixture carries a plaintext phone per user that `seed-demo.js` encrypts at load time with the environment's key (NFR-13), so the stored flag and the live policy agree. |
+| 34 | **Fit** — the emailed link pointed at the API | The FR-10 link targeted `GET /api/auth/verify-email`, so a recipient clicking it in an inbox saw a bare JSON body. Harmless with the mock transport, wrong the moment mail was real. | Low | Link now targets the client's `/verify-email` page under `PUBLIC_BASE_URL`, which must therefore be the client origin (template and comment updated); the API GET stays for scripted use; two suites that pinned the path adapted, invariants kept. |
+
+**Also observed, not a defect:** in development the ADR-002 pipeline auto-approves a new
+listing within about a second (the mock classifier scores unseen text benign at 0.99, above the
+0.8 routing threshold), so a freshly hosted meal never reaches the human queue. A demo that wants
+to show the queue should use the seeded low-confidence item, or the live classifier.
+
 ### Detail on Finding 23 — the one that would have shipped this period
 
 Wave 6 was verified by five lanes, repaired, re-gated, and all seven interfaces audited clean. Then
@@ -153,7 +168,7 @@ Our team's gates (SPMP §7.4, SQAP) and the final tree's result against each:
 | Gate | Standard | Final tree (`667187e`, 2026-09-10) |
 |---|---|---|
 | **Human review** | At least one peer review, *without exception for AI-assisted work* | ✔ Every wave verified by independent lanes that re-executed the original failure scenario behind each claimed fix (wave 4: 155 checks, 15 repairs confirmed, 2 rejected with evidence; wave 6: 22 findings, every confirmed defect closed by re-execution). Human-only decisions recorded with names and dates (§4). Security review and SAST triage by Nam. |
-| **Tests** | Full suite green, deterministic, no `--forceExit` | ✔ Backend **63 suites / 1400 tests** (re-run 2026-09-11 after the four NFR-10 guard inversions), client **357 tests**, both exit 0 under `TEST_STRICT_HANDLES=1` with `maxWorkers: 1`. Coverage (wave-6 lane, full run): **96.05 % lines · 98.87 % functions · 84.65 % branches**, no file below 80 % lines. |
+| **Tests** | Full suite green, deterministic, no `--forceExit` | ✔ Backend **63 suites / 1400 tests** (re-run 2026-09-11 after the four NFR-10 guard inversions and the seed change), client **383 tests** (36 files; the host feature added 19, the StrictMode regression 1), both exit 0 under `TEST_STRICT_HANDLES=1` with `maxWorkers: 1`. Coverage (wave-6 lane, full run): **96.05 % lines · 98.87 % functions · 84.65 % branches**, no file below 80 % lines. |
 | **Linter** | `eslint` + `prettier --check`, zero errors; client linted with `react`, `react-hooks`, `jsx-a11y` | ✔ 0 errors, 0 warnings. |
 | **Build gates** | Migrations ordered and append-only; every module loads; app boots against `.env.example`; Vite production build | ✔ 6 migrations valid, 112 modules parse, `createApp()` boots; client build clean. |
 | **Security scan** | OWASP ZAP baseline, no High; Semgrep SAST triaged | ✔ ZAP 2.17.0 over the rendered client and API: **High 0 · Medium 2 · Low 2** across 30 URLs, gate exit 0 (the Medium/Low are missing static headers on the `vite preview` scaffold, none on `/api/*`). Semgrep: 24 flagged, 16 false positives, 1 patched, 2 open (§2.6 #25). |
@@ -174,7 +189,7 @@ UT-01 five-participant study, declared missed on 2026-08-18, has still not run. 
 figure. The ZAP result is a scaffold measurement, not a production header posture. Latency numbers
 are developer-machine measurements. The 30-day erasure is proven by clock injection, not by 30
 elapsed days. Two intermittents (findings 16 and 27) are open with identities preserved. Two Semgrep
-items are open, as are the adapter timeout (finding 29) and the ADR-007 tier assumption (finding 30). One spec correction (TCC-03, FR-01 degraded flag) awaits ratification.
+items are open, as are the adapter timeout (finding 29), the ADR-007 tier assumption (finding 30) and the search-cache invalidation (finding 32). One spec correction (TCC-03, FR-01 degraded flag) awaits ratification.
 
 ---
 
@@ -209,6 +224,8 @@ and legal questions rather than resolve them, and they did:
 - **Disclosed agent decision:** the model measured was picked during the run because the planned one
   was unavailable and the flagship one capped out (finding 30). It is stated in the record rather
   than smoothed over.
+- **OBS-B3 — a host listing screen in v1.0** (2026-09-11): the team chose to ship it rather than
+  document host flows as API-driven; the agent built it that evening under the existing guards.
 
 **Honesty about the artefacts.** Wave 4 was committed with "UNVERIFIED CHECKPOINT" in its title
 until a verifier lane had seen it. Sign-off blocks are left `_unsigned_` until a human fills them,

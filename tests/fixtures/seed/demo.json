@@ -10,7 +10,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550100"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000002",
@@ -21,7 +22,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550101"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000003",
@@ -32,7 +34,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550102"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000004",
@@ -43,7 +46,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550103"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000005",
@@ -54,7 +58,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550104"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000006",
@@ -65,7 +70,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": true,
       "roles": ["user"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550105"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000050",
@@ -76,7 +82,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": false,
       "roles": ["user"],
-      "created_at": "2026-07-01T12:00:00Z"
+      "created_at": "2026-07-01T12:00:00Z",
+      "phone": "+16195550106"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000051",
@@ -87,7 +94,8 @@
       "can_reserve_seat": true,
       "can_publish_listing": false,
       "roles": ["user"],
-      "created_at": "2026-07-02T12:00:00Z"
+      "created_at": "2026-07-02T12:00:00Z",
+      "phone": "+16195550107"
     },
     {
       "id": "d0000000-0000-4000-8000-000000000052",
@@ -98,13 +106,14 @@
       "can_reserve_seat": false,
       "can_publish_listing": false,
       "roles": ["user", "moderator"],
-      "created_at": "2026-06-01T12:00:00Z"
+      "created_at": "2026-06-01T12:00:00Z",
+      "phone": "+16195550108"
     }
   ],
   "host_profiles": [
     {
       "user_id": "d0000000-0000-4000-8000-000000000001",
-      "bio": "Third-generation cook from Michoac\u00e1n. My kitchen in North Park runs on slow braises, fresh masa and too much salsa verde.",
+      "bio": "Third-generation cook from Michoacán. My kitchen in North Park runs on slow braises, fresh masa and too much salsa verde.",
       "host_agreement_accepted_at": "2026-06-02T12:00:00Z"
     },
     {
@@ -297,8 +306,8 @@
     {
       "id": "d1000000-0000-4000-8000-000000000005",
       "host_id": "d0000000-0000-4000-8000-000000000005",
-      "title": "Sunday Pappardelle with Wild Mushroom Rag\u00f9",
-      "description": "Egg pasta rolled by hand that afternoon, tossed with a rag\u00f9 of chanterelles, porcini and brown butter sage. Bread, a bitter-leaf salad and a shared bottle of something from Piedmont.",
+      "title": "Sunday Pappardelle with Wild Mushroom Ragù",
+      "description": "Egg pasta rolled by hand that afternoon, tossed with a ragù of chanterelles, porcini and brown butter sage. Bread, a bitter-leaf salad and a shared bottle of something from Piedmont.",
       "ingredients": [
         "00 flour",
         "eggs",
@@ -416,7 +425,7 @@
     {
       "id": "d1000000-0000-4000-8000-000000000008",
       "host_id": "d0000000-0000-4000-8000-000000000003",
-      "title": "Mezze Table and Lamb K\u00f6fte",
+      "title": "Mezze Table and Lamb Köfte",
       "description": "Spiced lamb meatballs over a spread of hummus, muhammara, roasted peppers, labneh and warm flatbread. Built for lingering.",
       "ingredients": [
         "ground lamb",
@@ -936,14 +945,14 @@
       "id": "d4000000-0000-4000-8000-000000000001",
       "booking_id": "d2000000-0000-4000-8000-000000000005",
       "sender_id": "d0000000-0000-4000-8000-000000000050",
-      "body": "Hi Rosa! So excited for Friday. One of us is vegetarian \u2014 is there a non-pork option for the tacos?",
+      "body": "Hi Rosa! So excited for Friday. One of us is vegetarian — is there a non-pork option for the tacos?",
       "moderation_status": "approved"
     },
     {
       "id": "d4000000-0000-4000-8000-000000000002",
       "booking_id": "d2000000-0000-4000-8000-000000000005",
       "sender_id": "d0000000-0000-4000-8000-000000000001",
-      "body": "Of course \u2014 I always do a batch of mushroom and poblano tinga. See you Friday!",
+      "body": "Of course — I always do a batch of mushroom and poblano tinga. See you Friday!",
       "moderation_status": "approved"
     }
   ]

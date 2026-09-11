@@ -3,9 +3,9 @@
 //
 // Requirement / decision traceability (SRS Appendix B):
 //   FR-10 — the emailed link lands here carrying ?token=…; the SPA relays it to
-//     POST /api/auth/verify-email exactly once (the token is single-use — a ref guards the
-//     StrictMode double-effect so the second dev-mode invocation cannot burn it) and flips
-//     to the success state on { emailVerified: true }. A wrong/used/expired token is the
+//     POST /api/auth/verify-email exactly once (the token is single-use — a ref holds the one
+//     in-flight redemption so StrictMode's dev-only double effect neither burns the token nor
+//     orphans the response) and flips to the success state on { emailVerified: true }. A wrong/used/expired token is the
 //     server's 400 INVALID_VERIFICATION_TOKEN, rendered honestly with the recovery path
 //     (ResendVerificationForm — always-202, AB-05).
 //   NFR-06 — on success the session store is refreshed so a signed-in user's eligibility
@@ -32,19 +32,30 @@ export default function VerifyEmailPage() {
   // 'missing' | 'verifying' | 'success' | 'failure'
   const [state, setState] = useState(token !== '' ? 'verifying' : 'missing');
   const [failureMessage, setFailureMessage] = useState(null);
-  const redeemedTokenRef = useRef(null);
+  // The single in-flight redemption for the current token: { token, promise }. Kept in a ref
+  // so the token is POSTed exactly once (single-use, FR-10) no matter how many times the
+  // effect runs — and so that EVERY run re-attaches to the same promise.
+  //
+  // FIXED 2026-09-11 (found by clicking a real SendGrid link in `npm run dev`): the previous
+  // version guarded the double POST with a "already redeemed" ref but ALSO set `cancelled`
+  // in the effect cleanup. Under React.StrictMode (client/src/main.jsx, dev only) the effect
+  // runs → cleans up → runs again before the response arrives: run 1 started the request and
+  // its cleanup marked it cancelled; run 2 saw the token already redeemed and returned early
+  // without subscribing. The 200 then arrived to a handler that had been told to ignore it,
+  // and the page span forever on "Verifying your email address" while the server had already
+  // verified the account. The spec suite never rendered under StrictMode, so it stayed green.
+  const redemptionRef = useRef(null);
 
   useEffect(() => {
-    if (token === '' || redeemedTokenRef.current === token) {
-      return;
+    if (token === '') {
+      return undefined;
     }
-    // Single-use token (FR-10): redeem exactly once per token, even under StrictMode's
-    // dev-only double effect invocation.
-    redeemedTokenRef.current = token;
+    if (!redemptionRef.current || redemptionRef.current.token !== token) {
+      redemptionRef.current = { token, promise: api.auth.verifyEmail(token) };
+    }
     let cancelled = false;
     setState('verifying');
-    api.auth
-      .verifyEmail(token)
+    redemptionRef.current.promise
       .then(() => {
         if (cancelled) return;
         setState('success');

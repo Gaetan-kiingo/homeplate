@@ -91,13 +91,14 @@ const GUIDANCE = {
   },
 };
 
-function FlagBlock({ heading, allowed, allowedText, blockedText, codes }) {
+function FlagBlock({ heading, allowed, allowedText, allowedAction = null, blockedText, codes }) {
   return (
     <div className={styles.flagCard}>
       <h3>{heading}</h3>
       <p className={allowed ? styles.ready : styles.blocked}>
         {allowed ? allowedText : blockedText}
       </p>
+      {allowed && allowedAction ? <p>{allowedAction}</p> : null}
       {!allowed &&
         (codes.length > 0 ? (
           <ul className={styles.reasonList}>
@@ -143,6 +144,7 @@ export default function EligibilityPanel({ user }) {
           heading="Publishing listings (hosting)"
           allowed={user.canPublishListing === true}
           allowedText="Ready — you can publish meal listings."
+          allowedAction={<Link to="/host/meals/new">Host a meal</Link>}
           blockedText="Not yet available — the following is outstanding:"
           codes={missingForPublish(user)}
         />

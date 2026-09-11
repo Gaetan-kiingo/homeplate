@@ -1,0 +1,66 @@
+/* client/src/features/host/host.module.css — host listing screens. Token-only (NFR-07: every
+ * colour pair inherits the AA-measured contrast contract in styles/tokens.css — zero raw
+ * colour literals); 320 px reflow through fluid widths and wrapping rows. */
+.lead {
+  color: var(--hp-color-text-muted);
+  max-width: 65ch;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+  max-width: 36rem;
+}
+.fieldset {
+  border: 1px solid var(--hp-color-border-subtle);
+  border-radius: var(--hp-radius-md);
+  padding: var(--hp-space-4);
+  margin: var(--hp-space-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hp-space-2);
+}
+.fieldset legend {
+  font-weight: 600;
+  padding-inline: var(--hp-space-2);
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+}
+.row > * {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hp-space-3);
+  margin-block-start: var(--hp-space-3);
+  align-items: center;
+}
+.errorBox {
+  border: 2px solid var(--hp-color-danger);
+  border-radius: var(--hp-radius-sm);
+  color: var(--hp-color-danger-text);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+.noticeBox {
+  border: 1px solid var(--hp-color-border);
+  border-radius: var(--hp-radius-sm);
+  background: var(--hp-color-surface-raised);
+  padding: var(--hp-space-3) var(--hp-space-4);
+  margin-block: var(--hp-space-4);
+  max-width: 65ch;
+}
+.reasonList {
+  margin: var(--hp-space-2) 0 0;
+  padding-inline-start: var(--hp-space-5);
+}
+.fileNote {
+  color: var(--hp-color-text-muted);
+  margin: 0;
+}

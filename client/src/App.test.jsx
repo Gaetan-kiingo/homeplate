@@ -177,11 +177,39 @@ describe('5C wiring: session-aware nav (NFR-03/AB-05 — state from responses on
 
     // NO DEAD LINKS — the guarantee the original test existed to protect. Every href is
     // either the in-page skip target or a path the real route table can serve.
-    const known = ['/', '/search', '/bookings', '/account', '/moderation', '/login', '/signup'];
+    const known = [
+      '/',
+      '/search',
+      '/bookings',
+      '/account',
+      '/host/meals/new',
+      '/moderation',
+      '/login',
+      '/signup',
+    ];
     for (const link of screen.getAllByRole('link')) {
       const href = link.getAttribute('href');
       expect(href === '#main' || known.includes(href)).toBe(true);
     }
+  });
+
+  it('offers "Host a meal" only to a session that may publish listings (FR-09 flag, FR-11 screen)', async () => {
+    stubMe(jsonResponse(200, { user: { ...USER, canPublishListing: true } }));
+    render(<App />);
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
+    expect(within(nav).getByRole('link', { name: 'Host a meal' })).toHaveAttribute(
+      'href',
+      '/host/meals/new'
+    );
+  });
+
+  it('never offers "Host a meal" to a session that may not publish listings', async () => {
+    stubMe(jsonResponse(200, { user: { ...USER, canPublishListing: false } }));
+    render(<App />);
+    const nav = screen.getByRole('navigation', { name: 'Primary' });
+    await waitFor(() => expect(nav).toHaveTextContent('Gaia Tester'));
+    expect(within(nav).queryByRole('link', { name: 'Host a meal' })).toBeNull();
   });
 
   it('anonymous: offers sign-in and search, never the signed-in-only destinations', async () => {

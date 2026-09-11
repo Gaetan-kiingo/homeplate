@@ -19,6 +19,9 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 const { S3Client, PutObjectCommand, CreateBucketCommand } = require('@aws-sdk/client-s3');
+// NFR-13: a demo user's `phone` is encrypted at load time with THIS environment's key, exactly
+// as the app does — the fixture never carries ciphertext bound to one machine's key.
+const fieldCrypto = require('../src/db/fieldCrypto');
 
 const ROOT = path.join(__dirname, '..');
 require('dotenv').config({ path: path.join(ROOT, '.env') });
@@ -149,6 +152,17 @@ async function seedDemo({ databaseUrl = process.env.DATABASE_URL, log = console 
     await client.query('BEGIN');
     for (const table of TABLE_ORDER) {
       const rows = (fixture[table] || []).map((r) => materialise(r, table));
+      if (table === 'users') {
+        // FR-09/NFR-06: publishing and reserving require a phone; the eligibility policy reads
+        // phone_enc live, so a host seeded with can_publish_listing=true but no phone is refused
+        // by POST /api/listings (found by the 2026-09-11 host-UI end-to-end run).
+        for (const row of rows) {
+          if (row.phone !== undefined) {
+            row.phone_enc = fieldCrypto.encrypt(row.phone);
+            delete row.phone;
+          }
+        }
+      }
       counts[table] = await insertRows(client, table, rows);
     }
     await client.query('COMMIT');
